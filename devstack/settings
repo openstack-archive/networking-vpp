@@ -1,0 +1,6 @@
+enable_service vpp-cp
+
+
+MECH_VPP_DIR="$DEST/networking-vpp"
+MECH_VPP_BIN_DIR=$(get_python_exec_prefix)
+VPP_CP_BINARY="$GLUON_BIN_DIR/vpp-cp"
