@@ -1,6 +1,14 @@
-enable_service vpp-cp
+enable_service vpp-agent
 
 
 MECH_VPP_DIR="$DEST/networking-vpp"
 MECH_VPP_BIN_DIR=$(get_python_exec_prefix)
-VPP_CP_BINARY="$GLUON_BIN_DIR/vpp-cp"
+VPP_CP_BINARY="$MECH_VPP_BIN_DIR/vpp-agent"
+
+MECH_VPP_AGENTLIST=http://localhost:2704/
+
+# This is VPP's interface name for the trunk
+VLAN_TRUNK_IF='GigabitEthernet2/2/0'
+VXLAN_SRC_ADDR=
+VXLAN_BCAST_ADDR=
+VXLAN_VRF=1
