@@ -13,13 +13,19 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import eventlet.queue
 from oslo_config import cfg
 from oslo_log import log as logging
 import requests
+import threading
 
+from neutron.common import constants as n_const
+from neutron import context as n_context
 from neutron.extensions import portbindings
+from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
+from neutron_lib import constants as nl_const
 
 LOG = logging.getLogger(__name__)
 
@@ -33,20 +39,21 @@ cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
 
 class VPPMechanismDriver(api.MechanismDriver):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
-    allowed_network_types = [p_constants.TYPE_VLAN]
+    allowed_network_types = [p_constants.TYPE_VLAN,p_constants.TYPE_VXLAN]
+    MECH_NAME = 'vpp'
 
     # TODO(ijw): we have no agent registration because we're not using
     # Neutron style agents, so at the moment we make up one physical net
     # that all 'agents' are assumed to know.
-    physical_networks = ['physnet1']
+    physical_networks = ['physnet']
 
     def initialize(self):
         self.communicator = AgentCommunicator()
 
-    def bind_port(self, context):
+    def bind_port(self, port_context):
         """Attempt to bind a port.
 
-        :param context: PortContext instance describing the port
+        :param port_context: PortContext instance describing the port
 
         This method is called outside any transaction to attempt to
         establish a port binding using this mechanism driver. Bindings
@@ -54,17 +61,17 @@ class VPPMechanismDriver(api.MechanismDriver):
         network, and are established from the top level downward. At
         each level, the mechanism driver determines whether it can
         bind to any of the network segments in the
-        context.segments_to_bind property, based on the value of the
-        context.host property, any relevant port or network
+        port_context.segments_to_bind property, based on the value of the
+        port_context.host property, any relevant port or network
         attributes, and its own knowledge of the network topology. At
-        the top level, context.segments_to_bind contains the static
+        the top level, port_context.segments_to_bind contains the static
         segments of the port's network. At each lower level of
         binding, it contains static or dynamic segments supplied by
         the driver that bound at the level above. If the driver is
         able to complete the binding of the port to any segment in
-        context.segments_to_bind, it must call context.set_binding
+        port_context.segments_to_bind, it must call port_context.set_binding
         with the binding details. If it can partially bind the port,
-        it must call context.continue_binding with the network
+        it must call port_context.continue_binding with the network
         segments to be used to bind at the next lower level.
 
         If the binding results are committed after bind_port returns,
@@ -86,22 +93,33 @@ class VPPMechanismDriver(api.MechanismDriver):
         """
         LOG.debug("Attempting to bind port %(port)s on "
                   "network %(network)s",
-                  {'port': context.current['id'],
-                   'network': context.network.current['id']})
-        vnic_type = context.current.get(portbindings.VNIC_TYPE,
-                                        portbindings.VNIC_NORMAL)
+                  {'port': port_context.current['id'],
+                   'network': port_context.network.current['id']})
+        vnic_type = port_context.current.get(portbindings.VNIC_TYPE,
+                                             portbindings.VNIC_NORMAL)
         if vnic_type not in self.supported_vnic_types:
             LOG.debug("Refusing to bind due to unsupported vnic_type: %s",
                       vnic_type)
             return
 
-        for segment in context.segments_to_bind:
-            if self.check_segment(segment, context.host()):
-                context.set_binding(segment[api.ID],
-                                    self.vif_type,
-                                    self.vif_details)
+        for segment in port_context.segments_to_bind:
+            if self.check_segment(segment, port_context.host):
+                vif_details = dict(self.vif_details)
+                # TODO(ijw) should be in a library that the agent uses
+                vif_details['vhostuser_socket'] = \
+                    '/tmp/%s' % port_context.current['id']
+                vif_details['vhostuser_mode'] = \
+                    'client'
+                LOG.error('setting details: %s', vif_details)
+                port_context.set_binding(segment[api.ID],
+                                         self.vif_type,
+                                         vif_details)
                 LOG.debug("Bound using segment: %s", segment)
                 return
+
+    # TODO(ijw) should be pulled from a constants file
+    vif_type = 'vhostuser'
+    vif_details = {}
 
     def check_segment(self, segment, host):
         """Check if segment can be bound.
@@ -113,19 +131,10 @@ class VPPMechanismDriver(api.MechanismDriver):
         """
 
         # TODO(ijw): naive - doesn't check host, or configured
-        # physnets on the host
+        # physnets on the host.  Should work out if the binding
+        # can't be achieved before accepting it
 
         network_type = segment[api.NETWORK_TYPE]
-        if network_type not in self.allowed_network_types:
-            LOG.debug(
-                'Network %(network_id)s is of type %(network_type)s '
-                'but this mechanism driver only '
-                'support %(allowed_network_types)s.',
-                {'network_id': segment['id'],
-                 'network_type': network_type,
-                 'allowed_network_types': self.allowed_network_types})
-            return False
-
         if network_type not in self.allowed_network_types:
             LOG.debug(
                 'Network %(network_id)s is %(network_type)s, but this driver '
@@ -144,8 +153,8 @@ class VPPMechanismDriver(api.MechanismDriver):
                 LOG.debug(
                     'Network %(network_id)s is connected to physical '
                     'network %(physnet)s, but the physical network '
-                    ' is not one this mechdriver knows.  The physical network '
-                    ' must be known if binding is to succeed.',
+                    'is not one this mechdriver knows.  The physical network '
+                    'must be known if binding is to succeed.',
                     {'network_id': segment['id'],
                      'physnet': physnet}
                 )
@@ -156,16 +165,16 @@ class VPPMechanismDriver(api.MechanismDriver):
     def physnet_known(self, physnet):
         return physnet in self.physical_networks
 
-    def check_vlan_transparency(self, context):
+    def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
 
-        :param context: NetworkContext instance describing the network.
+        :param port_context: NetworkContext instance describing the network.
 
         In general we do not support VLAN transparency (yet).
         """
         return False
 
-    def update_port_postcommit(self, context):
+    def update_port_postcommit(self, port_context):
         """Work to do, post-DB commit, when updating a port
 
         After accepting an update_port, determine if we have any work to do
@@ -178,26 +187,68 @@ class VPPMechanismDriver(api.MechanismDriver):
         # ignore it.  Doing less work is nevertheless good, so we
         # should in future avoid the send.
 
-        current_bind = context.binding_levels.get(-1)
-        prev_bind = context.original_binding_levels.get(-1)
-        if current_bind is not None and \
-           current_bind.BOUND_DRIVER == self:
-            # then send the bind out
-            self.communicator.queue_bind(context.id,
-                                         context.segment,
-                                         context.host())
-        if prev_bind is not None and prev_bind.BOUND_DRIVER == self:
-            if current_bind is None or current_bind.BOUND_DRIVER != self:
+        LOG.error('in postcommit, port is %s' % str(port_context.current))
+
+        if port_context.binding_levels is not None:
+            current_bind = port_context.binding_levels[-1]
+            if port_context.original_binding_levels is None:
+                prev_bind = None
+            else:
+                prev_bind = port_context.original_binding_levels[-1]
+
+            # We have to explicitly avoid binding agent ports - DHCP,
+            # L3 etc. - as vhostuser. The interface code below takes
+            # care of those.
+
+            bind_type = 'vhostuser'
+
+            owner = port_context.current['device_owner']
+
+            for f in nl_const.DEVICE_OWNER_PREFIXES:
+                if owner.startswith(f):
+                    bind_type = 'plugtap'
+
+            if (current_bind is not None and
+               current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
+                # then send the bind out (may equally be an update on a bound
+                # port)
+                self.communicator.bind(port_context.current,
+                                       current_bind[api.BOUND_SEGMENT],
+                                       port_context.host,
+                                       bind_type)
+            elif (prev_bind is not None and
+                  prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # If we were the last binder of this port but are no longer
-                self.communicator.send_unbind(context.id,
-                                              context.original_host())
+                self.communicator.unbind(port_context.current,
+                                         port_context.original_host)
 
 
 class AgentCommunicator(object):
     def __init__(self):
-        self.agents = CONF.vpp.agents.split(';')
+        if cfg.CONF.ml2_vpp.agents is None:
+            LOG.error('ml2_vpp needs agents configured right now')
 
-    def bind(self, msg):
+        self.agents = cfg.CONF.ml2_vpp.agents.split(';')
+        self.recursive = False
+        self.queue = eventlet.queue.Queue()
+        self.sync_thread = threading.Thread(
+            name='vpp-sync',
+            target=self._worker)
+        self.sync_thread.start()
+
+    def _worker(self):
+        while True:
+            msg = self.queue.get()
+            op = msg[0]
+            args = msg[1:]
+            if op == 'bind':
+                self.send_bind(*args)
+            elif op == 'unbind':
+                self.send_unbind(*args)
+            else:
+                LOG.error('unknown queue op %s' % str(op))
+
+    def bind(self, port, segment, host, type):
         """Queue up a bind message for sending.
 
         This is called in the sequence of a REST call and should take
@@ -205,40 +256,60 @@ class AgentCommunicator(object):
         """
         # TODO(ijw): should queue the bind, not send it
 
-        self.send_bind(msg)
+        self.queue.put(['bind', port, segment, host, type])
+        self.send_bind(port, segment, host, type)
 
-    def _broadcast_msg(self, msg):
-        # TODO(ijw): since we pretty much always know the host to which the
-        # port is being bound or unbound, there's absolutely no reason
-        # to broadcast this, but right now this saves us config work.
-        # In a small cloud with not too many ports the workload on the
-        # agents is not onerous.
-        for url in self.agents:
-            requests.put(url, msg)
-
-    def send_bind(self, port_id, bind_type, host):
-        msg = {
-            'uuid': port_id,
-            'bind_type': bind_type,
-            'host': host,
-            'bound': True
-        }
-
-        self._broadcast_msg(msg)
-
-    def unbind(self, port_id, host):
+    def unbind(self, port, host):
         """Queue up an unbind message for sending.
 
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
         # TODO(ijw): should queue the unbind, not send it
-        self.send_unbind(port_id, host)
 
-    def send_unbind(self, port_id, host):
-        msg = {
-            'uuid': port_id,
-            'bound': False
+        self.queue.put(['unbind', port, host])
+
+    def send_bind(self, port, segment, host, type):
+        data = {
+            'host': host,
+            'mac_address': port['mac_address'],
+            'mtu': 1500,  # not this, but what?: port['mtu'],
+            'network_type': segment[api.NETWORK_TYPE],
+            'segmentation_id': segment[api.SEGMENTATION_ID],
+            'binding_type': type
         }
+        self._broadcast_msg('ports/%s/bind' % port['id'], data)
 
-        self.broadcast_msg(msg)
+        # This should only be sent when we're certain that the port
+        # is bound If this is in a bg thread, it should be sent there,
+        # and it should only go when we have confirmed that the far end
+        # has done its work.  The VM will start when it's called and
+        # will wait until then.  For us this is useful beyond the usual
+        # reasons of deplying the VM start until DHCP can be reached,
+        # because we know the server socket is in place for the port.
+
+        context = n_context.get_admin_context()
+        plugin = manager.NeutronManager.get_plugin()
+        # Bodge
+        if self.recursive:
+            LOG.warning('Your recursion check hit on activating port')
+        else:
+            self.recursive = True
+            plugin.update_port_status(context, port['id'],
+                                      n_const.PORT_STATUS_ACTIVE,
+                                      host=host)
+            self.recursive = False
+
+    def send_unbind(self, port, host):
+        data = {}
+        self._broadcast_msg('ports/%s/unbind/%s' % (port['id'], host),
+                            data)
+
+    def _broadcast_msg(self, urlfrag, msg):
+        # TODO(ijw): since we pretty much always know the host to which the
+        # port is being bound or unbound, there's absolutely no reason
+        # to broadcast this, but right now this saves us config work.
+        # In a small cloud with not too many ports the workload on the
+        # agents is not onerous.
+        for url in self.agents:
+            requests.put(url + urlfrag, data=msg)
