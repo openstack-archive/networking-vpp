@@ -67,11 +67,11 @@ def get_vhostuser_name(uuid):
 
 class VPPForwarder(object):
 
-    def __init__(self, vlan_trunk_if=None,
+    def __init__(self, log, vlan_trunk_if=None,
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
                  vxlan_vrf=None):
-        self.vpp = vpp.VPPInterface()
+        self.vpp = vpp.VPPInterface(log)
 
         # This is the trunk interface for VLAN networking
         self.trunk_if = vlan_trunk_if
@@ -95,15 +95,15 @@ class VPPForwarder(object):
 
             if ifname.startswith('tap-'):
                 # all VPP tap interfaces are of this form
-                self.vpp.delete_tap(f.swifindex)
+                self.vpp.delete_tap(f.sw_if_index)
             elif ifname.startswith('VirtualEthernet'):
                 # all VPP vhostuser interfaces are of this form
-                self.vpp.delete_vhostuser(f.swifindex)
+                self.vpp.delete_vhostuser(f.sw_if_index)
 
             trunk_ifstruct = self.vpp.get_interface(self.trunk_if)
            if trunk_ifstruct is None:
                raise Exception("Could not find interface %s" % self.trunk_if)
-            self.trunk_ifidx = trunk_ifstruct.swifindex
+            self.trunk_ifidx = trunk_ifstruct.sw_if_index
 
             # This interface is not automatically up just because
             # we've started and we need to ensure it is before
@@ -297,7 +297,8 @@ def main():
 
     cfg.CONF(sys.argv[1:])
     global vppf
-    vppf = VPPForwarder(vlan_trunk_if=cfg.CONF.ml2_vpp.vlan_trunk_if,
+    vppf = VPPForwarder(app.logger,
+                       vlan_trunk_if=cfg.CONF.ml2_vpp.vlan_trunk_if,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
                         vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)

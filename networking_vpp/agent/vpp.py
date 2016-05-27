@@ -51,8 +51,8 @@ class VPPInterface(object):
         t = vpp_papi.sw_interface_dump(0, b'ignored')
 
         for interface in t:
-            if interface.vlmsgid == vpp_papi.VL_API_SW_INTERFACE_DETAILS:
-                yield (fix_string(interface.interfacename), interface)
+            if interface.vl_msg_id == vpp_papi.VL_API_SW_INTERFACE_DETAILS:
+                yield (fix_string(interface.interface_name), interface)
 
     def get_interface(self, name):
         for (ifname, f) in self.get_interfaces():
@@ -77,7 +77,7 @@ class VPPInterface(object):
 
         _check_retval(t)
 
-        return t.swifindex  # will be -1 on failure (e.g. 'already exists')
+        return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
     def delete_tap(self, idx):
         vpp_papi.tap_delete(idx)
@@ -88,7 +88,7 @@ class VPPInterface(object):
     #############################
 
     def create_vhostuser(self, ifpath, mac):
-        print ('Creating %s as a port' % ifpath)
+        self.LOG.info('Creating %s as a port' % ifpath)
         t = vpp_papi.create_vhost_user_if(True,  # is a server?
                                           str(ifpath),  # unicode not allowed.
                                           False,  # Who knows what renumber is?
@@ -96,8 +96,10 @@ class VPPInterface(object):
                                           True,  # use custom MAC
                                           mac_to_bytes(mac)
                                           )
-
-        _check_retval(t)
+       # TODO(ijw) this retval has changed format so I've temporarily
+       # disabled it until I can work out what's going on
+       self.LOG.error(str(t))
+        #_check_retval(t[0])
 
         # The permission that qemu runs as (TODO(ijw): should be
         # configurable)
@@ -106,7 +108,7 @@ class VPPInterface(object):
         os.chown(ifpath, uid, gid)
         os.chmod(ifpath, 0o770)
 
-        return t.swifindex
+        return t.sw_if_index
 
     def delete_vhostuser(self, idx):
         t = vpp_papi.delete_vhost_user_if(idx)
@@ -115,7 +117,8 @@ class VPPInterface(object):
 
     ########################################
 
-    def __init__(self):
+    def __init__(self, log):
+       self.LOG = log
         self.r = vpp_papi.connect("test_papi")
 
     def disconnect(self):
@@ -141,7 +144,7 @@ class VPPInterface(object):
 
         _check_retval(t)
 
-        return t.swifindex
+        return t.sw_if_index
 
     def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
         t = vpp_papi.vxlan_add_del_tunnel(
@@ -154,7 +157,7 @@ class VPPInterface(object):
 
         _check_retval(t)
 
-        return t.swifindex
+        return t.sw_if_index
 
 
     ########################################
