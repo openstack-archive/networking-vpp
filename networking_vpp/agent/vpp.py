@@ -18,6 +18,9 @@ import grp
 import os
 import pwd
 import vpp_papi
+from oslo_log import log as logging
+
+LOG = logging.getLogger(__name__)
 
 
 def mac_to_bytes(mac):
@@ -35,6 +38,7 @@ def _vpp_cb(*args, **kwargs):
 
 
 def _check_retval(t):
+    LOG.debug("Checking return value for: %s" % t)
     if t.retval != 0:
         print ('FAIL? retval here is %s' % t.retval)
 #        raise Exception('failed in backend')
