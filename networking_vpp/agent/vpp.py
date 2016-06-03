@@ -38,7 +38,7 @@ def _vpp_cb(*args, **kwargs):
 
 
 def _check_retval(t):
-    LOG.debug("Checking return value for: %s" % t)
+    #LOG.debug("Checking return value for: %s" % t)
     if t.retval != 0:
         print ('FAIL? retval here is %s' % t.retval)
 #        raise Exception('failed in backend')
