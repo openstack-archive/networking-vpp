@@ -38,11 +38,13 @@ def _vpp_cb(*args, **kwargs):
 
 
 def _check_retval(t):
-    #LOG.debug("Checking return value for: %s" % t)
-    print(t)
-    if t.retval != 0:
-        print ('FAIL? retval here is %s' % t.retval)
-#        raise Exception('failed in backend')
+    try:
+        print("checking return value for object: %s" % str(t))
+        if t.retval != 0:
+            print ('FAIL? retval here is %s' % t.retval)
+    #        raise Exception('failed in backend')
+    except AttributeError as e:
+        print("Error: %s" % e)
 
 
 # Sometimes a callback fires unexpectedly.  We need to catch them
@@ -101,6 +103,8 @@ class VPPInterface(object):
                                           True,  # use custom MAC
                                           mac_to_bytes(mac)
                                           )
+        #LOG.debug("Created vhost user interface object: %s" % str(t))
+        print("Created vhost user interface object: %s" % str(t))
        # TODO(ijw) this retval has changed format so I've temporarily
        # disabled it until I can work out what's going on
        self.LOG.error(str(t))
@@ -116,6 +120,8 @@ class VPPInterface(object):
         return t.sw_if_index
 
     def delete_vhostuser(self, idx):
+        #LOG.debug("Deleting VPP interface - index: %s" % idx)
+        print("Deleting VPP interface - index: %s" % idx)
         t = vpp_papi.delete_vhost_user_if(idx)
 
         _check_retval(t)
