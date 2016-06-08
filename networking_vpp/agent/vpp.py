@@ -113,7 +113,7 @@ class VPPInterface(object):
         # The permission that qemu runs as (TODO(ijw): should be
         # configurable)
         uid = pwd.getpwnam("libvirt-qemu").pw_uid
-        gid = grp.getgrnam("kvm").gr_gid
+        gid = grp.getgrnam("libvirtd").gr_gid
         os.chown(ifpath, uid, gid)
         os.chmod(ifpath, 0o770)
 
