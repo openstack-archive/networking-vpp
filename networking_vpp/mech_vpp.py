@@ -212,6 +212,15 @@ class VPPMechanismDriver(api.MechanismDriver):
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # then send the bind out (may equally be an update on a bound
                 # port)
+                LOG.debug("Sending bind request to agent for port %(port)"
+                          "segment %(segment), host %(host), type %(bind_type)",
+                          {
+                          'port': port_context.current,
+                          'segment': current_bind[api.BOUND_SEGMENT],
+                          'host': port_context.host,
+                          'bind_type': bind_type
+                          }
+                         )
                 self.communicator.bind(port_context.current,
                                        current_bind[api.BOUND_SEGMENT],
                                        port_context.host,
@@ -219,6 +228,13 @@ class VPPMechanismDriver(api.MechanismDriver):
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # If we were the last binder of this port but are no longer
+                LOG.debug("Sending unbind request to agent for port %(port)"
+                          "on host %(host)",
+                          {
+                          'port': port_context.current,
+                          'host': port_context.original_host,
+                          }
+                         )
                 self.communicator.unbind(port_context.current,
                                          port_context.original_host)
 
@@ -255,7 +271,6 @@ class AgentCommunicator(object):
         as little time as possible.
         """
         # TODO(ijw): should queue the bind, not send it
-
         self.queue.put(['bind', port, segment, host, type])
         self.send_bind(port, segment, host, type)
 
@@ -266,7 +281,6 @@ class AgentCommunicator(object):
         as little time as possible.
         """
         # TODO(ijw): should queue the unbind, not send it
-
         self.queue.put(['unbind', port, host])
 
     def send_bind(self, port, segment, host, type):
