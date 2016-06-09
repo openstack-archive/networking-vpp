@@ -204,16 +204,22 @@ class VPPMechanismDriver(api.MechanismDriver):
 
             owner = port_context.current['device_owner']
 
+            # Neutron really ought to tell us what port type it thinks
+            # is sensible, but it leaves us to make an educated guess.
+            LOG.error('testing owner %s against (%s)'
+                      % (owner, ' '.join(nl_const.DEVICE_OWNER_PREFIXES)))
             for f in nl_const.DEVICE_OWNER_PREFIXES:
                 if owner.startswith(f):
                     bind_type = 'plugtap'
+
+            LOG.error('binding to with type %s' % bind_type)
 
             if (current_bind is not None and
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # then send the bind out (may equally be an update on a bound
                 # port)
-                LOG.debug("Sending bind request to agent for port %(port)"
-                          "segment %(segment), host %(host), type %(bind_type)",
+                LOG.debug("Sending bind request to agent for port %(port)s"
+                          "segment %(segment)s, host %(host)s, type %(bind_type)s",
                           {
                           'port': port_context.current,
                           'segment': current_bind[api.BOUND_SEGMENT],
@@ -228,8 +234,8 @@ class VPPMechanismDriver(api.MechanismDriver):
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # If we were the last binder of this port but are no longer
-                LOG.debug("Sending unbind request to agent for port %(port)"
-                          "on host %(host)",
+                LOG.debug("Sending unbind request to agent for port %(port)s"
+                          "on host %(host)s",
                           {
                           'port': port_context.current,
                           'host': port_context.original_host,
@@ -264,15 +270,14 @@ class AgentCommunicator(object):
             else:
                 LOG.error('unknown queue op %s' % str(op))
 
-    def bind(self, port, segment, host, type):
+    def bind(self, port, segment, host, bind_type):
         """Queue up a bind message for sending.
 
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
-        # TODO(ijw): should queue the bind, not send it
-        self.queue.put(['bind', port, segment, host, type])
-        self.send_bind(port, segment, host, type)
+
+        self.send_bind(port, segment, host, bind_type)
 
     def unbind(self, port, host):
         """Queue up an unbind message for sending.
@@ -280,7 +285,7 @@ class AgentCommunicator(object):
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
-        # TODO(ijw): should queue the unbind, not send it
+
         self.queue.put(['unbind', port, host])
         self.send_unbind(port, host)
 
@@ -291,7 +296,7 @@ class AgentCommunicator(object):
             'mtu': 1500,  # not this, but what?: port['mtu'],
             'network_type': segment[api.NETWORK_TYPE],
             'segmentation_id': segment[api.SEGMENTATION_ID],
-            'binding_type': type
+            'bind_type': type
         }
         self._broadcast_msg('ports/%s/bind' % port['id'], data)
 
@@ -307,6 +312,12 @@ class AgentCommunicator(object):
         plugin = manager.NeutronManager.get_plugin()
         # Bodge
         if self.recursive:
+            # This happens right now because when we update the port
+            # status, we update the port and the update notification
+            # comes through to here.
+            # TODO(ijw) wants a more permanent fix, because this only
+            # happens due to the threading model.  We should be
+            # spotting relevant changes in postcommit.
             LOG.warning('Your recursion check hit on activating port')
         else:
             self.recursive = True

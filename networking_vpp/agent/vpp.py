@@ -77,7 +77,7 @@ class VPPInterface(object):
 
     def create_tap(self, ifname, mac):
         t = vpp_papi.tap_connect(False,  # random MAC
-                                 ifname,
+                                 str(ifname), # TODO is this not a string?
                                  mac_to_bytes(mac),
                                  False,  # renumber - who knows, no doc
                                  0)  # customdevinstance - who knows, no doc
