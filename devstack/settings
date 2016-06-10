@@ -8,7 +8,7 @@ VPP_CP_BINARY="$MECH_VPP_BIN_DIR/vpp-agent"
 MECH_VPP_AGENTLIST=http://sjo-smf-ubuntu-server-2:2704/,http://sjo-smf-ubuntu-server-3:2704/,
 
 # This is VPP's interface name for the trunk
-VLAN_TRUNK_IF='TenGigabitEthernet9/0/0'
-VXLAN_SRC_ADDR=
-VXLAN_BCAST_ADDR=
-VXLAN_VRF=1
+VLAN_TRUNK_IF=${VLAN_TRUNK_IF:-'GigabitEthernet2/2/0'}
+VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
+VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
+VXLAN_VRF=${VXLAN_VRF:-1}
