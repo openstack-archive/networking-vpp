@@ -39,7 +39,8 @@ overcommit memory on the target machine.
 I've tested this on Ubuntu 16.04 - which, note, is not directly supported by the devstack
 team, though it WFM.  You will need to export FORCE=yes in yur environment before you
 run devstack.  You'll also need to disable libvirt security for qemu, as libvirt doesn't
-play well with vhostuser sockets in its default setup.  CentOS testing is ongoing.
+play well with vhostuser sockets in its default setup.  CentOS testing is
+ongoing. An initial CentOS 7 guide can be found at `<CENTOS_7-guide.rst>`_
 
 What overlays does it support?
 ------------------------------
