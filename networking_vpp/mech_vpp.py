@@ -250,7 +250,8 @@ class AgentCommunicator(object):
         if cfg.CONF.ml2_vpp.agents is None:
             LOG.error('ml2_vpp needs agents configured right now')
 
-        self.agents = cfg.CONF.ml2_vpp.agents.split(';')
+        self.agents = cfg.CONF.ml2_vpp.agents.split(',')
+        LOG.debug("Configured ML2_VPP agents: %s " % str(self.agents))
         self.recursive = False
         self.queue = eventlet.queue.Queue()
         self.sync_thread = threading.Thread(
