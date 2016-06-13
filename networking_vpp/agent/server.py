@@ -369,7 +369,7 @@ def main():
     api.add_resource(PortUnbind, '/ports/<id>/unbind/<host>')
 
 
-    app.run(port=2704)
+    app.run(host='0.0.0.0',port=2704)
 
 if __name__ == '__main__':
 
