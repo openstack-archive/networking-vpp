@@ -339,11 +339,11 @@ class AgentCommunicator(object):
 
     def send_unbind(self, port, host):
         data = {}
-        self._unicast_msg('ports/%s/unbind/%s' % (port['id'], host),
-                            data)
+        self._unicast_msg('ports/%s/unbind/%s' % (port['id'], host), data)
 
     def _unicast_msg(self, urlfrag, msg):
-        # Send unicast message to the agent on the host
+        # Send unicast message to the agent running on the host
         for url in self.agents:
-            LOG.debug("ML2_VPP: Sending message: %s to agent: %s" % (msg, url + urlfrag))
-            requests.put(url + urlfrag, data=msg)
+            if msg['host'] in url:
+                LOG.debug("ML2_VPP: Sending message:%s to agent at:%s on host:%s" % (msg, url + urlfrag, msg['host']))
+                requests.put(url + urlfrag, data=msg)
