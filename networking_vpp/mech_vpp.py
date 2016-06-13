@@ -282,8 +282,8 @@ class AgentCommunicator(object):
                   'port': port, 'segment': segment,
                   'host': host, 'type': type
                   } )
-         self.queue.put(['bind', port, segment, host, type])
-         #self.send_bind(port, segment, host, type)
+         #self.queue.put(['bind', port, segment, host, type])
+         self.send_bind(port, segment, host, type)
 
     def unbind(self, port, host):
         """Queue up an unbind message for sending.
@@ -297,8 +297,8 @@ class AgentCommunicator(object):
                   'port': port,
                   'host': host
                   } )
-         self.queue.put(['unbind', port, host])
-         #self.send_unbind(port, host)
+         #self.queue.put(['unbind', port, host])
+         self.send_unbind(port, host)
 
     def send_bind(self, port, segment, host, type):
         data = {
