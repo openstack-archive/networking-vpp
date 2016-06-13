@@ -91,14 +91,14 @@ class VPPMechanismDriver(api.MechanismDriver):
         by the QoS service to identify the available QoS rules you
         can use with ports.
         """
-        LOG.debug("Attempting to bind port %(port)s on "
+        LOG.debug("ML2_VPP: Attempting to bind port %(port)s on "
                   "network %(network)s",
                   {'port': port_context.current['id'],
                    'network': port_context.network.current['id']})
         vnic_type = port_context.current.get(portbindings.VNIC_TYPE,
                                              portbindings.VNIC_NORMAL)
         if vnic_type not in self.supported_vnic_types:
-            LOG.debug("Refusing to bind due to unsupported vnic_type: %s",
+            LOG.debug("ML2_VPP: Refusing to bind due to unsupported vnic_type: %s",
                       vnic_type)
             return
 
@@ -110,11 +110,11 @@ class VPPMechanismDriver(api.MechanismDriver):
                     '/tmp/%s' % port_context.current['id']
                 vif_details['vhostuser_mode'] = \
                     'client'
-                LOG.error('setting details: %s', vif_details)
+                LOG.debug('ML2_VPP: Setting details: %s', vif_details)
                 port_context.set_binding(segment[api.ID],
                                          self.vif_type,
                                          vif_details)
-                LOG.debug("Bound using segment: %s", segment)
+                LOG.debug("ML2_VPP: Bound using segment: %s", segment)
                 return
 
     # TODO(ijw) should be pulled from a constants file
@@ -137,7 +137,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         network_type = segment[api.NETWORK_TYPE]
         if network_type not in self.allowed_network_types:
             LOG.debug(
-                'Network %(network_id)s is %(network_type)s, but this driver '
+                'ML2_VPP: Network %(network_id)s is %(network_type)s, but this driver '
                 'only supports types %(allowed_network_types)s.  The type '
                 'must be supported  if binding is to succeed.',
                 {'network_id': segment['id'],
@@ -151,7 +151,7 @@ class VPPMechanismDriver(api.MechanismDriver):
             physnet = segment[api.PHYSICAL_NETWORK]
             if not self.physnet_known(physnet):
                 LOG.debug(
-                    'Network %(network_id)s is connected to physical '
+                    'ML2_VPP: Network %(network_id)s is connected to physical '
                     'network %(physnet)s, but the physical network '
                     'is not one this mechdriver knows.  The physical network '
                     'must be known if binding is to succeed.',
@@ -187,7 +187,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         # ignore it.  Doing less work is nevertheless good, so we
         # should in future avoid the send.
 
-        LOG.error('in postcommit, port is %s' % str(port_context.current))
+        LOG.debug('ML2_VPP: update_port_postcommit, port is %s' % str(port_context.current))
 
         if port_context.binding_levels is not None:
             current_bind = port_context.binding_levels[-1]
@@ -218,7 +218,7 @@ class VPPMechanismDriver(api.MechanismDriver):
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # then send the bind out (may equally be an update on a bound
                 # port)
-                LOG.debug("Sending bind request to agent for port %(port)s"
+                LOG.debug("ML2-VPP: Sending bind request to agent communicator for port %(port)s"
                           "segment %(segment)s, host %(host)s, type %(bind_type)s",
                           {
                           'port': port_context.current,
@@ -234,7 +234,7 @@ class VPPMechanismDriver(api.MechanismDriver):
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # If we were the last binder of this port but are no longer
-                LOG.debug("Sending unbind request to agent for port %(port)s"
+                LOG.debug("ML2_VPP: Sending unbind request to agent communicator for port %(port)s"
                           "on host %(host)s",
                           {
                           'port': port_context.current,
@@ -248,10 +248,9 @@ class VPPMechanismDriver(api.MechanismDriver):
 class AgentCommunicator(object):
     def __init__(self):
         if cfg.CONF.ml2_vpp.agents is None:
-            LOG.error('ml2_vpp needs agents configured right now')
-
+            LOG.error('ML2_VPP: needs agents configured right now')
         self.agents = cfg.CONF.ml2_vpp.agents.split(',')
-        LOG.debug("Configured ML2_VPP agents: %s " % str(self.agents))
+        LOG.debug("ML2_VPP: Configured agents are: %s " % str(self.agents))
         self.recursive = False
         self.queue = eventlet.queue.Queue()
         self.sync_thread = threading.Thread(
@@ -269,7 +268,7 @@ class AgentCommunicator(object):
             elif op == 'unbind':
                 self.send_unbind(*args)
             else:
-                LOG.error('unknown queue op %s' % str(op))
+                LOG.error('ML2_VPP: unknown queue op %s' % str(op))
 
     def bind(self, port, segment, host, bind_type):
         """Queue up a bind message for sending.
@@ -277,8 +276,14 @@ class AgentCommunicator(object):
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
-
-        self.send_bind(port, segment, host, bind_type)
+        LOG.debug("ML2_VPP: Queing bind request for port:%(port)s, segment:%(segment)s"
+                  "on host:%(host)s, type:%(type)s",
+                  {
+                  'port': port, 'segment': segment,
+                  'host': host, 'type': type
+                  } )
+         self.queue.put(['bind', port, segment, host, type])
+         #self.send_bind(port, segment, host, type)
 
     def unbind(self, port, host):
         """Queue up an unbind message for sending.
@@ -286,9 +291,14 @@ class AgentCommunicator(object):
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
-
-        self.queue.put(['unbind', port, host])
-        self.send_unbind(port, host)
+        LOG.debug("ML2_VPP: Queing unbind request for port:%(port)s,"
+                  "on host:%(host)s,",
+                  {
+                  'port': port,
+                  'host': host
+                  } )
+         self.queue.put(['unbind', port, host])
+         #self.send_unbind(port, host)
 
     def send_bind(self, port, segment, host, type):
         data = {
@@ -319,7 +329,7 @@ class AgentCommunicator(object):
             # TODO(ijw) wants a more permanent fix, because this only
             # happens due to the threading model.  We should be
             # spotting relevant changes in postcommit.
-            LOG.warning('Your recursion check hit on activating port')
+            LOG.warning('ML2_VPP: Your recursion check hit on activating port')
         else:
             self.recursive = True
             plugin.update_port_status(context, port['id'],
@@ -339,4 +349,5 @@ class AgentCommunicator(object):
         # In a small cloud with not too many ports the workload on the
         # agents is not onerous.
         for url in self.agents:
+            LOG.debug("ML2_VPP: Sending message: %s to agent: %s" % (msg, url + urlfrag))
             requests.put(url + urlfrag, data=msg)
