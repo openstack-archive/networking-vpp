@@ -290,14 +290,16 @@ class AgentCommunicator(object):
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
-        LOG.debug("ML2_VPP: Queing bind request for port:%(port)s, segment:%(segment)s"
+        LOG.debug("ML2_VPP: Communicating bind request to agent for port:%(port)s, segment:%(segment)s"
                   "on host:%(host)s, type:%(type)s",
                   {
                   'port': port, 'segment': segment,
                   'host': host, 'type': type
                   } )
-         #self.queue.put(['bind', port, segment, host, type])
-         self.send_bind(port, segment, host, type)
+        #self.queue.put(['bind', port, segment, host, type])
+        ##TODO(njoy) Implement an RPC call with request response to confirm that binding/unbinding has
+        ##been successful at the agent
+        self.send_bind(port, segment, host, type)
 
     def unbind(self, port, host):
         """Queue up an unbind message for sending.
@@ -305,7 +307,7 @@ class AgentCommunicator(object):
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
-        LOG.debug("ML2_VPP: Queing unbind request for port:%(port)s,"
+        LOG.debug("ML2_VPP: Communicating unbind request to agent for port:%(port)s,"
                   "on host:%(host)s,",
                   {
                   'port': port,
@@ -358,6 +360,7 @@ class AgentCommunicator(object):
     def _unicast_msg(self, urlfrag, msg):
         # Send unicast message to the agent running on the host
         host_ip = socket.gethostbyname(msg['host'])
+        LOG.debug("ML2_VPP: Messaging host at IP Address: %s" % host_ip)
         for url in self.agents:
             if host_ip in url:
                 LOG.debug("ML2_VPP: Sending message:%s to agent at:%s on host:%s" % (msg, url+urlfrag, host_ip))
