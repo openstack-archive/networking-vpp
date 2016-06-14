@@ -244,6 +244,20 @@ class VPPMechanismDriver(api.MechanismDriver):
                 self.communicator.unbind(port_context.current,
                                          port_context.original_host)
 
+    def delete_port_postcommit(self, port_context):
+        port = port_context.current
+        host = port_context.host
+        LOG.debug('ML2_VPP: delete_port_postcommit, port is %s' % str(port))
+        LOG.debug("ML2_VPP: Sending unbind request to agent communicator for port %(port)s"
+                          "on host %(host)s",
+                          {
+                          'port': port,
+                          'host': host,
+                          }
+                    )
+        self.communicator.unbind(port, host)
+
+
 
 class AgentCommunicator(object):
     def __init__(self):
