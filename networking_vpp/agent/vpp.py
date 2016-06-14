@@ -149,9 +149,11 @@ class VPPInterface(object):
         _check_retval(t)
 
     def create_vlan_subif(self, if_id, vlan_tag):
+        print("Creating vlan subinterface with ID:%s and vlan_tag:%s" % (if_id, vlan_tag))
         t = vpp_papi.create_vlan_subif(
             if_id,
             vlan_tag)
+        print("Create vlan subinterface response: %s" % str(t))
 
         _check_retval(t)
 
