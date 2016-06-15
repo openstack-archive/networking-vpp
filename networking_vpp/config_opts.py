@@ -26,6 +26,10 @@ vpp_opts = [
                help=_("Broadcast address used to set up VXLAN tunnels.")),
     cfg.StrOpt('vxlan_vrf',
                help=_("VPP's VRF for the encapped VXLAN packets.")),
+    cfg.StrOpt('qemu_user',
+               help=_("QEMU user. Leave blank for default user")),
+    cfg.StrOpt('qemu_group',
+               help=_("QEMU group. Leave blank for default group")),
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")

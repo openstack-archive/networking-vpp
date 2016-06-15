@@ -32,6 +32,7 @@ from flask_restful import Api
 from flask_restful import reqparse
 from flask_restful import Resource
 import os
+import distro
 import sys
 import vpp
 
@@ -62,6 +63,31 @@ VHOSTUSER_DIR = '/tmp'
 def get_vhostuser_name(uuid):
     return os.path.join(VHOSTUSER_DIR, uuid)
 
+
+def get_distro_family():
+    if distro.id() in ['rhel', 'centos', 'fedora']:
+        return 'redhat'
+    else:
+        return distro.id()
+
+
+def get_qemu_default():
+    distro = get_distro_family()
+    if distro == 'redhat':
+        qemu_user = 'qemu'
+        qemu_group = 'qemu'
+    elif distro == 'ubuntu':
+        qemu_user = 'libvirt-qemu'
+        qemu_group = 'kvm'
+    else:
+        # let's just try libvirt-qemu for now, maybe we should instead
+        # print error messsage and exit?
+        qemu_user = 'libvirt-qemu'
+        qemu_group = 'kvm'
+
+    return (qemu_user, qemu_group)
+
+
 ######################################################################
 
 
@@ -70,8 +96,13 @@ class VPPForwarder(object):
     def __init__(self, log, vlan_trunk_if=None,
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
-                 vxlan_vrf=None):
+                 vxlan_vrf=None,
+                 qemu_user=None,
+                 qemu_group=None):
         self.vpp = vpp.VPPInterface(log)
+
+        self.qemu_user = qemu_user
+        self.qemu_group = qemu_group
 
         # This is the trunk interface for VLAN networking
         self.trunk_if = vlan_trunk_if
@@ -236,7 +267,8 @@ class VPPForwarder(object):
 
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
-                iface = self.vpp.create_vhostuser(path, mac)
+                iface = self.vpp.create_vhostuser(path, mac, self.qemu_user,
+                                                  self.qemu_group)
                 props = {'bind_type': 'vhostuser', 'path': uuid}
             else:
                 raise Exception('unsupported interface type')
@@ -348,13 +380,26 @@ def main():
     app.logger.debug('Debug logging enabled')
     # TODO(ijw) port etc. should probably be configurable.
 
+    # If the user and/or group are specified in config file, we will use
+    # them as configured; otherwise we try to use defaults depending on
+    # distribution. Currently only supporting ubuntu and redhat.
+    qemu_user = cfg.CONF.ml2_vpp.qemu_user
+    qemu_group = cfg.CONF.ml2_vpp.qemu_group
+    default_user, default_group = get_qemu_default()
+    if not qemu_user:
+        qemu_user = default_user
+    if not qemu_group:
+        qemu_group = default_group
+
     cfg.CONF(sys.argv[1:])
     global vppf
     vppf = VPPForwarder(app.logger,
-                       vlan_trunk_if=cfg.CONF.ml2_vpp.vlan_trunk_if,
+                        vlan_trunk_if=cfg.CONF.ml2_vpp.vlan_trunk_if,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
-                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)
+                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf,
+                        qemu_user=qemu_user,
+                        qemu_group=qemu_group)
 
 
 
