@@ -366,7 +366,7 @@ def main():
     api = Api(app)
 
     api.add_resource(PortBind, '/ports/<id>/bind')
-    api.add_resource(PortUnbind, '/ports/<id>/unbind/<host>')
+    api.add_resource(PortUnbind, '/ports/<id>/unbind')
 
 
     app.run(host='0.0.0.0',port=2704)
