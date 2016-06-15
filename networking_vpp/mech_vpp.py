@@ -354,7 +354,7 @@ class AgentCommunicator(object):
             self.recursive = False
 
     def send_unbind(self, port, host):
-        data = {}
+        data = {'host': host}
         self._unicast_msg('ports/%s/unbind/%s' % (port['id'], host), data)
 
     def _unicast_msg(self, urlfrag, msg):
