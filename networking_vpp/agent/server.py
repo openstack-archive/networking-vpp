@@ -258,14 +258,12 @@ class VPPForwarder(object):
 
     def unbind_interface_on_host(self, uuid):
         if uuid not in self.interfaces:
-            app.logger.debug('unknown port %s unbinding request - ignored',
-                             uuid)
+            app.logger.debug("unknown port %s unbinding request - ignored" % uuid)
         else:
 
             iface_idx, props = self.interfaces[uuid]
 
-            app.logger.debug('unbinding port %s, recorded as type %s',
-                             (uuid, props['bind_type']))
+            app.logger.debug("unbinding port %s, recorded as type %s" % (uuid, props['bind_type']))
 
             # We no longer need this interface.  Specifically if it's
             # a vhostuser interface it's annoying to have it around
