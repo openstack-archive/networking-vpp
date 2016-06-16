@@ -39,7 +39,7 @@ cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
 
 class VPPMechanismDriver(api.MechanismDriver):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
-    allowed_network_types = [p_constants.TYPE_VLAN,p_constants.TYPE_VXLAN]
+    allowed_network_types = [p_constants.TYPE_FLAT,p_constants.TYPE_VLAN,p_constants.TYPE_VXLAN]
     MECH_NAME = 'vpp'
 
     # TODO(ijw): we have no agent registration because we're not using
@@ -322,7 +322,7 @@ class AgentCommunicator(object):
             'mac_address': port['mac_address'],
             'mtu': 1500,  # not this, but what?: port['mtu'],
             'network_type': segment[api.NETWORK_TYPE],
-            'segmentation_id': segment[api.SEGMENTATION_ID],
+            'segmentation_id': segment[api.SEGMENTATION_ID] if segment[api.SEGMENTATION_ID] is not None else 0,
             'bind_type': type
         }
         self._unicast_msg('ports/%s/bind' % port['id'], data)

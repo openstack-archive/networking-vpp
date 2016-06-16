@@ -20,6 +20,8 @@ vpp_opts = [
                help=_("HTTP URLs of agents on compute nodes.")),
     cfg.StrOpt('vlan_trunk_if',
                help=_("VPP's interface name for the VLAN trunk")),
+    cfg.StrOpt('flat_network_if',
+               help=_("VPP's interface name for the Flat network")),
     cfg.StrOpt('vxlan_src_addr',
                help=_("Source address used for VXLAN tunnel packets.")),
     cfg.StrOpt('vxlan_bcast_addr',
