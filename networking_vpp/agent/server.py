@@ -72,6 +72,7 @@ def get_distro_family():
 
 
 def get_qemu_default():
+    # TODO(ijw): this should be moved to the devstack code
     distro = get_distro_family()
     if distro == 'redhat':
         qemu_user = 'qemu'
