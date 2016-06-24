@@ -145,7 +145,7 @@ class VPPForwarder(object):
         trunk_ifstruct = self.vpp.get_interface(self.trunk_if) if self.trunk_if else None
         flat_ifstruct = self.vpp.get_interface(self.flat_if) if self.flat_if else None
         if trunk_ifstruct is None and flat_ifstruct is None:
-            raise Exception("Could not find a VPP uplink interface:%s-%s" % (self.trunk_if, self.flat_if))
+            raise Exception("Could not find a VPP uplink interface:%s" % self.trunk_if or self.flat_if)
         if trunk_ifstruct is not None:
             self.trunk_ifidx = trunk_ifstruct.sw_if_index
 
