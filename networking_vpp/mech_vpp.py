@@ -348,10 +348,11 @@ class AgentCommunicator(object):
         hostname = msg['host']
         host_ip = socket.gethostbyname(hostname)
         LOG.debug("ML2_VPP: Agent host IP address: %s" % host_ip)
-        for url in self.agents:
-            if host_ip in url:
-                LOG.debug("ML2_VPP: Sending message:%s to agent at:%s on host:%s" % (msg, url+urlfrag, host_ip))
-                requests.put(url + urlfrag, data=msg)
-            else:
-                LOG.warn("ML2_VPP: Messaging to agent failed.. because the hostIP:%s" \
-                         "is not found in the configured agent URLs" % host_ip)
+        agts = [ agent for agent in self.agents if host_ip in agent ]
+        if agts:
+            url = agts[0]
+            LOG.debug("ML2_VPP: Sending message:%s to agent at:%s on host:%s" % (msg, url+urlfrag, host_ip))
+            requests.put(url + urlfrag, data=msg)
+        else:
+            LOG.warn("ML2_VPP: Messaging to agent failed.. because the hostIP:%s" \
+                     "is not found in the configured agent URL list" % host_ip)
