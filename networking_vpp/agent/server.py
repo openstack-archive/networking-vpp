@@ -41,7 +41,8 @@ from neutron.agent.linux import ip_lib
 from neutron.common import constants as n_const
 from networking_vpp import config_opts
 from oslo_config import cfg
-from oslo_log import log as logging
+#from oslo_log import log as logging
+import logging
 
 ######################################################################
 
@@ -389,25 +390,22 @@ class PortUnbind(Resource):
         id=str(id)  # comes in as unicode
 
         global vppf
-
         vppf.unbind_interface_on_host(id)
 
 
-LOG = logging.getLogger('vpp-agent')
 
-# Basic Flask RESTful app setup
+# Basic Flask RESTful app setup with logging
 app = Flask('vpp-agent')
+app.debug = True
+ch = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
+ch.setFormatter(formatter)
+app.logger.addHandler(ch)
+app.logger.debug('Debug logging enabled')
 
 def main():
-    app.debug = True
-
-#    logger = logging.getLogger('werkzeug')
-#    logger.setLevel(logging.INFO)
-
-    # Basic log config
-    app.logger.debug('Debug logging enabled')
+    #app.debug = True
     # TODO(ijw) port etc. should probably be configurable.
-
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
     # distribution. Currently only supporting ubuntu and redhat.
@@ -429,17 +427,12 @@ def main():
                         vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf,
                         qemu_user=qemu_user,
                         qemu_group=qemu_group)
-
-
-
     api = Api(app)
-
     api.add_resource(PortBind, '/ports/<id>/bind')
     api.add_resource(PortUnbind, '/ports/<id>/unbind')
-
-
+    app.logger.debug("Starting VPP agent on host address: 0.0.0.0 and port 2704")
     app.run(host='0.0.0.0',port=2704)
 
-if __name__ == '__main__':
 
+if __name__ == '__main__':
     main()
