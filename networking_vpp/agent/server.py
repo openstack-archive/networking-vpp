@@ -344,8 +344,8 @@ class PortBind(Resource):
     bind_args.add_argument('mtu', type=str, required=True)
     bind_args.add_argument('segmentation_id', type=int, required=True)
     bind_args.add_argument('network_type', type=str, required=True)
-    bind_args.add_argument('bind_type', type=str, required=True)
     bind_args.add_argument('host', type=str, required=True)
+    bind_args.add_argument('binding_type', type=str, required=True)
 
     def put(self, id):
         id=str(id)  # comes in as unicode
@@ -358,12 +358,26 @@ class PortBind(Resource):
                             args['bind_type'],
                             args['network_type'],
                             args['segmentation_id'],
-                            args['mac_address'], id))
-        vppf.bind_interface_on_host(id,
-                                    args['bind_type'],
+                            args['mac_address'],
+                            id,
+                            args['binding_type'])
+                         )
+        if args['binding_type'] in 'vhostuser':
+            app.logger.debug('Creating a vhostuser port:%s binding on host %s' % (id, args['host']))
+            vppf.bind_interface_on_host('vhostuser',
+                                     id,
+                                     args['mac_address'],
+                                     args['network_type'],
+                                     args['segmentation_id'])
+        elif args['binding_type'] in 'plugtap':
+            app.logger.debug('Creating a plugtap port:%s binding on host %s' % (id, args['host']))
+            vppf.bind_interface_on_host('plugtap',
+                                    id,
                                     args['mac_address'],
                                     args['network_type'],
                                     args['segmentation_id'])
+        else:
+            app.logger.error('Unsupported binding type :%s requested' % args['binding_type'])
 
 
 class PortUnbind(Resource):
