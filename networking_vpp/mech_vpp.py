@@ -41,6 +41,9 @@ class VPPMechanismDriver(api.MechanismDriver):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
     allowed_network_types = [p_constants.TYPE_FLAT,p_constants.TYPE_VLAN,p_constants.TYPE_VXLAN]
     MECH_NAME = 'vpp'
+    # TODO(ijw) should be pulled from a constants file
+    #vif_type = 'vhostuser'
+    vif_details = {}
 
     # TODO(ijw): we have no agent registration because we're not using
     # Neutron style agents, so at the moment we make up one physical net
@@ -49,6 +52,20 @@ class VPPMechanismDriver(api.MechanismDriver):
 
     def initialize(self):
         self.communicator = AgentCommunicator()
+
+    def get_vif_type(self, port_context):
+        """
+        Determine the type of the vif to be bound from port context
+        """
+        #Default vif type
+        vif_type = portbindings.VIF_TYPE_VHOST_USER
+        owner = port_context.current['device_owner']
+        for f in nl_const.DEVICE_OWNER_PREFIXES:
+            if owner.startswith(f):
+                vif_type = 'plugtap'
+        LOG.debug("ML2_VPP: vif_type to be bound is: %s", vif_type)
+        return vif_type
+
 
     def bind_port(self, port_context):
         """Attempt to bind a port.
@@ -106,20 +123,16 @@ class VPPMechanismDriver(api.MechanismDriver):
             if self.check_segment(segment, port_context.host):
                 vif_details = dict(self.vif_details)
                 # TODO(ijw) should be in a library that the agent uses
-                vif_details['vhostuser_socket'] = \
-                    '/tmp/%s' % port_context.current['id']
-                vif_details['vhostuser_mode'] = \
-                    'client'
+                if self.get_vif_type(port_context) == portbindings.VIF_TYPE_VHOST_USER:
+                    vif_details['vhostuser_socket'] = \
+                        '/tmp/%s' % port_context.current['id']
+                    vif_details['vhostuser_mode'] = 'client'
                 LOG.debug('ML2_VPP: Setting details: %s', vif_details)
                 port_context.set_binding(segment[api.ID],
-                                         self.vif_type,
+                                         self.get_vif_type(port_context),
                                          vif_details)
                 LOG.debug("ML2_VPP: Bound using segment: %s", segment)
                 return
-
-    # TODO(ijw) should be pulled from a constants file
-    vif_type = 'vhostuser'
-    vif_details = {}
 
     def check_segment(self, segment, host):
         """Check if segment can be bound.
@@ -200,17 +213,16 @@ class VPPMechanismDriver(api.MechanismDriver):
             # L3 etc. - as vhostuser. The interface code below takes
             # care of those.
 
-            bind_type = 'vhostuser'
+            #bind_type = 'vhostuser'
 
-            owner = port_context.current['device_owner']
+            #owner = port_context.current['device_owner']
 
             # Neutron really ought to tell us what port type it thinks
             # is sensible, but it leaves us to make an educated guess.
-            LOG.error('testing owner %s against (%s)'
-                      % (owner, ' '.join(nl_const.DEVICE_OWNER_PREFIXES)))
-            for f in nl_const.DEVICE_OWNER_PREFIXES:
-                if owner.startswith(f):
-                    bind_type = 'plugtap'
+            #for f in nl_const.DEVICE_OWNER_PREFIXES:
+            #   if owner.startswith(f):
+            #        bind_type = 'plugtap'
+            bind_type = self.get_vif_type(port_context)
 
             LOG.error('binding to with type %s' % bind_type)
 

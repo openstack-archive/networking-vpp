@@ -35,7 +35,6 @@ import os
 import distro
 import sys
 import vpp
-
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.common import constants as n_const
@@ -43,6 +42,8 @@ from networking_vpp import config_opts
 from oslo_config import cfg
 #from oslo_log import log as logging
 import logging
+import time
+from threading import Thread
 
 ######################################################################
 
@@ -244,6 +245,30 @@ class VPPForwarder(object):
     # end theft
     ########################################
 
+    ##TODO(njoy): make wait_time configurable
+    def add_external_tap(self, device_name, bridge, bridge_name):
+        """
+        Wait for the external tap device to be created by the DHCP agent.
+        When the tap device is ready, add it to bridge
+        Run as a thread so REST call can return before this code completes its execution
+        """
+        wait_time = 60
+        found = False
+        while wait_time > 0:
+            if ip_lib.device_exists(device_name):
+                app.logger.debug('External tap device %s found!' % device_name)
+                app.logger.debug('Bridging tap interface %s on %s' % (device_name, bridge_name))
+                bridge.addif(device_name)
+                found = True
+                break
+            else:
+                #app.logger.debug('Waiting for external tap device %s to be created' % device_name)
+                time.sleep(2)
+                wait_time -= 2
+        if not found:
+            app.logger.error('Failed waiting for external tap device:%s' % device_name)
+
+
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
             app.logger.debug('port %s repeat binding request - ignored' % uuid)
@@ -262,24 +287,22 @@ class VPPForwarder(object):
                     props = {'bind_type': 'maketap', 'name': tap_name}
                 else:
                     int_tap_name = 'vpp' + name
-
                     props = {'bind_type': 'plugtap',
                              'bridge_name': bridge_name,
                              'ext_tap_name': tap_name,
                              'int_tap_name': int_tap_name
                     }
+                    app.logger.debug('Creating tap interface %s with mac %s' % (int_tap_name, mac))
 
                     iface = self.vpp.create_tap(int_tap_name, mac)
-
                     # TODO(ijw): someone somewhere ought to be sorting
                     # the MTUs out
-
                     br = self.ensure_bridge(bridge_name)
-                    # This is the external TAP device that has already been precreated
-                    br.addif(tap_name)
+                    # This is the external TAP device that will be created by an agent, say the DHCP agent later in time
+                    t = Thread(target=self.add_external_tap, args=(tap_name, br, bridge_name,))
+                    t.start()
                     # This is the device that we just created with VPP
                     br.addif(int_tap_name)
-
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
                 iface = self.vpp.create_vhostuser(path, mac, self.qemu_user,
@@ -295,18 +318,20 @@ class VPPForwarder(object):
         net_br_idx = self.network_on_host(net_type, seg_id)
 
         (iface_idx, props) = self.create_interface_on_host(if_type, uuid, mac)
-
         self.vpp.ifup(iface_idx)
         self.vpp.add_to_bridge(net_br_idx, iface_idx)
-
         return props
 
-    def unbind_interface_on_host(self, uuid):
+    def unbind_interface_on_host(self, uuid, if_type):
         if uuid not in self.interfaces:
             app.logger.debug("unknown port %s unbinding request - ignored" % uuid)
         else:
-
             iface_idx, props = self.interfaces[uuid]
+
+            if if_type != props['bind_type']:
+                app.logger.error("Incorrect unbinding port type:%s request received" % if_type)
+                app.logger.error("Expected type:%s, Received Type:%s" % (props['bind_type'], if_type))
+                return 1
 
             app.logger.debug("unbinding port %s, recorded as type %s" % (uuid, props['bind_type']))
 
@@ -322,16 +347,21 @@ class VPPForwarder(object):
             elif props['bind_type'] in ['maketap', 'plugtap']:
                 self.vpp.delete_tap(iface_idx)
                 if props['bind_type'] == 'plugtap':
+                    name = uuid[0:11]
+                    bridge_name = 'br-' + name
 
                     bridge = bridge_lib.BridgeDevice(bridge_name)
-                    if bridge_device.exists():
+                    if bridge.exists():
                         # These may fail, don't care much
                         try:
-                            bridge.delif(props['int_tap_name'])
-                            bridge.delif(props['ext_tap_name'])
-                            bridge.delbr(props['bridge_name'])
-                        except:
-                            pass
+                            if bridge.owns_interface(props['int_tap_name']):
+                                bridge.delif(props['int_tap_name'])
+                            if bridge.owns_interface(props['ext_tap_name']):
+                                bridge.delif(props['ext_tap_name'])
+                            bridge.link.set_down()
+                            bridge.delbr()
+                        except Exception as exc:
+                            app.logger.debug(exc)
 
             else:
                 app.logger.error('Unknown port type %s during unbind' % props['bind_type'])
@@ -352,7 +382,6 @@ class PortBind(Resource):
         id=str(id)  # comes in as unicode
 
         global vppf
-
         args = self.bind_args.parse_args()
         app.logger.debug('on host %s, binding (with type %s) %s %d to mac %s id %s'
                          % (args['host'],
@@ -382,16 +411,25 @@ class PortBind(Resource):
 
 
 class PortUnbind(Resource):
+    bind_args = reqparse.RequestParser()
+    bind_args.add_argument('host', type=str, required=True)
+    bind_args.add_argument('binding_type', type=str, required=True)
 
-    def __init(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super('PortUnBind', self).__init__(*args, **kwargs)
 
     def put(self, id, host):
         id=str(id)  # comes in as unicode
 
         global vppf
-        vppf.unbind_interface_on_host(id)
 
+        args = self.bind_args.parse_args()
+        app.logger.debug('on host %s, unbinding port ID:%s with binding_type:%s'
+                         % (args['host'],
+                            id,
+                            args['binding_type'])
+                         )
+        vppf.unbind_interface_on_host(id, args['binding_type'])
 
 
 # Basic Flask RESTful app setup with logging
@@ -404,8 +442,6 @@ app.logger.addHandler(ch)
 app.logger.debug('Debug logging enabled')
 
 def main():
-    #app.debug = True
-    # TODO(ijw) port etc. should probably be configurable.
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
     # distribution. Currently only supporting ubuntu and redhat.
