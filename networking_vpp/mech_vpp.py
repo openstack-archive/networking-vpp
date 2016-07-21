@@ -58,7 +58,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         Determine the type of the vif to be bound from port context
         """
         #Default vif type
-        vif_type = portbindings.VIF_TYPE_VHOST_USER
+        vif_type = 'vhostuser'
         owner = port_context.current['device_owner']
         for f in nl_const.DEVICE_OWNER_PREFIXES:
             if owner.startswith(f):
@@ -123,7 +123,7 @@ class VPPMechanismDriver(api.MechanismDriver):
             if self.check_segment(segment, port_context.host):
                 vif_details = dict(self.vif_details)
                 # TODO(ijw) should be in a library that the agent uses
-                if self.get_vif_type(port_context) == portbindings.VIF_TYPE_VHOST_USER:
+                if self.get_vif_type(port_context) == 'vhostuser':
                     vif_details['vhostuser_socket'] = \
                         '/tmp/%s' % port_context.current['id']
                     vif_details['vhostuser_mode'] = 'client'
