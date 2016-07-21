@@ -144,6 +144,10 @@ function neutron_plugin_install_agent_packages {
     install_package bridge-utils
 }
 
+function neutron_plugin_configure_l3_agent {
+    :
+}
+
 # We have opinions on the interface driver that should attach agents
 function neutron_plugin_setup_interface_driver {
     local conf_file=$1
