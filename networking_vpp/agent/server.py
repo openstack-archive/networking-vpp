@@ -255,7 +255,11 @@ class VPPForwarder(object):
             if ip_lib.device_exists(device_name):
                 app.logger.debug('External tap device %s found!' % device_name)
                 app.logger.debug('Bridging tap interface %s on %s' % (device_name, bridge_name))
-                bridge.addif(device_name)
+                if not bridge.owns_interface(device_name):
+                    bridge.addif(device_name)
+                else:
+                    app.logger.debug('Interface: %s is already added to the bridge %s' %
+                        (device_name, bridge_name))
                 found = True
                 break
             else:
@@ -299,7 +303,8 @@ class VPPForwarder(object):
                     t = Thread(target=self.add_external_tap, args=(tap_name, br, bridge_name,))
                     t.start()
                     # This is the device that we just created with VPP
-                    br.addif(int_tap_name)
+                    if not br.owns_interface(int_tap_name):
+                        br.addif(int_tap_name)
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
                 iface = self.vpp.create_vhostuser(path, mac, self.qemu_user,
