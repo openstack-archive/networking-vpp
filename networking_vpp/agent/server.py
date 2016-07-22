@@ -127,22 +127,17 @@ class VPPForwarder(object):
         self.networks = {}      # vlan: bridge index
         self.interfaces = {}    # uuid: if idx
 
-        for (ifname, f) in self.vpp.get_interfaces():
-            # Clean up interfaces from previous runs
-
-            # TODO(ijw) should not delete interfaces that are in
-            # 'interfaces' or bridges related to 'networks'
-
-            # TODO(ijw) can't easily spot VLAN subifs to delete, so we
-            # don't right now.  Shouldn't be a problem, it just means
-            # the network remains around when the last VM has gone.
-
-            if ifname.startswith('tap-'):
-                # all VPP tap interfaces are of this form
-                self.vpp.delete_tap(f.sw_if_index)
-            elif ifname.startswith('VirtualEthernet'):
-                # all VPP vhostuser interfaces are of this form
-                self.vpp.delete_vhostuser(f.sw_if_index)
+        # TODO (najoy) removing cleanups - should fetch data from the neutron server and see
+        # if the interface is being used
+        # for (ifname, f) in self.vpp.get_interfaces():
+        #     # Clean up interfaces from previous runs
+        #     # TODO(ijw) can't easily SPOT VLAN subifs to delete
+        #     if ifname.startswith('tap-'):
+        #         # all VPP tap interfaces are of this form
+        #         self.vpp.delete_tap(f.sw_if_index)
+        #     elif ifname.startswith('VirtualEthernet'):
+        #         # all VPP vhostuser interfaces are of this form
+        #         self.vpp.delete_vhostuser(f.sw_if_index)
 
         trunk_ifstruct = self.vpp.get_interface(self.trunk_if) if self.trunk_if else None
         flat_ifstruct = self.vpp.get_interface(self.flat_if) if self.flat_if else None
@@ -158,9 +153,11 @@ class VPPForwarder(object):
             # TODO(ijw): when we start up in a recovery mode we may
             # want to check the local VPP config and bring it up when
             # confirmed.
+            app.logger.debug("Activating VPP's Vlan trunk interface: %s" % self.trunk_if)
             self.vpp.ifup(self.trunk_ifidx)
         if flat_ifstruct is not None:
             self.flat_ifidx = flat_ifstruct.sw_if_index
+            app.logger.debug("Activating VPP's Flat network interface: %s" % self.flat_if)
             self.vpp.ifup(self.flat_ifidx)
 
     # This, here, is us creating a VLAN backed network
