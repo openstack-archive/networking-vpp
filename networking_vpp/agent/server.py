@@ -380,6 +380,9 @@ class PortBind(Resource):
     bind_args.add_argument('host', type=str, required=True)
     bind_args.add_argument('binding_type', type=str, required=True)
 
+    def __init(self, *args, **kwargs):
+        super('PortBind', self).__init__(*args, **kwargs)
+
     def put(self, id):
         id=str(id)  # comes in as unicode
 
@@ -418,7 +421,7 @@ class PortUnbind(Resource):
     bind_args.add_argument('binding_type', type=str, required=True)
 
     def __init__(self, *args, **kwargs):
-        super('PortUnBind', self).__init__(*args, **kwargs)
+        super('PortUnbind', self).__init__(*args, **kwargs)
 
     def put(self, id, host):
         id=str(id)  # comes in as unicode
@@ -432,6 +435,51 @@ class PortUnbind(Resource):
                             args['binding_type'])
                          )
         vppf.unbind_interface_on_host(id, args['binding_type'])
+
+class Network(Resource):
+    bind_args = reqparse.RequestParser()
+    bind_args.add_argument('physical_network', type=str, required=True)
+    bind_args.add_argument('network_type', type=str, required=True)
+    bind_args.add_argument('segmentation_id', type=str, required=True)
+    bind_args.add_argument('name', type=str, required=True)
+
+    def __init(self, *args, **kwargs):
+        super('Network', self).__init__(*args, **kwargs)
+
+    def post(self, id):
+        global vppf
+        args = self.bind_args.parse_args()
+        app.logger.debug("Create network ID:%s name:%s"
+                         " with network_type:%s and seg_id:%s"
+                         % (id,
+                            args['name'],
+                            args['network_type'],
+                            args['segmentation_id']
+                            )
+                         )
+    def put(self, id):
+        global vppf
+        args = self.bind_args.parse_args()
+        app.logger.debug("Update network ID:%s name:%s"
+                         " with network_type:%s and seg_id:%s"
+                         % (id,
+                            args['name'],
+                            args['network_type'],
+                            args['segmentation_id']
+                            )
+                         )
+
+    def delete(self, id):
+        global vppf
+        args = self.bind_args.parse_args()
+        app.logger.debug("Delete network ID:%s name:%s"
+                         " with network_type:%s and seg_id:%s"
+                         % (id,
+                            args['name'],
+                            args['network_type'],
+                            args['segmentation_id']
+                            )
+                         )
 
 
 # Basic Flask RESTful app setup with logging
@@ -468,6 +516,7 @@ def main():
     api = Api(app)
     api.add_resource(PortBind, '/ports/<id>/bind')
     api.add_resource(PortUnbind, '/ports/<id>/unbind')
+    api.add_resource(Network, '/networks/<id>')
     app.logger.debug("Starting VPP agent on host address: 0.0.0.0 and port 2704")
     app.run(host='0.0.0.0',port=2704)
 
