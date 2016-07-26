@@ -162,7 +162,7 @@ class VPPMechanismDriver(api.MechanismDriver):
 
         if network_type in [p_constants.TYPE_FLAT, p_constants.TYPE_VLAN]:
             physnet = segment[api.PHYSICAL_NETWORK]
-            if not self.physnet_known(physnet):
+            if not self.physnet_known(physnet, network_type):
                 LOG.debug(
                     'ML2_VPP: Network %(network_id)s is connected to physical '
                     'network %(physnet)s, but the physical network '
@@ -175,8 +175,14 @@ class VPPMechanismDriver(api.MechanismDriver):
 
         return True
 
-    def physnet_known(self, physnet):
-        return physnet in self.physical_networks
+    def physnet_known(self, physnet, network_type):
+        """
+        Support binding to arbitrary flat networks and a single Vlan physical network
+        """
+        if network_type == 'flat':
+            return True
+        else:
+            return physnet in self.physical_networks
 
     def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
