@@ -246,12 +246,14 @@ class VPPForwarder(object):
         #return self.networks[(type, seg_id)]
 
     def delete_network_on_host(self, net_uuid, net_type):
+        net = self.network_on_host(net_uuid)
         try:
-            net = self.network_on_host(net_uuid)
             if net_type == 'flat':
                 self.active_ifs.discard(net['if_upstream'])
         except Exception:
             app.logger.error("Delete Network: network UUID:%s is unknown to agent" % net_uuid)
+        self.vpp.delete_bridge_domain(net['bridge_domain_id'])
+        self.vpp.ifdown(net['if_upstream_idx'])
 
     ########################################
     # stolen from LB driver
