@@ -9,7 +9,9 @@ MECH_VPP_AGENTLIST=${MECH_VPP_AGENTLIST:-localhost}
 
 # This is VPP's interface name for the trunk
 VLAN_TRUNK_IF=${VLAN_TRUNK_IF:-}
-# If network type is flat, this is VPP's flat network interface
+# If network type is flat, this is VPP's list of flat network interfaces available for use
+# to create flat networks. For each neutron network, vpp driver will use one of the available
+# interfaces
 FLAT_NETWORK_IF=${FLAT_NETWORK_IF:-}
 VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
