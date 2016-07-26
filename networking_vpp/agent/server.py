@@ -111,11 +111,9 @@ class VPPForwarder(object):
 
         # This is the list of flat network interfaces for providing FLAT networking
         self.flat_if = flat_network_if.split(',')
-        self.active_ifs = set() #set of used interfaces for flat networking
-
+        self.active_ifs = set() #set of used upstream interfaces for flat networking
         # This is the trunk interface for VLAN networking
         self.trunk_if = vlan_trunk_if
-
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
         self.vxlan_bcast_addr = vxlan_bcast_addr
@@ -124,7 +122,6 @@ class VPPForwarder(object):
 
         # Used as a unique number for bridge IDs
         self.next_bridge_id = 5678
-
         # TODO(ijw): these things want preserving over a daemon restart.
         self.networks = {}      # vlan: bridge index
         self.interfaces = {}    # uuid: if idx
@@ -247,6 +244,14 @@ class VPPForwarder(object):
             app.logger.debug('Created network UUID:%s-%s' % (net_uuid, self.nets[net_uuid]))
         return self.nets[net_uuid]
         #return self.networks[(type, seg_id)]
+
+    def delete_network_on_host(self, net_uuid, net_type):
+        try:
+            net = self.network_on_host(net_uuid)
+            if net_type == 'flat':
+                self.active_ifs.discard(net['if_upstream'])
+        except Exception:
+            app.logger.error("Delete Network: network UUID:%s is unknown to agent" % net_uuid)
 
     ########################################
     # stolen from LB driver
@@ -533,6 +538,7 @@ class Network(Resource):
                             args['segmentation_id']
                             )
                          )
+        vppf.delete_network_on_host(id, args['network_type'])
 
 
 # Basic Flask RESTful app setup with logging
