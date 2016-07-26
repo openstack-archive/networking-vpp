@@ -146,7 +146,18 @@ class VPPInterface(object):
             False,  # enable ARP termination in the BD
             True  # is an add
         )
+        _check_retval(t)
 
+    def delete_bridge_domain(self, id):
+        t = vpp_papi.bridge_domain_add_del(
+            id,  # the numeric ID of this domain
+            True,  # enable bcast and mcast flooding
+            True,  # enable unknown ucast flooding
+            True,  # enable forwarding on all interfaces
+            True,  # enable learning on all interfaces
+            False,  # enable ARP termination in the BD
+            False  # is a delete
+        )
         _check_retval(t)
 
     def create_vlan_subif(self, if_id, vlan_tag):
@@ -191,3 +202,11 @@ class VPPInterface(object):
                 ifidx,
                 1, 1,               # admin and link up
                 0)                   # err, I can set the delected flag?
+
+    def ifdown(self, *ifidxes):
+        for ifidx in ifidxes:
+            vpp_papi.sw_interface_set_flags(
+                ifidx,
+                0, 0,               # admin and link down
+                0)                   # err, I can set the delected flag?
+
