@@ -122,7 +122,6 @@ class VPPForwarder(object):
 
         # Used as a unique number for bridge IDs
         self.next_bridge_id = 5678
-        self.bridge_pool = set() # A pool of VPP bridge IDs
         # TODO(ijw): these things want preserving over a daemon restart.
         self.networks = {}      # vlan: bridge index
         self.interfaces = {}    # uuid: if idx
@@ -183,15 +182,9 @@ class VPPForwarder(object):
         """ Return VPP's interface index value for the network interface"""
         return self.vpp.get_interface(if_name).sw_if_index
 
-    def get_bridge_id(self):
-        try:
-            return self.bridge_pool.pop()
-        except KeyError: #bridge_pool is empty
-            return None
-
     # This, here, is us creating a FLAT, VLAN or VxLAN backed network
     def network_on_host(self, net_uuid, net_type=None, seg_id=None, net_name=None):
-        if net_uuid not in self.nets:
+        if net_uuid not in self.nets and net_type is not None:
             #if (net_type, seg_id) not in self.networks:
             # TODO(ijw): bridge domains have no distinguishing marks.
             # VPP needs to allow us to name or label them so that we
@@ -235,11 +228,8 @@ class VPPForwarder(object):
             # May not remain this way but we use the VLAN ID as the
             # bridge ID; TODO(ijw): bridge ID can already exist, we
             # should check till we find a free one
-            #id = self.next_bridge_id
-            id = self.get_bridge_id()
-            if id is None:
-                id = self.next_bridge_id
-                self.next_bridge_id += 1
+            id = self.next_bridge_id
+            self.next_bridge_id += 1
             self.vpp.create_bridge_domain(id)
             self.vpp.add_to_bridge(id, if_upstream)
             #self.networks[(net_type, seg_id)] = id
@@ -256,15 +246,19 @@ class VPPForwarder(object):
         #return self.networks[(type, seg_id)]
 
     def delete_network_on_host(self, net_uuid, net_type):
-        net = self.network_on_host(net_uuid)
         try:
-            if net_type == 'flat':
-                self.active_ifs.discard(net['if_upstream'])
+            net = self.network_on_host(net_uuid)
         except Exception:
-            app.logger.error("Delete Network: network UUID:%s is unknown to agent" % net_uuid)
-        #self.vpp.delete_bridge_domain(net['bridge_domain_id'])
-        self.bridge_pool.add(net['bridge_domain_id']) #Release the bridge ID to the pool
-        self.vpp.ifdown(net['if_upstream_idx'])
+            app.logger.debug('Unknown network UUID:%s' % net_uuid)
+            net = None
+        if net is not None:
+            try:
+                if net_type == 'flat':
+                    self.active_ifs.discard(net['if_upstream'])
+            except Exception:
+                app.logger.error("Delete Network: network UUID:%s is unknown to agent" % net_uuid)
+            self.vpp.delete_bridge_domain(net['bridge_domain_id'])
+            self.vpp.ifdown(net['if_upstream_idx'])
 
     ########################################
     # stolen from LB driver
