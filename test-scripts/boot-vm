@@ -9,22 +9,22 @@
 #Ubuntu 14.04 Image
 image=ff03d4f4-f68a-4a32-9a8e-ce3f142d8a34
 flavor=2
-#net_name=private
+devstack_dir=/home/demo/devstack
+source $devstack_dir/openrc admin admin
+key_name=demo_key
 #######################
 
 if [[ $# < 2 ]]; then
   echo "Usage $0 <vm-name> <network> [<availability-zone>] [<fixed_ip>]"
   echo "When fixed_ip is null, DHCP is used.."
-  echo "When availability-zone is null, the default AZ=nova is used"
+  echo "When the availability-zone is null, the default AZ=nova is used"
   exit 1
 fi
 
-source /home/demo/devstack/openrc admin admin
 vm_name=${1:-}
 net_name=${2:-}
 az=${3:-"nova"}
 fixed_ip=${4:-}
-key_name=demo_key
 
 if [[ ${az} = "nova" ]] && [[ -n ${fixed_ip} ]]; then
    gateway=10.0.0.101
