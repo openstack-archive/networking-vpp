@@ -1,0 +1,110 @@
+#!/bin/bash
+#set -o xtrace
+#Author: Naveen Joy: najoy@cisco.com
+#Usage: boot-vm <vm-name> <network-name> [<availability-zon>] [<fixed_ip>]
+
+###Program Variables###
+#Cirros Image:
+#image=02fffc39-807f-4890-bdff-48d665cca290
+#Ubuntu 14.04 Image
+image=ff03d4f4-f68a-4a32-9a8e-ce3f142d8a34
+flavor=2
+#net_name=private
+#######################
+
+if [[ $# < 2 ]]; then
+  echo "Usage $0 <vm-name> <network> [<availability-zone>] [<fixed_ip>]"
+  echo "When fixed_ip is null, DHCP is used.."
+  echo "When availability-zone is null, the default AZ=nova is used"
+  exit 1
+fi
+
+source /home/demo/devstack/openrc admin admin
+vm_name=${1:-}
+net_name=${2:-}
+az=${3:-"nova"}
+fixed_ip=${4:-}
+key_name=demo_key
+
+if [[ ${az} = "nova" ]] && [[ -n ${fixed_ip} ]]; then
+   gateway=10.0.0.101
+else
+   gateway=10.0.0.100
+fi
+
+function make-user-data-fixed-ip() {
+  local -r fixed_ip=$1
+  local -r netmask="255.255.255.0"
+  local -r gateway=$2
+  read -r -d '' userdata << EOF
+#cloud-config
+bootcmd:
+  - ifconfig eth0 ${fixed_ip}
+  - ifconfig eth0 netmask ${netmask}
+  - route add default gw ${gateway}
+  - ifconfig eth0 up
+
+users:
+  - default
+  - name: ubuntu
+    gecos: ubuntu
+    ssh_pwauth: True
+
+chpasswd:
+  list: |
+    root:password
+    cloud-user:atomic
+    ubuntu:ubuntu
+    admin:ubuntu
+  expire: False
+
+write_files:
+  - content: |
+        auto eth0
+        iface eth0 inet static
+          address ${fixed_ip}
+          netmask ${netmask}
+          gateway ${gateway}
+          dns-nameservers 171.68.226.120 171.70.168.183
+          dns-search cisco.com
+    path: /etc/network/interfaces.d/eth0.cfg
+    permissions: '0644'
+
+runcmd:
+  - ifconfig eth0 down
+  - ifconfig eth0 up
+EOF
+}
+
+function make-user-data() {
+  read -r -d '' userdata << EOF
+#cloud-config
+users:
+  - default
+  - name: ubuntu
+    gecos: ubuntu
+    ssh_pwauth: True
+
+chpasswd:
+  list: |
+    root:password
+    cloud-user:atomic
+    ubuntu:ubuntu
+    admin:ubuntu
+  expire: False
+EOF
+}
+
+if [[ -z "${fixed_ip}" ]]; then
+   echo "Booting with DHCP - VM:${vm_name}, image:${image}, flavor:${flavor}, network:${net_name}"
+   make-user-data
+   echo "${userdata}" > userdata
+   nova boot --image ${image} --flavor ${flavor} --nic net-name=${net_name} \
+             --user-data userdata --key-name ${key_name} --availability-zone ${az} ${vm_name}
+else
+   echo "Booting with Static IP - VM:${vm_name}, IP:${fixed_ip}, image:${image}, flavor:${flavor}, network:${net_name} and AZ:${az}"
+   make-user-data-fixed-ip "${fixed_ip}" "${gateway}"
+   echo "${userdata}" > userdata
+   nova boot --image ${image} --flavor ${flavor} --nic net-name=${net_name},v4-fixed-ip=${fixed_ip} \
+             --user-data userdata --key-name ${key_name} --availability-zone ${az} ${vm_name}
+fi
