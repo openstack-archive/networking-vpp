@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#Author: najoy@cisco.com
+#Author: Naveen Joy - najoy@cisco.com
 #Creates a specified number of neutron networks and subnets
 #Boots a VM on each of the networks (using DHCP assigned IP)
 #Tests VM rechability from the DHCP namespace
