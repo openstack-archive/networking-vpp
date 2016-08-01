@@ -242,8 +242,7 @@ class VPPForwarder(object):
                                'network_name' : net_name
                                   }
             app.logger.debug('Created network UUID:%s-%s' % (net_uuid, self.nets[net_uuid]))
-        return self.nets[net_uuid]
-        #return self.networks[(type, seg_id)]
+        return self.nets.get(net_uuid, {})
 
     def delete_network_on_host(self, net_uuid, net_type):
         try:
@@ -375,12 +374,17 @@ class VPPForwarder(object):
         return self.interfaces[uuid]
 
     def bind_interface_on_host(self, uuid, if_type, mac, net_type, seg_id, net_id):
-        net_br_idx = self.network_on_host(net_id)['bridge_domain_id']
-
-        (iface_idx, props) = self.create_interface_on_host(if_type, uuid, mac)
-        self.vpp.ifup(iface_idx)
-        self.vpp.add_to_bridge(net_br_idx, iface_idx)
-        return props
+        if self.network_on_host(net_id):
+            net_data = self.network_on_host(net_id)
+            net_br_idx = net_data['bridge_domain_id']
+            (iface, props) = self.create_interface_on_host(if_type, uuid, mac)
+            self.vpp.ifup(iface)
+            self.vpp.add_to_bridge(net_br_idx, iface)
+            app.logger.debug('Bound vpp interface with sw_indx:%s on bridge domain:%s'
+                % (iface, net_br_idx))
+            return props
+        else:
+            app.logger.error('Error: Network ID:%s not known to agent' % net_id)
 
     def unbind_interface_on_host(self, uuid, if_type):
         if uuid not in self.interfaces:
