@@ -31,6 +31,7 @@ from flask import Flask
 from flask_restful import Api
 from flask_restful import reqparse
 from flask_restful import Resource
+import logging
 import os
 import distro
 import sys
@@ -90,15 +91,13 @@ def get_qemu_default():
 
     return (qemu_user, qemu_group)
 
-
 ######################################################################
 
 
 class VPPForwarder(object):
 
     def __init__(self, log,
-                 flat_network_if=None,
-                 vlan_trunk_if=None,
+                 physnets,  # physnet_name: interface-name
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
                  vxlan_vrf=None,
@@ -112,8 +111,8 @@ class VPPForwarder(object):
         # This is the list of flat network interfaces for providing FLAT networking
         self.flat_if = flat_network_if.split(',')
         self.active_ifs = set() #set of used upstream interfaces for flat networking
-        # This is the trunk interface for VLAN networking
-        self.trunk_if = vlan_trunk_if
+
+        self.physnets = physnets
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
         self.vxlan_bcast_addr = vxlan_bcast_addr
@@ -123,139 +122,89 @@ class VPPForwarder(object):
         # Used as a unique number for bridge IDs
         self.next_bridge_id = 5678
         # TODO(ijw): these things want preserving over a daemon restart.
-        self.networks = {}      # vlan: bridge index
+        self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
-        self.nets = {}
-
-        # TODO (najoy) removing cleanups - should fetch data from the neutron server and see
-        # if the interface is being used
-        # for (ifname, f) in self.vpp.get_interfaces():
-        #     # Clean up interfaces from previous runs
-        #     # TODO(ijw) can't easily SPOT VLAN subifs to delete
-        #     if ifname.startswith('tap-'):
-        #         # all VPP tap interfaces are of this form
-        #         self.vpp.delete_tap(f.sw_if_index)
-        #     elif ifname.startswith('VirtualEthernet'):
-        #         # all VPP vhostuser interfaces are of this form
-        #         self.vpp.delete_vhostuser(f.sw_if_index)
-
-
-        # trunk_ifstruct = self.vpp.get_interface(self.trunk_if) if self.trunk_if else None
-        #flat_ifstruct = self.vpp.get_interface(self.flat_if) if self.flat_if else None
-      #   if trunk_ifstruct is None and flat_ifstruct is None:
-                   # raise Exception("Could not find a VPP uplink interface:%s" % self.trunk_if or self.flat_if)
-      #   if trunk_ifstruct is not None:
-      #       self.trunk_ifidx = trunk_ifstruct.sw_if_index
-      #       # This interface is not automatically up just because
-      #       # we've started and we need to ensure it is before
-      #       # proceeding.
-
-      #       # TODO(ijw): when we start up in a recovery mode we may
-      #       # want to check the local VPP config and bring it up when
-      #       # confirmed.
-      #       app.logger.debug("Activating VPP's Vlan trunk interface: %s" % self.trunk_if)
-      #       self.vpp.ifup(self.trunk_ifidx)
-        # if flat_ifstruct is not None:
-        #     self.flat_ifidx = flat_ifstruct.sw_if_index
-        #     app.logger.debug("Activating VPP's Flat network interface: %s" % self.flat_if)
-        #     self.vpp.ifup(self.flat_ifidx)
-
-    def get_flat_interface(self):
-        """ Return the next available interface for flat networking """
-        interface = None
-        for intf in self.flat_if:
-            if intf not in self.active_ifs:
-                app.logger.debug("Using interface:%s for flat networking" % intf)
-                interface = intf
-                break
-        return interface
-
-    def get_trunk_interface(self):
-        """ Return the trunk interface for VLAN networking """
-        #TODO(najoy) Return the trunk interface corresponding to the physical network mapping
-        intf = self.trunk_if if self.trunk_if else None
-        if intf:
-            app.logger.debug("Using trunk interface:%s for VLAN networking" % intf)
-        return intf
 
     def get_vpp_ifidx(self, if_name):
         """ Return VPP's interface index value for the network interface"""
         return self.vpp.get_interface(if_name).sw_if_index
 
+    def get_interface(self, physnet):
+        return self.physnets.get(physnet, None)
+
+    def new_bridge_domain(self):
+        x = self.next_bridge_id
+        self.vpp.create_bridge_domain(x)
+        self.next_bridge_id += 1
+        return x
+
     # This, here, is us creating a FLAT, VLAN or VxLAN backed network
-    def network_on_host(self, net_uuid, net_type=None, seg_id=None, net_name=None):
-        if net_uuid not in self.nets and net_type is not None:
-            #if (net_type, seg_id) not in self.networks:
-            # TODO(ijw): bridge domains have no distinguishing marks.
-            # VPP needs to allow us to name or label them so that we
-            # can find them when we restart
-            if net_type == 'flat':
-                intf = self.get_flat_interface()
-                #TODO(najoy): Need to send a return value so the ML2 driver can raise an exception and prevent
-                #network creation
-                if intf is None:
-                    app.logger.error("Error: creating network as a flat network interface is not available")
-                    return {}
-                if_upstream = self.get_vpp_ifidx(intf)
-                #if_upstream = self.flat_ifidx
-                app.logger.debug('Adding upstream interface-indx:%s-%s to bridge for flat networking' % (intf, if_upstream))
-                self.active_ifs.add(intf)
-            elif net_type == 'vlan':
-                # TODO(ijw): this VLAN subinterface may already exist, and
-                # may even be in another bridge domain already (see
-                # above).
-                intf = self.get_trunk_interface()
-                if intf is None:
-                    app.logger.error("Error: creating network as a trunk network interface is not available")
-                    return {}
-                trunk_ifidx = self.get_vpp_ifidx(intf)
-                app.logger.debug("Activating VPP's Vlan trunk interface: %s" % intf)
-                self.vpp.ifup(trunk_ifidx)
-                if_upstream = self.vpp.create_vlan_subif(trunk_ifidx,
-                                                         seg_id)
-                app.logger.debug('Adding upstream trunk interface:%s.%s \
-                to bridge for vlan networking' % (intf, seg_id))
-            # elif net_type == 'vxlan':
-            #     if_upstream = \
-            #         self.vpp.create_srcrep_vxlan_subif(self, self.vxlan_vrf,
-            #                                            self.vxlan_src_addr,
-            #                                            self.vxlan_bcast_addr,
-            #                                            seg_id)
-            else:
-                raise Exception('network type %s not supported', net_type)
+    def network_on_host(self, physnet, net_type, seg_id=None):
+        # TODO(najoy): Need to send a return value so the ML2 driver
+        # can raise an exception and prevent network creation
 
-            self.vpp.ifup(if_upstream)
-            # May not remain this way but we use the VLAN ID as the
-            # bridge ID; TODO(ijw): bridge ID can already exist, we
-            # should check till we find a free one
-            id = self.next_bridge_id
-            self.next_bridge_id += 1
-            self.vpp.create_bridge_domain(id)
-            self.vpp.add_to_bridge(id, if_upstream)
-            #self.networks[(net_type, seg_id)] = id
-            self.nets[net_uuid] = {
-                               'bridge_domain_id': id,
-                               'if_upstream': intf,
-                               'if_upstream_idx': if_upstream,
-                               'network_type': net_type,
-                               'segmentation_id': seg_id,
-                               'network_name' : net_name
-                                  }
-            app.logger.debug('Created network UUID:%s-%s' % (net_uuid, self.nets[net_uuid]))
-        return self.nets.get(net_uuid, {})
+        if (physnet, net_type, seg_id) not in self.networks:
+            self.create_network_on_host(physnet, net_type, seg_id)
+        return self.networks.get((physnet, net_type, seg_id), None)
 
-    def delete_network_on_host(self, net_uuid, net_type):
-        net = self.network_on_host(net_uuid)
-        if net is not None:
-            try:
-                if net_type == 'flat':
-                    self.active_ifs.discard(net['if_upstream'])
-            except Exception:
-                app.logger.error("Delete Network: network UUID:%s is unknown to agent" % net_uuid)
-            self.vpp.delete_bridge_domain(net['bridge_domain_id'])
-            self.vpp.ifdown(net['if_upstream_idx'])
+    def create_network_on_host(self, physnet, net_type, seg_id):
+        intf = self.get_interface(physnet)
+        if intf is None:
+            app.logger.error("Error: no physnet found")
+            return None
+
+        ifidx = self.get_vpp_ifidx(intf)
+
+        # TODO(ijw): bridge domains have no distinguishing marks.
+        # VPP needs to allow us to name or label them so that we
+        # can find them when we restart.  If we add an interface
+        # to two bridges that will likely not do as required
+
+        if net_type == 'flat':
+            if_upstream = ifidx
+
+            app.logger.debug('Adding upstream interface-idx:%s-%s to bridge '
+                             'for flat networking' % (intf, if_upstream))
+
+        elif net_type == 'vlan':
+            self.vpp.ifup(ifidx)
+
+            app.logger.debug('Adding upstream trunk interface:%s.%s \
+            to bridge for vlan networking' % (intf, seg_id))
+            if_upstream = self.vpp.create_vlan_subif(ifidx,
+                                                     seg_id)
+
+        # elif net_type == 'vxlan':
+        #     # NB physnet not really used here
+        #     if_upstream = \
+        #         self.vpp.create_srcrep_vxlan_subif(self, self.vxlan_vrf,
+        #                                            self.vxlan_src_addr,
+        #                                            self.vxlan_bcast_addr,
+        #                                            seg_id)
         else:
-            app.logger.error("Delete Network: network UUID:%s is unknown to agent" % net_uuid)
+            raise Exception('network type %s not supported', net_type)
+
+        self.vpp.ifup(if_upstream)
+
+        id = self.new_bridge_domain()
+
+        self.vpp.add_to_bridge(id, if_upstream)
+        self.networks[(physnet, net_type, seg_id)] = {
+            'bridge_domain_id': id,
+            'if_upstream': intf,
+            'if_upstream_idx': if_upstream,
+            'network_type': net_type,
+            'segmentation_id': seg_id,
+        }
+
+    def delete_network_on_host(self, physnet, net_type, seg_id=None):
+        net = self.networks.get((physnet, net_type, seg_id), None)
+
+        if net is not None:
+
+            self.vpp.delete_bridge_domain(net['bridge_domain_id'])
+
+            # We leave the interface up.  Other networks may be using it
 
     ########################################
     # stolen from LB driver
@@ -299,10 +248,12 @@ class VPPForwarder(object):
 
     ##TODO(njoy): make wait_time configurable
     def add_external_tap(self, device_name, bridge, bridge_name):
-        """
+        """Add an externally created TAP device to the bridge
+
         Wait for the external tap device to be created by the DHCP agent.
-        When the tap device is ready, add it to bridge
-        Run as a thread so REST call can return before this code completes its execution
+        When the tap device is ready, add it to bridge Run as a thread
+        so REST call can return before this code completes its
+        execution.
         """
         wait_time = 60
         found = False
@@ -318,7 +269,6 @@ class VPPForwarder(object):
                 found = True
                 break
             else:
-                #app.logger.debug('Waiting for external tap device %s to be created' % device_name)
                 time.sleep(2)
                 wait_time -= 2
         if not found:
@@ -371,22 +321,19 @@ class VPPForwarder(object):
             self.interfaces[uuid] = (iface, props)
         return self.interfaces[uuid]
 
-    def bind_interface_on_host(self, uuid, if_type, mac, net_type, seg_id, net_id):
-        if self.network_on_host(net_id):
-            net_data = self.network_on_host(net_id)
-            net_br_idx = net_data['bridge_domain_id']
-            (iface, props) = self.create_interface_on_host(if_type, uuid, mac)
-            self.vpp.ifup(iface)
-            self.vpp.add_to_bridge(net_br_idx, iface)
-            app.logger.debug('Bound vpp interface with sw_indx:%s on bridge domain:%s'
-                % (iface, net_br_idx))
-            return props
-        else:
-            app.logger.error('Error: Network ID:%s not known to agent' % net_id)
+    def bind_interface_on_host(self, if_type, uuid, mac, physnet,
+                               net_type, seg_id):
+        net = self.network_on_host(physnet, net_type, seg_id)
+        net_br_idx = net['bridge_domain_id']
+        (iface_idx, props) = self.create_interface_on_host(if_type, uuid, mac)
+        self.vpp.ifup(iface_idx)
+        self.vpp.add_to_bridge(net_br_idx, iface_idx)
+        return props
 
-    def unbind_interface_on_host(self, uuid, if_type):
+    def unbind_interface_on_host(self, uuid):
         if uuid not in self.interfaces:
-            app.logger.debug("unknown port %s unbinding request - ignored" % uuid)
+            app.logger.debug('unknown port %s unbinding request - ignored'
+                             % uuid)
         else:
             iface_idx, props = self.interfaces[uuid]
 
@@ -402,8 +349,6 @@ class VPPForwarder(object):
             # because the VM's memory (hugepages) will not be
             # released.  So, here, we destroy it.
 
-            # TODO(ijw): I'm assuming deleting an interface in a
-            # bridge domain works...
             if props['bind_type'] == 'vhostuser':
                 self.vpp.delete_vhostuser(iface_idx)
             elif props['bind_type'] in ['maketap', 'plugtap']:
@@ -424,9 +369,11 @@ class VPPForwarder(object):
                             bridge.delbr()
                         except Exception as exc:
                             app.logger.debug(exc)
-
             else:
                 app.logger.error('Unknown port type %s during unbind' % props['bind_type'])
+
+        # TODO(ijw): delete structures of newly unused networks with
+        # delete_network
 
 
 ######################################################################
@@ -435,11 +382,13 @@ class PortBind(Resource):
     bind_args = reqparse.RequestParser()
     bind_args.add_argument('mac_address', type=str, required=True)
     bind_args.add_argument('mtu', type=str, required=True)
-    bind_args.add_argument('segmentation_id', type=int, required=True)
+    bind_args.add_argument('physnet', type=str, required=True)
     bind_args.add_argument('network_type', type=str, required=True)
+    # This will be called as 0 if the network is flat and has no
+    # segments
+    bind_args.add_argument('segmentation_id', type=int, required=True)
     bind_args.add_argument('host', type=str, required=True)
     bind_args.add_argument('binding_type', type=str, required=True)
-    bind_args.add_argument('network_id', type=str, required=True)
 
     def __init(self, *args, **kwargs):
         super('PortBind', self).__init__(*args, **kwargs)
@@ -448,35 +397,32 @@ class PortBind(Resource):
         id=str(id)  # comes in as unicode
 
         global vppf
-        args = self.bind_args.parse_args()
-        app.logger.debug("on host %s, binding %s %d to mac %s id %s as binding_type %s"
-                         "on network %s"
+         args = self.bind_args.parse_args()
+        app.logger.debug("on host %s, binding %s %s %d to mac %s port id %s "
+                         "as binding_type %s"
                          % (args['host'],
+                            args['physnet'],
                             args['network_type'],
                             args['segmentation_id'],
                             args['mac_address'],
                             id,
-                            args['binding_type'],
-                            args['network_id'])
-                         )
-        if args['binding_type'] in 'vhostuser':
-            app.logger.debug('Creating a vhostuser port:%s binding on host %s' % (id, args['host']))
-            vppf.bind_interface_on_host('vhostuser',
-                                     id,
-                                     args['mac_address'],
-                                     args['network_type'],
-                                     args['segmentation_id'],
-                                     args['network_id']
-                                     )
-        elif args['binding_type'] in 'plugtap':
-            app.logger.debug('Creating a plugtap port:%s binding on host %s' % (id, args['host']))
-            vppf.bind_interface_on_host('plugtap',
-                                    id,
-                                    args['mac_address'],
-                                    args['network_type'],
-                                    args['segmentation_id'],
-                                    args['network_id']
-                                    )
+                            args['binding_type'])
+        app.logger.debug("on host %s, binding %s %s %d to mac %s port id %s "
+                         "as binding_type %s"
+                         % (args['host'],
+                            args['physnet'],
+                            args['network_type'],
+                            args['segmentation_id'],
+                            args['mac_address'],
+                            id,
+                            args['binding_type'])
+        if args['binding_type'] in ('vhostuser', 'plugtap'):
+            vppf.bind_interface_on_host(args['binding_type'],
+                                        id,
+                                        args['mac_address'],
+                                        args['physnet'],
+                                        args['network_type'],
+                                        args['segmentation_id'])
         else:
             app.logger.error('Unsupported binding type :%s requested' % args['binding_type'])
 
@@ -484,7 +430,6 @@ class PortBind(Resource):
 class PortUnbind(Resource):
     bind_args = reqparse.RequestParser()
     bind_args.add_argument('host', type=str, required=True)
-    bind_args.add_argument('binding_type', type=str, required=True)
 
     def __init__(self, *args, **kwargs):
         super('PortUnbind', self).__init__(*args, **kwargs)
@@ -495,68 +440,18 @@ class PortUnbind(Resource):
         global vppf
 
         args = self.bind_args.parse_args()
-        app.logger.debug('on host %s, unbinding port ID:%s with binding_type:%s'
-                         % (args['host'],
-                            id,
-                            args['binding_type'])
-                         )
-        vppf.unbind_interface_on_host(id, args['binding_type'])
-
-class Network(Resource):
-    bind_args = reqparse.RequestParser()
-    bind_args.add_argument('physical_network', type=str, required=True)
-    bind_args.add_argument('network_type', type=str, required=True)
-    bind_args.add_argument('segmentation_id', type=str, required=True)
-    bind_args.add_argument('name', type=str, required=True)
-
-    def __init(self, *args, **kwargs):
-        super('Network', self).__init__(*args, **kwargs)
-
-    def post(self, id):
-        global vppf
-        args = self.bind_args.parse_args()
-        app.logger.debug("Create network ID:%s name:%s"
-                         " with network_type:%s and seg_id:%s"
-                         % (id,
-                            args['name'],
-                            args['network_type'],
-                            args['segmentation_id']
-                            )
-                         )
-        vppf.network_on_host(id, args['network_type'], args['segmentation_id'], args['name'])
-    def put(self, id):
-        global vppf
-        args = self.bind_args.parse_args()
-        app.logger.debug("Update network ID:%s name:%s"
-                         " with network_type:%s and seg_id:%s"
-                         % (id,
-                            args['name'],
-                            args['network_type'],
-                            args['segmentation_id']
-                            )
-                         )
-
-    def delete(self, id):
-        global vppf
-        args = self.bind_args.parse_args()
-        app.logger.debug("Delete network ID:%s name:%s"
-                         " with network_type:%s and seg_id:%s"
-                         % (id,
-                            args['name'],
-                            args['network_type'],
-                            args['segmentation_id']
-                            )
-                         )
-        vppf.delete_network_on_host(id, args['network_type'])
+        app.logger.debug('on host %s, unbinding port ID:%s'
+                         % (args['host'], id))
+        vppf.unbind_interface_on_host(id)
 
 
 # Basic Flask RESTful app setup with logging
 app = Flask('vpp-agent')
 app.debug = True
-ch = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
-ch.setFormatter(formatter)
-app.logger.addHandler(ch)
+#ch = logging.StreamHandler()
+#formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
+#ch.setFormatter(formatter)
+#app.logger.addHandler(ch)
 app.logger.debug('Debug logging enabled')
 
 def main():
@@ -573,9 +468,15 @@ def main():
 
     cfg.CONF(sys.argv[1:])
     global vppf
+
+    physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
+    physnets = {}
+    for f in physnet_list:
+        (k, v) = f.split(':')
+        physnets[k] = v
+
     vppf = VPPForwarder(app.logger,
-                        flat_network_if=cfg.CONF.ml2_vpp.flat_network_if,
-                        vlan_trunk_if=cfg.CONF.ml2_vpp.vlan_trunk_if,
+                        physnets,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
                         vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf,
@@ -584,7 +485,6 @@ def main():
     api = Api(app)
     api.add_resource(PortBind, '/ports/<id>/bind')
     api.add_resource(PortUnbind, '/ports/<id>/unbind')
-    api.add_resource(Network, '/networks/<id>')
     app.logger.debug("Starting VPP agent on host address: 0.0.0.0 and port 2704")
     app.run(host='0.0.0.0',port=2704)
 
