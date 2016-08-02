@@ -38,11 +38,14 @@ def _vpp_cb(*args, **kwargs):
 
 
 def _check_retval(t):
+    """See if VPP returned OK.
+    VPP is very inconsistent in return codes, so for now this reports
+    a logged warning rather than flagging an error.
+    """
     try:
         print("checking return value for object: %s" % str(t))
         if t.retval != 0:
             print ('FAIL? retval here is %s' % t.retval)
-    #        raise Exception('failed in backend')
     except AttributeError as e:
         print("Error: %s" % e)
 
@@ -160,7 +163,8 @@ class VPPInterface(object):
         _check_retval(t)
 
     def create_vlan_subif(self, if_id, vlan_tag):
-        print("Creating vlan subinterface with ID:%s and vlan_tag:%s" % (if_id, vlan_tag))
+        print("Creating vlan subinterface with ID:%s and vlan_tag:%s"
+              % (if_id, vlan_tag))
         t = vpp_papi.create_vlan_subif(
             if_id,
             vlan_tag)
