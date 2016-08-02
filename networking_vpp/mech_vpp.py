@@ -343,9 +343,9 @@ class AgentCommunicator(object):
         context = n_context.get_admin_context()
         plugin = manager.NeutronManager.get_plugin()
 
-        self.notify_bound(self, port, host)
+        self.notify_bound(port, host)
 
-    def notify_bound(self, port, host)
+    def notify_bound(self, port, host):
         # Bodge TODO(ijw)
         if self.recursive:
             # This happens right now because when we update the port
