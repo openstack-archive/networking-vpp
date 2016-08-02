@@ -27,24 +27,22 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
+import distro
 from flask import Flask
 from flask_restful import Api
 from flask_restful import reqparse
 from flask_restful import Resource
-import logging
 import os
-import distro
 import sys
+import time
+from threading import Thread
 import vpp
+
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.common import constants as n_const
 from networking_vpp import config_opts
 from oslo_config import cfg
-#from oslo_log import log as logging
-import logging
-import time
-from threading import Thread
 
 ######################################################################
 
@@ -126,8 +124,13 @@ class VPPForwarder(object):
         self.interfaces = {}    # uuid: if idx
 
     def get_vpp_ifidx(self, if_name):
-        """ Return VPP's interface index value for the network interface"""
-        return self.vpp.get_interface(if_name).sw_if_index
+        """Return VPP's interface index value for the network interface"""
+        if self.vpp.get_interface(if_name):
+            return self.vpp.get_interface(if_name).sw_if_index
+        else:
+            app.logger.error("Error obtaining interface data from vpp "
+                             "for interface:%s" % if_name)
+            return None
 
     def get_interface(self, physnet):
         return self.physnets.get(physnet, None)
@@ -205,6 +208,9 @@ class VPPForwarder(object):
             self.vpp.delete_bridge_domain(net['bridge_domain_id'])
 
             # We leave the interface up.  Other networks may be using it
+        else:
+            app.logger.error("Delete Network: network is unknown "
+                             "to agent")
 
     ########################################
     # stolen from LB driver
@@ -370,7 +376,8 @@ class VPPForwarder(object):
                         except Exception as exc:
                             app.logger.debug(exc)
             else:
-                app.logger.error('Unknown port type %s during unbind' % props['bind_type'])
+                app.logger.error('Unknown port type %s during unbind'
+                                 % props['bind_type'])
 
         # TODO(ijw): delete structures of newly unused networks with
         # delete_network
@@ -448,10 +455,6 @@ class PortUnbind(Resource):
 # Basic Flask RESTful app setup with logging
 app = Flask('vpp-agent')
 app.debug = True
-#ch = logging.StreamHandler()
-#formatter = logging.Formatter('%(asctime)s - %(name)s - %(message)s')
-#ch.setFormatter(formatter)
-#app.logger.addHandler(ch)
 app.logger.debug('Debug logging enabled')
 
 def main():
