@@ -17,7 +17,6 @@ import eventlet.queue
 from oslo_config import cfg
 from oslo_log import log as logging
 import requests
-import socket
 import threading
 
 from neutron.common import constants as n_const
@@ -179,7 +178,8 @@ class VPPMechanismDriver(api.MechanismDriver):
         return True
 
     def physnet_known(self, physnet, network_type):
-        # TODO(ijw): this should be a range of physical networks the agents report in.
+        # TODO(ijw): this should be a range of physical networks the
+        # agents report in.
         return True
 
     def check_vlan_transparency(self, port_context):
@@ -334,6 +334,9 @@ class AgentCommunicator(object):
         context = n_context.get_admin_context()
         plugin = manager.NeutronManager.get_plugin()
 
+        # TODO(njoy) Implement an RPC call with request response
+        # to confirm that binding/unbinding has been successful at
+        # the agent
         self.notify_bound(port, host)
 
     def notify_bound(self, port, host):
@@ -357,7 +360,7 @@ class AgentCommunicator(object):
         """Send the unbinding message out to VPP on the compute host"""
         LOG.debug("ML2_VPP: Communicating unbind request to agent for "
                   "port:%(port)s, on host:%(host)s, "
-                   {
+                  {
                       'port': port,
                       'host': host
                   })
