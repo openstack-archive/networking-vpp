@@ -13,11 +13,17 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from abc import ABCMeta, abstractmethod
+import etcd
+import eventlet
 import eventlet.queue
+import json
 from oslo_config import cfg
 from oslo_log import log as logging
+import re
 import requests
-import threading
+import time
+import traceback
 
 from neutron.common import constants as n_const
 from neutron import context as n_context
@@ -26,6 +32,8 @@ from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 from neutron_lib import constants as nl_const
+
+eventlet.monkey_patch()
 
 LOG = logging.getLogger(__name__)
 
@@ -53,13 +61,18 @@ class VPPMechanismDriver(api.MechanismDriver):
     physical_networks = ['physnet']  # TODO(ijw) should learn from agents.
 
     def initialize(self):
-        self.communicator = AgentCommunicator()
+        self.communicator = CompoundAgentCommunicator()
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""
 
         # Default vif type
         vif_type = 'vhostuser'
+
+        # We have to explicitly avoid binding agent ports - DHCP,
+        # L3 etc. - as vhostuser. The interface code below takes
+        # care of those.
+
         owner = port_context.current['device_owner']
         for f in nl_const.DEVICE_OWNER_PREFIXES:
             if owner.startswith(f):
@@ -124,13 +137,14 @@ class VPPMechanismDriver(api.MechanismDriver):
             if self.check_segment(segment, port_context.host):
                 vif_details = dict(self.vif_details)
                 # TODO(ijw) should be in a library that the agent uses
-                if self.get_vif_type(port_context) == 'vhostuser':
+                vif_type = self.get_vif_type(port_context)
+                if vif_type == 'vhostuser':
                     vif_details['vhostuser_socket'] = \
                         '/tmp/%s' % port_context.current['id']
                     vif_details['vhostuser_mode'] = 'client'
                 LOG.debug('ML2_VPP: Setting details: %s', vif_details)
                 port_context.set_binding(segment[api.ID],
-                                         self.get_vif_type(port_context),
+                                         vif_type,
                                          vif_details)
                 LOG.debug("ML2_VPP: Bound using segment: %s", segment)
                 return
@@ -229,7 +243,6 @@ class VPPMechanismDriver(api.MechanismDriver):
                               'host': port_context.host,
                               'binding_type': binding_type
                           })
-                # TODO(ijw) get the physical network
                 self.communicator.bind(port_context.current,
                                        current_bind[api.BOUND_SEGMENT],
                                        port_context.host,
@@ -248,28 +261,71 @@ class VPPMechanismDriver(api.MechanismDriver):
 
 
 class AgentCommunicator(object):
+    __metaclass__ = ABCMeta
+
     def __init__(self):
-        if cfg.CONF.ml2_vpp.agents is None:
-            LOG.error('ML2_VPP: needs agents configured right now')
+       self.recursive = False
 
-        self.agents = {}
-        for f in cfg.CONF.ml2_vpp.agents.split(','):
-            k, v = f.split('=')
-            self.agents[k] = v
+    @abstractmethod
+    def bind(self, port, segment, host, binding_type):
+        pass
 
-        LOG.error("ML2_VPP: Configured agents are: %s " % str(self.agents))
-        self.recursive = False
+
+    @abstractmethod
+    def unbind(self, port, host):
+        pass
+
+    def notify_bound(self, port_id, host):
+        """Tell things that the port is truly bound.
+
+        You want to call this when you're certain that the VPP
+        on the far end has definitely bound the port, and has
+        dropped a vhost-user socket where it can be found.
+
+        You want to do this then specifically because libvirt
+        will hang, because qemu ignores its monitor port,
+        when qemu is waiting for a partner to connect with on
+        its vhost-user interfaces.  It can't start the VM - that
+        requires information from its partner it can't guess at -
+        but it shouldn't hang the monitor - nevertheless...
+
+        In the case your comms protocol is sucky, call it at
+        the end of a bind() and everything will probably be
+        fine.  Probably.
+        """
+
+        context = n_context.get_admin_context()
+        plugin = manager.NeutronManager.get_plugin()
+        # Bodge TODO(ijw)
+        if self.recursive:
+            # This happens right now because when we update the port
+            # status, we update the port and the update notification
+            # comes through to here.
+            # TODO(ijw) wants a more permanent fix, because this only
+            # happens due to the threading model.  We should be
+            # spotting relevant changes in postcommit.
+            LOG.warning('ML2_VPP: recursion check hit on activating port')
+        else:
+            self.recursive = True
+            plugin.update_port_status(context, port_id,
+                                      n_const.PORT_STATUS_ACTIVE,
+                                      host=host)
+            self.recursive = False
+
+
+class ThreadedAgentCommunicator(AgentCommunicator):
+    __metaclass__ = ABCMeta
+
+    def __init__(self):
+        super(ThreadedAgentCommunicator, self).__init__()
         self.queue = eventlet.queue.Queue()
-        self.sync_thread = threading.Thread(
-            name='vpp-sync',
-            target=self._worker)
-        self.sync_thread.start()
+        self.sync_thread = eventlet.spawn(self._worker)
 
     def _worker(self):
         while True:
-            LOG.error("ML2_VPP: worker thread pausing")
+            LOG.error("ML2_VPP(%s): worker thread pausing" % self.__class__.__name__)
             msg = self.queue.get()
-            LOG.error("ML2_VPP: worker thread active")
+            LOG.error("ML2_VPP(%s): worker thread active" % self.__class__.__name__)
             op = msg[0]
             args = msg[1:]
             if op == 'bind':
@@ -285,17 +341,150 @@ class AgentCommunicator(object):
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
+
+        LOG.debug("ML2_VPP: Queueing bind request for port:%(port)s, "
+                  "segment:%(segment)s on host:%(host)s, type:%(type)s",
+                  {
+                      'port': port,
+                      'segment': segment,
+                      'host': host,
+                      'type': binding_type
+                  })
         self.queue.put(['bind', port, segment, host, binding_type])
 
-    def unbind(self, port, host);
+    def unbind(self, port, host):
         """Queue up an unbind message for sending.
 
         This is called in the sequence of a REST call and should take
         as little time as possible.
         """
+
+        LOG.debug("ML2_VPP: Queueing unbind request for port:%(port)s,"
+                  "on host:%(host)s,",
+                  {
+                      'port': port,
+                      'host': host
+                  })
          self.queue.put(['unbind', port, host])
 
+    @abstractmethod
     def send_bind(self, port, segment, host, binding_type):
+       pass
+
+    @abstractmethod
+    def send_unbind(self, port, host):
+       pass
+
+class CompoundAgentCommunicator(AgentCommunicator):
+    # A quick test hack, don't take this too seriously
+    def __init__(self):
+       super(CompoundAgentCommunicator, self).__init__()
+       self.sub = [EtcdAgentCommunicator(), SimpleAgentCommunicator()]
+
+    def bind(self, *args):
+       for f in self.sub:
+            f.bind(*args)
+
+    def unbind(seelf, *args):
+       for f in self.sub:
+            f.bind(*args)
+
+LEADIN = '/networking-vpp'  # TODO: make configurable?
+class EtcdAgentCommunicator(ThreadedAgentCommunicator):
+    """Comms unit for etcd (in progress at the moment)
+
+    This will talk to etcd and tell it what is going on
+    with the Neutron database.  etcd can be run as a
+    cluster and so shouldn't die, but can be unreachable,
+    so this class's job is to ensure that all updates are
+    forwarded to etcd in order even when things are not
+    quite going as planned.
+
+    In etcd, the layout is:
+    LEADIN/nodes - subdirs are compute nodes
+    LEADIN/nodes/X/ports - entries are JSON-ness containing
+    all information on each bound port on the compute node.
+    (Unbound ports are homeless, so the act of unbinding is
+    the deletion of this entry.)
+    LEADIN/nodes/state/X - return state of the VPP
+    LEADIN/nodes/state/X/ports - port information.
+    Specifically a key here (regardless of value) indicates
+    the port has been bound and is receiving traffic.
+    """
+
+    def __init__(self):
+        super(EtcdAgentCommunicator, self).__init__()
+
+        # if cfg.CONF.ml2_vpp.etcd is None:
+        #     LOG.error('ML2_VPP: needs etcd endpoints to talk to')
+
+        self.etcd = etcd.Client()  # TODO(ijw): give this args
+
+        self.return_thread = eventlet.spawn(self._return_worker)
+
+    def port_path(self, host, port):
+        return LEADIN + "/nodes/" + host + "/ports/" + port['id']
+
+    def send_bind(self, port, segment, host, binding_type):
+        # NB segmentation_id is not optional in the wireline protocol,
+        # we just pass 0 for unsegmented network types
+        data = {
+            'mac_address': port['mac_address'],
+            'mtu': 1500,  # not this, but what?: port['mtu'],
+            'physnet': segment[api.PHYSICAL_NETWORK],
+            'network_type': segment[api.NETWORK_TYPE],
+            'segmentation_id': segment.get(api.SEGMENTATION_ID, 0),
+            'binding_type': binding_type,
+        }
+
+       self.etcd.write(self.port_path(host, port),
+                       json.dumps(data))
+
+    def send_unbind(self, port, host):
+        self.etcd.delete(self.port_path(host, port))
+
+    def _return_worker(self):
+        while True:
+           try:
+               LOG.error("ML2_VPP(%s): return thread pausing" % self.__class__.__name__)
+               rv = self.etcd.watch(LEADIN + "/nodes/state", recursive=True)
+               LOG.error("ML2_VPP(%s): return thread active" % self.__class__.__name__)
+
+               # Matches a port key, gets host and uuid
+               m = re.match(LEADIN + '/nodes/state/([^/]+)/ports/([^/]+)$', rv.key)
+
+               if m:
+                   host = m.group(1)
+                   port = m.group(2)
+
+                   self.notify_bound(port, host)
+               else:
+                   LOG.warn('Unexpected key change in etcd port feedback')
+
+           except Exception, e:
+               LOG.error('etcd threw exception %s' % traceback.format_exc(e))
+               time.sleep(2)
+               # Should be specific to etcd faults, should have sensible behaviour
+               # Don't just kill the thread...
+
+
+class SimpleAgentCommunicator(ThreadedAgentCommunicator):
+    def __init__(self):
+        super(SimpleAgentCommunicator, self).__init__()
+
+        if cfg.CONF.ml2_vpp.agents is None:
+            LOG.error('ML2_VPP: needs agents configured right now')
+
+        self.agents = {}
+        for f in cfg.CONF.ml2_vpp.agents.split(','):
+            k, v = f.split('=')
+            self.agents[k] = v
+
+        LOG.debug("ML2_VPP: Configured agents are: %s " % str(self.agents))
+
+    def send_bind(self, port, segment, host, binding_type):
+        """Send the binding message out to VPP on the compute host"""
+
         LOG.debug("ML2_VPP: Communicating bind request to agent for "
                   "port:%(port)s, segment:%(segment)s "
                   "on host:%(host)s, bind_type:%(binding_type)s",
@@ -319,7 +508,7 @@ class AgentCommunicator(object):
             'network_type': segment[api.NETWORK_TYPE],
             'segmentation_id': segment[api.SEGMENTATION_ID]
                                    if segment[api.SEGMENTATION_ID] is not None else 0,
-            'bind_type': type
+            'binding_type': binding_type,
         }
         self._unicast_msg(host, 'ports/%s/bind' % port['id'], data)
 
@@ -331,30 +520,10 @@ class AgentCommunicator(object):
         # reasons of deplying the VM start until DHCP can be reached,
         # because we know the server socket is in place for the port.
 
-        context = n_context.get_admin_context()
-        plugin = manager.NeutronManager.get_plugin()
-
         # TODO(njoy) Implement an RPC call with request response
         # to confirm that binding/unbinding has been successful at
         # the agent
-        self.notify_bound(port, host)
-
-    def notify_bound(self, port, host):
-        # Bodge TODO(ijw)
-        if self.recursive:
-            # This happens right now because when we update the port
-            # status, we update the port and the update notification
-            # comes through to here.
-            # TODO(ijw) wants a more permanent fix, because this only
-            # happens due to the threading model.  We should be
-            # spotting relevant changes in postcommit.
-            LOG.warning('ML2_VPP: Your recursion check hit on activating port')
-        else:
-            self.recursive = True
-            plugin.update_port_status(context, port['id'],
-                                      n_const.PORT_STATUS_ACTIVE,
-                                      host=host)
-            self.recursive = False
+        self.notify_bound(port['id'], host)
 
     def send_unbind(self, port, host):
         """Send the unbinding message out to VPP on the compute host"""
@@ -365,7 +534,8 @@ class AgentCommunicator(object):
                       'host': host
                   })
         data = {'host': host}
-        self._unicast_msg(host, 'ports/%s/unbind/%s' % (port['id'], host), data)
+        urlfrag = "ports/%s/unbind" % port['id']
+        self._unicast_msg(host, urlfrag, data)
 
     def _unicast_msg(self, host, urlfrag, msg):
         # Send unicast message to the agent running on the host
