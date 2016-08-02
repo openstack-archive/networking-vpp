@@ -32,14 +32,7 @@ function init_vpp {
 
 function configure_vpp {
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp agents $MECH_VPP_AGENTLIST
-
-    if [ ! -z "$VLAN_TRUNK_IF" ] ; then
-       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vlan_trunk_if $VLAN_TRUNK_IF
-    fi
-
-    if [ ! -z "$FLAT_NETWORK_IF" ] ; then
-       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp flat_network_if $FLAT_NETWORK_IF
-    fi
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp physnets $MECH_VPP_PHYSNETLIST
 
     if [ ! -z "$VXLAN_SRC_ADDR" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_src_addr $VXLAN_SRC_ADDR

@@ -121,8 +121,7 @@ class VPPInterface(object):
         return t.sw_if_index
 
     def delete_vhostuser(self, idx):
-        #LOG.debug("Deleting VPP interface - index: %s" % idx)
-        print("Deleting VPP interface - index: %s" % idx)
+        LOG.debug("Deleting VPP interface - index: %s" % idx)
         t = vpp_papi.delete_vhost_user_if(idx)
 
         _check_retval(t)
@@ -171,20 +170,18 @@ class VPPInterface(object):
 
         return t.sw_if_index
 
-    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
-        t = vpp_papi.vxlan_add_del_tunnel(
-            true,  # is_add
-            src_addr,
-            bcast_addr,
-            vrf_id,
-            decap_next_index,   # what is this?
-            vni)
-
-        _check_retval(t)
-
-        return t.sw_if_index
-
-
+#    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
+#        t = vpp_papi.vxlan_add_del_tunnel(
+#            True,  # is_add
+#            src_addr,
+#            bcast_addr,
+#            vrf_id,
+#            decap_next_index,   # what is this?
+#            vni)
+#
+#        _check_retval(t)
+#
+#        return t.sw_if_index
     ########################################
 
     def add_to_bridge(self, bridx, *ifidxes):
