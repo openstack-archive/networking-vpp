@@ -13,15 +13,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from neutron._i18n import _
 from oslo_config import cfg
 
 vpp_opts = [
     cfg.StrOpt('agents',
                help=_("HTTP URLs of agents on compute nodes.")),
-    cfg.StrOpt('vlan_trunk_if',
-               help=_("VPP's interface name for the VLAN trunk")),
-    cfg.StrOpt('flat_network_if',
-               help=_("VPP's interface name for the Flat network")),
+    cfg.StrOpt('physnets',
+               help=_("Comma-separated list of net-name:interface-name for "
+                      "physical connections")),
     cfg.StrOpt('vxlan_src_addr',
                help=_("Source address used for VXLAN tunnel packets.")),
     cfg.StrOpt('vxlan_bcast_addr',
