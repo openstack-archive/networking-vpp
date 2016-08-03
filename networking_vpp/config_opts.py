@@ -17,8 +17,6 @@ from neutron._i18n import _
 from oslo_config import cfg
 
 vpp_opts = [
-    cfg.StrOpt('agents',
-               help=_("HTTP URLs of agents on compute nodes.")),
     cfg.StrOpt('physnets',
                help=_("Comma-separated list of net-name:interface-name for "
                       "physical connections")),
