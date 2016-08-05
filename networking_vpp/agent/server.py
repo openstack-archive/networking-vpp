@@ -171,8 +171,8 @@ class VPPForwarder(object):
             LOG.debug('Adding upstream VLAN interface %s.%s '
                       'to bridge for vlan networking' % (intf, seg_id))
             if not self.vpp.get_interface('%s.%s' % (intf, seg_id)):
-                if_upstream = self.vpp.create_vlan_subif(trunk_ifidx,
-                                                          seg_id)
+                if_upstream = self.vpp.create_vlan_subif(ifidx,
+                                                         seg_id)
             else:
                 if_upstream = self.get_vpp_ifidx('%s.%s' % (intf, seg_id))
         # elif net_type == 'vxlan':
