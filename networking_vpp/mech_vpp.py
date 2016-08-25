@@ -333,7 +333,7 @@ class AgentCommunicator(object):
         self._unicast_msg('ports/%s/bind' % port['id'], data)
 
         # This should only be sent when we're certain that the port
-        # is bound If this is in a bg thread, it should be sent there,
+        # is bound. If this is in a bg thread, it should be sent there,
         # and it should only go when we have confirmed that the far end
         # has done its work.  The VM will start when it's called and
         # will wait until then.  For us this is useful beyond the usual
@@ -342,7 +342,11 @@ class AgentCommunicator(object):
 
         context = n_context.get_admin_context()
         plugin = manager.NeutronManager.get_plugin()
-        # Bodge
+
+        self.notify_bound(self, port, host)
+
+    def notify_bound(self, port, host)
+        # Bodge TODO(ijw)
         if self.recursive:
             # This happens right now because when we update the port
             # status, we update the port and the update notification
