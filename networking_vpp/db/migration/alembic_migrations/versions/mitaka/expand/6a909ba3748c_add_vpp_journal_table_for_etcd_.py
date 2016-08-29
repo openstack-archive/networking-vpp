@@ -27,15 +27,22 @@ down_revision = '87654321747070'
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import mysql
+
 
 def upgrade():
     op.create_table('vpp_etcd_journal',
-	sa.Column('id', sa.Integer, primary_key=True, autoincrement=True, nullable=False),
-	sa.Column('k', sa.String(255), nullable=False),
-	sa.Column('v', sa.PickleType, nullable=True),
-	sa.Column('retry_count', sa.Integer, default=0),
-	sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
-	sa.Column('last_retried', sa.DateTime, server_default=sa.func.now(),
-		  onupdate=sa.func.now()))
-
+                    sa.Column('id', sa.Integer,
+                              primary_key=True,
+                              autoincrement=True,
+                              nullable=False),
+                    sa.Column('k', sa.String(255),
+                              nullable=False),
+                    sa.Column('v', sa.PickleType,
+                              nullable=True),
+                    sa.Column('retry_count', sa.Integer,
+                              default=0),
+                    sa.Column('created_at', sa.DateTime,
+                              server_default=sa.func.now()),
+                    sa.Column('last_retried', sa.DateTime,
+                              server_default=sa.func.now(),
+                              onupdate=sa.func.now()))

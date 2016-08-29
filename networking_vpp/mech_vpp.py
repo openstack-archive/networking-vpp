@@ -13,7 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
+from abc import abstractmethod
 import etcd
 import eventlet
 import eventlet.event
@@ -21,17 +22,16 @@ import json
 from oslo_config import cfg
 from oslo_log import log as logging
 import re
-import requests
 import six
 import time
 import traceback
 
-from networking_vpp.db import db, models
+from networking_vpp.db import db
 from neutron.common import constants as n_const
 from neutron import context as n_context
-from neutron import manager
 from neutron.db import api as neutron_db_api
 from neutron.extensions import portbindings
+from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 from neutron_lib import constants as nl_const
@@ -183,7 +183,7 @@ class VPPMechanismDriver(api.MechanismDriver):
                     'is not one the host %(host)s has attached.',
                     {'network_id': segment['id'],
                      'physnet': physnet,
-                    'host': host}
+                     'host': host}
                 )
                 return False
 
@@ -264,15 +264,12 @@ class VPPMechanismDriver(api.MechanismDriver):
             else:
                 prev_bind = port_context.original_binding_levels[-1]
 
-            binding_type = self.get_vif_type(port_context)
-
             if (current_bind is not None and
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 self.communicator.kick()
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 self.communicator.kick()
-
 
     def delete_port_precommit(self, port_context):
         port = port_context.current
@@ -281,7 +278,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         self.communicator.unbind(port_context._plugin_context.session,
                                  port, host)
 
-    def delete_port_precommit(self, port_context):
+    def delete_port_postcommit(self, port_context):
         self.communicator.kick()
 
 
@@ -289,12 +286,11 @@ class VPPMechanismDriver(api.MechanismDriver):
 class AgentCommunicator(object):
 
     def __init__(self):
-       self.recursive = False
+        self.recursive = False
 
     @abstractmethod
     def bind(self, port, segment, host, binding_type):
         pass
-
 
     @abstractmethod
     def unbind(self, port, host):
@@ -344,6 +340,8 @@ class AgentCommunicator(object):
 PARANOIA_TIME = 50              # TODO(ijw): make configurable?
 # Our prefix for etcd keys, in case others are using etcd.
 LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
+
+
 class EtcdAgentCommunicator(AgentCommunicator):
     """Comms unit for etcd
 
@@ -368,7 +366,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     the port has been bound and is receiving traffic.
     """
 
-
     def __init__(self):
         super(EtcdAgentCommunicator, self).__init__()
 
@@ -391,17 +388,16 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
-
     def _find_physnets(self):
         for rv in self.etcd_client.read(LEADIN, recursive=True).children:
             # Find all known physnets
             m = re.match(LEADIN + '/state/([^/]+)/physnets/([^/]+)$', rv.key)
 
             if m:
-               host = m.group(1)
-               net = m.group(2)
+                host = m.group(1)
+                net = m.group(2)
 
-               self.physical_networks.add((host, net))
+                self.physical_networks.add((host, net))
 
     def _port_path(self, host, port):
         return LEADIN + "/nodes/" + host + "/ports/" + port['id']
@@ -412,11 +408,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
     # succeed (so is a bad candidate for calling within or after a
     # transaction).
 
-    kick_count=0
+    kick_count = 0
 
     def kick(self):
         if not self.db_q_ev.ready():
-            self.kick_count = self.kick_count+1
+            self.kick_count = self.kick_count + 1
             try:
                 self.db_q_ev.send(self.kick_count)
             except AssertionError:
@@ -462,7 +458,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 LOG.error('writing key %s' % k)
                 self.etcd_client.write(k, json.dumps(v))
             return True
-        except:                 # TODO(ijw) select your exceptions
+        except Exception:       # TODO(ijw) select your exceptions
             return False
 
     def do_etcd_mkdir(self, path):
@@ -483,8 +479,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     if self.do_etcd_update(k, v):
                         return True
                     else:
-                        os.sleep(1) # something went bad; breathe, in
-                                    # case we end up in a tight loop
+                        # something went bad; breathe, in case we end
+                        # up in a tight loop
+                        time.sleep(1)
                         return False
 
                 LOG.debug('forward worker reading journal')
@@ -493,29 +490,34 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 LOG.debug('forward worker has emptied journal')
 
                 # work queue is now empty.
-                LOG.debug("ML2_VPP(%s): worker thread pausing" % self.__class__.__name__)
+                LOG.debug("ML2_VPP(%s): worker thread pausing"
+                          % self.__class__.__name__)
                 # Wait to be kicked, or (in case of emergency) run every
                 # few seconds in case another thread or process dumped
                 # work and failed to process it
                 try:
-                    with eventlet.Timeout(PARANOIA_TIME) as t:
+                    with eventlet.Timeout(PARANOIA_TIME):
                         # Wait for kick
                         dummy = self.db_q_ev.wait()
                         # Clear the event - we will now process till
                         # we've run out of things in the backlog
                         # so any trigger lost in this gap is harmless
                         self.db_q_ev.reset()
-                        LOG.debug("ML2_VPP(%s): worker thread kicked: %s" % (self.__class__.__name__, str(dummy)))
+                        LOG.debug("ML2_VPP(%s): worker thread kicked: %s"
+                                  % (self.__class__.__name__, str(dummy)))
                 except eventlet.Timeout:
-                    LOG.debug("ML2_VPP(%s): worker thread suspicious of a long pause" % self.__class__.__name__)
+                    LOG.debug("ML2_VPP(%s): worker thread suspicious of "
+                              "a long pause"
+                              % self.__class__.__name__)
                     pass
-                LOG.debug("ML2_VPP(%s): worker thread active" % self.__class__.__name__)
-            except Exception, e:
+                LOG.debug("ML2_VPP(%s): worker thread active"
+                          % self.__class__.__name__)
+            except Exception as e:
                 # TODO(ijw): log exception properly
                 LOG.error("problems in forward worker: %s", e)
                 LOG.error(traceback.format_exc())
                 # never quit
-                #pass
+                pass
 
     ######################################################################
 
@@ -534,15 +536,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
         while True:
 
             try:
-                LOG.debug("ML2_VPP(%s): return worker pausing" % self.__class__.__name__)
+                LOG.debug("ML2_VPP(%s): return worker pausing"
+                          % self.__class__.__name__)
                 rv = self.etcd_client.watch(LEADIN + "/state", recursive=True,
-                                           index=tick)
-                LOG.debug("ML2_VPP(%s): return worker active" % self.__class__.__name__)
-                tick = rv.modifiedIndex+1
+                                            index=tick)
+                LOG.debug("ML2_VPP(%s): return worker active"
+                          % self.__class__.__name__)
+                tick = rv.modifiedIndex + 1
 
                 # Matches a port key, gets host and uuid
-
-
                 m = re.match(LEADIN + '/state/([^/]+)/ports/([^/]+)$', rv.key)
 
                 if m:
@@ -550,7 +552,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     port = m.group(2)
 
                     if rv.action == 'delete':
-                         # Nova doesn't much care when ports go away.
+                        # Nova doesn't much care when ports go away.
                         pass
                     else:
                         self.notify_bound(port, host)
@@ -564,10 +566,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
                         if rv.action == 'delete':
                             LOG.info('host %s has died' % host)
-                         else:
+                        else:
                             LOG.info('host %s is alive' % host)
                     else:
-                        m = re.match(LEADIN + '/state/([^/]+)/physnets/([^/]+)$', rv.key)
+                        m = re.match(
+                            LEADIN + '/state/([^/]+)/physnets/([^/]+)$',
+                            rv.key)
 
                         if m:
                             host = m.group(1)
@@ -578,13 +582,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                 self.physical_networks.add((host, net))
                         else:
                             LOG.warn('Unexpected key change in '
-                                      'etcd port feedback: %s' % rv.key)
+                                     'etcd port feedback: %s' % rv.key)
 
             except etcd.EtcdWatchTimedOut:
                 # this is normal
                 pass
-            except Exception, e:
-                LOG.warning('etcd threw exception %s' % traceback.format_exc(e))
+            except Exception as e:
+                LOG.warning('etcd threw exception %s'
+                            % traceback.format_exc(e))
                 # In case of a dead etcd causing continuous
                 # exceptions, the pause here avoids eating all the
                 # CPU
