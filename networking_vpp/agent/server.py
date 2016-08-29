@@ -47,6 +47,11 @@ from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
 
+
+# config_opts is required to configure the options within it, but
+# not referenced from here, so shut up tox:
+assert config_opts
+
 ######################################################################
 
 # This mirrors functionality in Neutron so that we're creating a name
@@ -73,6 +78,7 @@ def get_distro_family():
         return 'redhat'
     else:
         return distro.id()
+
 
 def get_qemu_default():
     distro = get_distro_family()
@@ -127,7 +133,7 @@ class VPPForwarder(object):
             return self.vpp.get_interface(if_name).sw_if_index
         else:
             LOG.error("Error obtaining interface data from vpp "
-                             "for interface:%s" % if_name)
+                      "for interface:%s" % if_name)
             return None
 
     def get_interface(self, physnet):
@@ -163,7 +169,7 @@ class VPPForwarder(object):
             if_upstream = ifidx
 
             LOG.debug('Adding upstream interface-idx:%s-%s to bridge '
-                             'for flat networking' % (intf, if_upstream))
+                      'for flat networking' % (intf, if_upstream))
 
         elif net_type == 'vlan':
             self.vpp.ifup(ifidx)
@@ -207,7 +213,7 @@ class VPPForwarder(object):
             # We leave the interface up.  Other networks may be using it
         else:
             LOG.error("Delete Network: network is unknown "
-                             "to agent")
+                      "to agent")
 
     ########################################
     # stolen from LB driver
@@ -267,15 +273,15 @@ class VPPForwarder(object):
         while wait_time > 0:
             if ip_lib.device_exists(device_name):
                 LOG.debug('External tap device %s found!'
-                                 % device_name)
+                          % device_name)
                 LOG.debug('Bridging tap interface %s on %s'
-                                 % (device_name, bridge_name))
+                          % (device_name, bridge_name))
                 if not bridge.owns_interface(device_name):
                     bridge.addif(device_name)
                 else:
                     LOG.debug('Interface: %s is already added '
-                                     'to the bridge %s' %
-                                     (device_name, bridge_name))
+                              'to the bridge %s' %
+                              (device_name, bridge_name))
                 found = True
                 break
             else:
@@ -283,14 +289,14 @@ class VPPForwarder(object):
                 wait_time -= 2
         if not found:
             LOG.error('Failed waiting for external tap device:%s'
-                             % device_name)
+                      % device_name)
 
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
             LOG.debug('port %s repeat binding request - ignored' % uuid)
         else:
             LOG.debug('binding port %s as type %s' %
-                             (uuid, if_type))
+                      (uuid, if_type))
 
             # TODO(ijw): naming not obviously consistent with
             # Neutron's naming
@@ -310,7 +316,7 @@ class VPPForwarder(object):
                              'int_tap_name': int_tap_name}
 
                     LOG.debug('Creating tap interface %s with mac %s'
-                                     % (int_tap_name, mac))
+                              % (int_tap_name, mac))
                     iface_idx = self.vpp.create_tap(int_tap_name, mac)
                     # TODO(ijw): someone somewhere ought to be sorting
                     # the MTUs out
@@ -326,7 +332,8 @@ class VPPForwarder(object):
                         br.addif(int_tap_name)
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
-                iface_idx = self.vpp.create_vhostuser(path, mac, self.qemu_user,
+                iface_idx = self.vpp.create_vhostuser(path, mac,
+                                                      self.qemu_user,
                                                       self.qemu_group)
                 props = {'path': path}
             else:
@@ -351,20 +358,20 @@ class VPPForwarder(object):
         self.vpp.add_to_bridge(net_br_idx, iface_idx)
         props['net_data'] = net_data
         LOG.debug('Bound vpp interface with sw_idx:%s on '
-                         'bridge domain:%s'
-                         % (iface_idx, net_br_idx))
+                  'bridge domain:%s'
+                  % (iface_idx, net_br_idx))
         return props
 
     def unbind_interface_on_host(self, uuid):
         if uuid not in self.interfaces:
             LOG.debug('unknown port %s unbinding request - ignored'
-                             % uuid)
+                      % uuid)
         else:
             props = self.interfaces[uuid]
-           iface_idx = props['iface_idx']
+            iface_idx = props['iface_idx']
 
             LOG.debug('unbinding port %s, recorded as type %s'
-                             % (uuid, props['bind_type']))
+                      % (uuid, props['bind_type']))
 
             # We no longer need this interface.  Specifically if it's
             # a vhostuser interface it's annoying to have it around
@@ -392,7 +399,7 @@ class VPPForwarder(object):
                             LOG.debug(exc)
             else:
                 LOG.error('Unknown port type %s during unbind'
-                                 % props['bind_type'])
+                          % props['bind_type'])
 
         # TODO(ijw): delete structures of newly unused networks with
         # delete_network
@@ -400,7 +407,9 @@ class VPPForwarder(object):
 
 ######################################################################
 
-LEADIN = '/networking-vpp'  # TODO: make configurable?
+LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
+
+
 class EtcdListener(object):
     def __init__(self, host, etcd_client, vppf, physnets):
         self.host = host
@@ -431,20 +440,22 @@ class EtcdListener(object):
              segmentation_id):
         # args['binding_type'] in ('vhostuser', 'plugtap'):
         return self.vppf.bind_interface_on_host(binding_type,
-                                        id,
-                                        mac_address,
-                                        physnet,
-                                        network_type,
-                                        segmentation_id)
+                                                id,
+                                                mac_address,
+                                                physnet,
+                                                network_type,
+                                                segmentation_id)
 
-    HEARTBEAT = 60 # seconds
+    HEARTBEAT = 60  # seconds
+
     def process_ops(self):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
         # storing, so it's lost on reboot of VPP)
         physnets = self.physnets.keys()
         for f in physnets:
-            self.etcd_client.write(LEADIN + '/state/%s/physnets/%s' % (self.host, f), 1)
+            self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
+                                   % (self.host, f), 1)
 
         tick = None
         while True:
@@ -452,59 +463,68 @@ class EtcdListener(object):
             # The key that indicates to people that we're alive
             # (not that they care)
             self.etcd_client.write(LEADIN + '/state/%s/alive' % self.host,
-                                  1, ttl=3*self.HEARTBEAT)
+                                   1, ttl=3 * self.HEARTBEAT)
 
             try:
-               LOG.error("ML2_VPP(%s): thread pausing"
-                         % self.__class__.__name__)
-               rv = self.etcd_client.watch(LEADIN + "/nodes/%s/ports" % self.host,
-                                           recursive=True,
-                                           index=tick,
-                                           timeout=self.HEARTBEAT)
-               LOG.error('watch received %s on %s at tick %s',
-                         rv.action, rv.key, rv.modifiedIndex)
-               tick = rv.modifiedIndex+1
-               LOG.error("ML2_VPP(%s): thread active"
-                         % self.__class__.__name__)
+                LOG.error("ML2_VPP(%s): thread pausing"
+                          % self.__class__.__name__)
+                rv = self.etcd_client.watch(LEADIN + "/nodes/%s/ports"
+                                            % self.host,
+                                            recursive=True,
+                                            index=tick,
+                                            timeout=self.HEARTBEAT)
+                LOG.error('watch received %s on %s at tick %s',
+                          rv.action, rv.key, rv.modifiedIndex)
+                tick = rv.modifiedIndex + 1
+                LOG.error("ML2_VPP(%s): thread active"
+                          % self.__class__.__name__)
 
-               # Matches a port key, gets host and uuid
-               m = re.match(LEADIN + '/nodes/%s/ports/([^/]+)$' % self.host, rv.key)
+                # Matches a port key, gets host and uuid
+                m = re.match(LEADIN + '/nodes/%s/ports/([^/]+)$' % self.host,
+                             rv.key)
 
-               if m:
-                   port = m.group(1)
+                if m:
+                    port = m.group(1)
 
-                   if rv.action == 'delete':
-                       # Removing key == desire to unbind
-                       self.unbind(port)
-                       try:
-                           self.etcd_client.delete(LEADIN + '/state/%s/ports/%s'
-                                                   % (self.host, port))
-                       except etcd.EtcdKeyNotFound:
-                           # Gone is fine, if we didn't delete it it's no problem
-                           pass
-                   else:
-                       # Create or update == bind
-                       data = json.loads(rv.value)
-                       props = self.bind(port,
-                                         data['binding_type'],
-                                         data['mac_address'],
-                                         data['physnet'],
-                                         data['network_type'],
-                                         data['segmentation_id'])
-                       self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
-                                              % (self.host, port), json.dumps(props))
+                    if rv.action == 'delete':
+                        # Removing key == desire to unbind
+                        self.unbind(port)
+                        try:
+                            self.etcd_client.delete(
+                                LEADIN + '/state/%s/ports/%s'
+                                % (self.host, port))
+                        except etcd.EtcdKeyNotFound:
+                            # Gone is fine, if we didn't delete it
+                            # it's no problem
+                            pass
+                    else:
+                        # Create or update == bind
+                        data = json.loads(rv.value)
+                        props = self.bind(port,
+                                          data['binding_type'],
+                                          data['mac_address'],
+                                          data['physnet'],
+                                          data['network_type'],
+                                          data['segmentation_id'])
+                        self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
+                                               % (self.host, port),
+                                               json.dumps(props))
 
-               else:
-                   LOG.warn('Unexpected key change in etcd port feedback')
+                else:
+                    LOG.warn('Unexpected key change in etcd port feedback')
 
             except etcd.EtcdWatchTimedOut:
-               # This is normal
-               pass
-            except Exception, e:
-               LOG.error('etcd threw exception %s' % traceback.format_exc(e))
-               time.sleep(1) # TODO(ijw): prevents tight crash loop, but adds latency
-               # Should be specific to etcd faults, should have sensible behaviour
-               # Don't just kill the thread...
+                # This is normal
+                pass
+            except Exception as e:
+                LOG.error('etcd threw exception %s' % traceback.format_exc(e))
+
+                # TODO(ijw): prevents tight crash loop, but adds
+                # latency
+                time.sleep(1)
+
+                # Should be specific to etcd faults, should have
+                # sensible behaviour - Don't just kill the thread...
 
 
 def main():

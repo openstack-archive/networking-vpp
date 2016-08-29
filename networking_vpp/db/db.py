@@ -11,20 +11,12 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-import datetime
-
-from sqlalchemy import asc
-from sqlalchemy import func
-from sqlalchemy import or_
 
 from networking_vpp.db.models import VppEtcdJournal
 
-from neutron.db import api as db_api
-
-from oslo_db import api as oslo_db_api
-
 from oslo_log import log as logging
 LOG = logging.getLogger(__name__)
+
 
 def journal_read(session, func):
     """Read, process and delete (if successful) the oldest journal row.
@@ -32,8 +24,8 @@ def journal_read(session, func):
     The row is locked on read, and remains locked until the processing
     succeeds or gives up.  This is to ensure that (in a multithreaded
     or multiprocess environment) only one worker processes the update,
-    which in turn ensures monotonicity."""
-
+    which in turn ensures monotonicity.
+    """
 
     # TODO(ijw): start a transaction here
 
@@ -43,7 +35,7 @@ def journal_read(session, func):
     # multiple threads running (as there may be if multiple processes
     # are running)
 
-    maybe_more=True
+    maybe_more = True
     with session.begin():
         # Note also that this will, if the other thread succeeds, lock a
         # row that someone else deletes, so its session will abort.
@@ -62,7 +54,10 @@ def journal_read(session, func):
                 session.update(entry)
         else:
             # The table is empty - no work available.
-            maybe_more=False
+            maybe_more = False
+
+    return maybe_more
+
 
 def journal_write(session, k, v):
     """Write a new journal entry.
@@ -70,7 +65,7 @@ def journal_write(session, k, v):
     This is expected to be used in the precommit, so is a part of a
     larger transaction.  It doesn't commit itself.
     """
-    
+
     entry = VppEtcdJournal(k=k, v=v)
     session.add(entry)
     session.flush()

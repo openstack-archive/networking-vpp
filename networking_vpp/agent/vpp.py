@@ -78,7 +78,7 @@ class VPPInterface(object):
     ########################################
 
     def create_tap(self, ifname, mac):
-       # (we don't like unicode in VPP hence str(ifname))
+        # (we don't like unicode in VPP hence str(ifname))
         t = vpp_papi.tap_connect(False,  # random MAC
                                  str(ifname),
                                  mac_to_bytes(mac),
@@ -160,7 +160,7 @@ class VPPInterface(object):
 
     def create_vlan_subif(self, if_id, vlan_tag):
         self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
-              % (if_id, vlan_tag))
+                       % (if_id, vlan_tag))
         t = vpp_papi.create_vlan_subif(
             if_id,
             vlan_tag)
@@ -206,4 +206,3 @@ class VPPInterface(object):
                 ifidx,
                 0, 0,               # admin and link down
                 0)                   # err, I can set the delected flag?
-
