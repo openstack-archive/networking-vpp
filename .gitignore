@@ -1,0 +1,6 @@
+.eggs
+build
+*.egg-info
+*.pyc
+.tox
+*~
