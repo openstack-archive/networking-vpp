@@ -1,4 +1,74 @@
 CHANGES
 =======
 
-* Hokey version of VPP mechdriver
+* Tox fixes
+* Remove outdated line from example config
+* Use a journal table
+* do not create vpp subintf if exists
+* etcd support, part 1
+* Added etcd comms channel
+* Major updates
+* More PEP8
+* Fix doc file in setup.cfg
+* Major updates
+* tox cleanups (mainly long lines)
+* typo
+* Break notifcation of Nova into own function
+* Correct doc file name
+* update delete_network_on_host
+* update network_on_host
+* update vpp get_interface
+* add tests
+* added tests
+* delete bridge on network delete
+* create bridge-pool
+* delete vpp bridge_domain on network delete
+* support arbitrary physical network names for flat n/w binding
+* create network
+* create network msg
+* prevent adding an existing bridge interface
+* remove agent auto-cleanup
+* devstack l3_agent prevent ovs cleanup fix
+* vif_type fix
+* dhcp fixes
+* vpp agent logging
+* DHCP fixes
+* updated agent filtering for messaging
+* updated agent messaging to include failure reporting
+* remove local settings from devstack/settings
+* comment
+* delete port_postcommit
+* add flat networking
+* Change qemu user/group to be config options. Also added default values for those for ubuntu and redhat
+* fix server.py bind logger format string error
+* fix server.py unbind logger debug
+* add host info to unbind data
+* delete port url update to remove host
+* delete port_postcommit with debug
+* delete port_postcommit
+* add debugs to vpp.py
+* Add support for defining settings in local.conf. We now first check if a setting is defined
+* Add centos 7 guide doc
+* Convert README to rst
+* send bind call without queuing
+* add hostname to ip lookup
+* unicast message
+* update agent list in devstack settings
+* update agent to listen on 0.0.0.0
+* add mech_vpp debugs
+* agent list split on comma
+* updated agent list in devstack settings
+* More fixes on comments, debug, deleting
+* changed socket group to libvirtd
+* added missing unbind call to agent in mech_vpp
+* added debug messages for bind and unbind requests
+* updated devstack/settings vlan trunk interface
+* fix bug attribute error
+* test
+* fixed return value error
+* fixed bug for checking return value
+* Added README with details of what work has been done to date
+* updated vpp api interface
+* First pass at agent, diags in driver
+* Initial commit: mechdriver that talks to an as-yet missing agent
+* Added .gitreview
