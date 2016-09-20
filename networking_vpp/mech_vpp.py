@@ -26,6 +26,7 @@ import six
 import time
 import traceback
 
+from networking_vpp import config
 from networking_vpp.db import db
 from neutron.common import constants as n_const
 from neutron import context as n_context
@@ -40,14 +41,6 @@ eventlet.monkey_patch()
 
 LOG = logging.getLogger(__name__)
 
-vpp_opts = [
-    cfg.StrOpt('agents',
-               help=_("Name=HTTP URL mapping list of agents on compute "
-                      "nodes.")),
-]
-
-cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
-
 
 class VPPMechanismDriver(api.MechanismDriver):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
@@ -59,6 +52,7 @@ class VPPMechanismDriver(api.MechanismDriver):
     vif_details = {}
 
     def initialize(self):
+        cfg.CONF.register_opts(config.vpp_opts, "ml2_vpp")
         self.communicator = EtcdAgentCommunicator()
 
     def get_vif_type(self, port_context):
@@ -369,7 +363,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def __init__(self):
         super(EtcdAgentCommunicator, self).__init__()
 
-        self.etcd_client = etcd.Client()  # TODO(ijw): give this args
+        self.etcd_client = etcd.Client(host=cfg.CONF.ml2_vpp.etcd_host,
+                                       port=cfg.CONF.ml2_vpp.etcd_port)
 
         # We need certain directories to exist
         self.do_etcd_mkdir(LEADIN + '/state')
