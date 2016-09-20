@@ -535,6 +535,7 @@ def main():
     # distribution. Currently only supporting ubuntu and redhat.
     qemu_user = cfg.CONF.ml2_vpp.qemu_user
     qemu_group = cfg.CONF.ml2_vpp.qemu_group
+    cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
     default_user, default_group = get_qemu_default()
     if not qemu_user:
         qemu_user = default_user
@@ -554,7 +555,8 @@ def main():
                         qemu_user=qemu_user,
                         qemu_group=qemu_group)
 
-    etcd_client = etcd.Client()  # TODO(ijw): args
+    etcd_client = etcd.Client(host=cfg.CONF.ml2_vpp.etcd_host,
+                              port=cfg.CONF.ml2_vpp.etcd_port)
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
 
