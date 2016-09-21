@@ -59,8 +59,8 @@ class VPPInterface(object):
     def get_interfaces(self):
         t = vpp_papi.sw_interface_dump(0, b'ignored')
 
-        for interface in t:
-            if interface.vl_msg_id == vpp_papi.VL_API_SW_INTERFACE_DETAILS:
+        for interface in t:q
+            if interface.vl_msg_id == vpp_papi.vpe.VL_API_SW_INTERFACE_DETAILS:
                 yield (fix_string(interface.interface_name), interface)
 
     def get_interface(self, name):
