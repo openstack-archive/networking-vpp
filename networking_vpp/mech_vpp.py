@@ -362,9 +362,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def __init__(self):
         super(EtcdAgentCommunicator, self).__init__()
-
+        LOG.debug("Using etcd host:%s port:%s user:%s password:***" %
+                  (cfg.CONF.ml2_vpp.etcd_host,
+                   cfg.CONF.ml2_vpp.etcd_port,
+                   cfg.CONF.ml2_vpp.etcd_user,))
         self.etcd_client = etcd.Client(host=cfg.CONF.ml2_vpp.etcd_host,
-                                       port=cfg.CONF.ml2_vpp.etcd_port)
+                                       port=cfg.CONF.ml2_vpp.etcd_port,
+                                       username=cfg.CONF.ml2_vpp.etcd_user,
+                                       password=cfg.CONF.ml2_vpp.etcd_pass,
+                                       allow_reconnect=True)
 
         # We need certain directories to exist
         self.do_etcd_mkdir(LEADIN + '/state')
