@@ -545,9 +545,16 @@ def main():
     physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
     physnets = {}
     for f in physnet_list:
-        (k, v) = f.split(':')
-        physnets[k] = v
-
+        if f:
+            try:
+                (k, v) = f.split(':')
+                physnets[k] = v
+            except Exception:
+                LOG.error("Could not parse physnet to interface mapping "
+                          "check the format in the config file: "
+                          "physnets = physnet1:<interface1>, "
+                          "physnet2:<interface>"
+                          )
     vppf = VPPForwarder(physnets,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
