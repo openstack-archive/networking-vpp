@@ -34,6 +34,10 @@ vpp_opts = [
                help=_("Etcd host IP address to connect etcd client.")),
     cfg.IntOpt('etcd_port', default=4001,
                help=_("Etcd port to connect the etcd client.")),
+    cfg.StrOpt('etcd_user', default=None,
+               help=_("Username for etcd authentication")),
+    cfg.StrOpt('etcd_pass', default=None,
+               help=_("Password for etcd authentication")),
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
