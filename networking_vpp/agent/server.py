@@ -181,6 +181,7 @@ class VPPForwarder(object):
                                                          seg_id)
             else:
                 if_upstream = self.get_vpp_ifidx('%s.%s' % (intf, seg_id))
+                self.vpp.set_vlan_tag_rewrite(if_upstream)
         # elif net_type == 'vxlan':
         #     # NB physnet not really used here
         #     if_upstream = \
