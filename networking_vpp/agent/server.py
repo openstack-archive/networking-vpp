@@ -563,8 +563,17 @@ def main():
                         qemu_user=qemu_user,
                         qemu_group=qemu_group)
 
+    LOG.debug("Using etcd host:%s port:%s user:%s password:%s" %
+              (cfg.CONF.ml2_vpp.etcd_host,
+               cfg.CONF.ml2_vpp.etcd_port,
+               cfg.CONF.ml2_vpp.etcd_user,
+               cfg.CONF.ml2_vpp.etcd_pass,))
+
     etcd_client = etcd.Client(host=cfg.CONF.ml2_vpp.etcd_host,
-                              port=cfg.CONF.ml2_vpp.etcd_port)
+                              port=cfg.CONF.ml2_vpp.etcd_port,
+                              username=cfg.CONF.ml2_vpp.etcd_user,
+                              password=cfg.CONF.ml2_vpp.etcd_pass,
+                              allow_reconnect=True)
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
 
