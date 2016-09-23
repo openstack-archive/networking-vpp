@@ -6,6 +6,14 @@ MECH_VPP_BIN_DIR=$(get_python_exec_prefix)
 VPP_CP_BINARY="$MECH_VPP_BIN_DIR/vpp-agent"
 
 MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:GigabitEthernet2/2/0}
+#Ip address of the host to connect to
+ETCD_HOST=${ETCD_HOST:-127.0.0.1}
+#Etcd port to connect to
+ETCD_PORT=${ETCD_PORT:-2379}
+#Username for etcd authentication
+ETCD_USER=${ETCD_USER:-}
+#Password for etcd authentication
+ETCD_PASS=${ETCD_PASS:-}
 
 VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
