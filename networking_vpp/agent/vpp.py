@@ -99,7 +99,7 @@ class VPPInterface(object):
 
     def create_vhostuser(self, ifpath, mac, qemu_user, qemu_group):
         self.LOG.info('Creating %s as a port' % ifpath)
-        t = vpp_papi.create_vhost_user_if(True,  # is a server?
+        t = vpp_papi.create_vhost_user_if(False,  # is a server?
                                           str(ifpath),  # unicode not allowed.
                                           False,  # Who knows what renumber is?
                                           0,  # custom_dev_instance

@@ -27,9 +27,9 @@ vpp_opts = [
     cfg.StrOpt('vxlan_vrf',
                help=_("VPP's VRF for the encapped VXLAN packets.")),
     cfg.StrOpt('qemu_user',
-               help=_("QEMU user. Leave blank for default user")),
+               help=_("QEMU user, if VPP is used as a server.")),
     cfg.StrOpt('qemu_group',
-               help=_("QEMU group. Leave blank for default group.")),
+               help=_("QEMU group, if VPP is used as a server.")),
     cfg.StrOpt('agents',
                help=_("Name=HTTP URL mapping list of agents on compute "
                       "nodes.")),
