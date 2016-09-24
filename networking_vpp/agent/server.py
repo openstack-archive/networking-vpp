@@ -80,23 +80,6 @@ def get_distro_family():
         return distro.id()
 
 
-def get_qemu_default():
-    distro = get_distro_family()
-    if distro == 'redhat':
-        qemu_user = 'qemu'
-        qemu_group = 'qemu'
-    elif distro == 'ubuntu':
-        qemu_user = 'libvirt-qemu'
-        qemu_group = 'libvirtd'
-    else:
-        # let's just try libvirt-qemu for now, maybe we should instead
-        # print error messsage and exit?
-        qemu_user = 'libvirt-qemu'
-        qemu_group = 'kvm'
-
-    return (qemu_user, qemu_group)
-
-
 ######################################################################
 
 
@@ -106,15 +89,10 @@ class VPPForwarder(object):
                  physnets,  # physnet_name: interface-name
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
-                 vxlan_vrf=None,
-                 qemu_user=None,
-                 qemu_group=None):
+                 vxlan_vrf=None):
         self.vpp = vpp.VPPInterface(LOG)
 
         self.physnets = physnets
-
-        self.qemu_user = qemu_user
-        self.qemu_group = qemu_group
 
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
@@ -332,9 +310,7 @@ class VPPForwarder(object):
                         br.addif(int_tap_name)
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
-                iface_idx = self.vpp.create_vhostuser(path, mac,
-                                                      self.qemu_user,
-                                                      self.qemu_group)
+                iface_idx = self.vpp.create_vhostuser(path, mac)
                 props = {'path': path}
             else:
                 raise Exception('unsupported interface type')
@@ -533,14 +509,7 @@ def main():
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
     # distribution. Currently only supporting ubuntu and redhat.
-    qemu_user = cfg.CONF.ml2_vpp.qemu_user
-    qemu_group = cfg.CONF.ml2_vpp.qemu_group
     cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
-    default_user, default_group = get_qemu_default()
-    if not qemu_user:
-        qemu_user = default_user
-    if not qemu_group:
-        qemu_group = default_group
 
     physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
     physnets = {}
@@ -559,9 +528,7 @@ def main():
     vppf = VPPForwarder(physnets,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
-                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf,
-                        qemu_user=qemu_user,
-                        qemu_group=qemu_group)
+                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)
 
     etcd_client = etcd.Client(host=cfg.CONF.ml2_vpp.etcd_host,
                               port=cfg.CONF.ml2_vpp.etcd_port)
