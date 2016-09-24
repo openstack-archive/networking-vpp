@@ -40,14 +40,6 @@ function configure_vpp {
     if [ ! -z "$VXLAN_VRF" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_vrf $VXLAN_VRF
     fi
-
-    if [ ! -z "$QEMU_USER" ] ; then
-        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp qemu_user $QEMU_USER
-    fi
-
-    if [ ! -z "$QEMU_GROUP" ] ; then
-        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp qemu_group $QEMU_GROUP
-    fi
 }
 
 function shut_vpp_down {
