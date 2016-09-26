@@ -371,10 +371,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
-
         # We need certain directories to exist
-        self.do_etcd_mkdir(LEADIN + '/state')
-        self.do_etcd_mkdir(LEADIN + '/nodes')
+        self.state_key_space = LEADIN + '/state'
+        self.port_key_space = LEADIN + '/nodes'
+        self.do_etcd_mkdir(self.state_key_space)
+        self.do_etcd_mkdir(self.port_key_space)
 
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
@@ -392,7 +393,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _find_physnets(self):
         for rv in self.etcd_client.read(LEADIN, recursive=True).children:
             # Find all known physnets
-            m = re.match(LEADIN + '/state/([^/]+)/physnets/([^/]+)$', rv.key)
+            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
+                         rv.key)
 
             if m:
                 host = m.group(1)
@@ -401,7 +403,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 self.physical_networks.add((host, net))
 
     def _port_path(self, host, port):
-        return LEADIN + "/nodes/" + host + "/ports/" + port['id']
+        return self.port_key_space + "/" + host + "/ports/" + port['id']
 
     ######################################################################
     # These functions use a DB journal to log messages before
@@ -534,7 +536,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # of agents but also of any notifications for which we missed
         # the watch event.
 
-        self._find_physnets()
         # TODO(ijw): agents
         # TODO(ijw): notifications
 
@@ -544,51 +545,91 @@ class EtcdAgentCommunicator(AgentCommunicator):
             try:
                 LOG.debug("ML2_VPP(%s): return worker pausing"
                           % self.__class__.__name__)
-                rv = self.etcd_client.watch(LEADIN + "/state", recursive=True,
-                                            index=tick)
-                LOG.debug("ML2_VPP(%s): return worker active"
-                          % self.__class__.__name__)
-                tick = rv.modifiedIndex + 1
+                try:
+                    rv = self.etcd_client.watch(self.state_key_space,
+                                                recursive=True,
+                                                index=tick)
+                    vals = [rv]
+                    resync = False
 
-                # Matches a port key, gets host and uuid
-                m = re.match(LEADIN + '/state/([^/]+)/ports/([^/]+)$', rv.key)
+                    next_tick = rv.modifiedIndex + 1
 
-                if m:
-                    host = m.group(1)
-                    port = m.group(2)
+                except etcd.EtcdEventIndexCleared:
+                    LOG.debug("Received etcd event index cleared. "
+                              "Recovering etcd watch index")
+                    rv = self.etcd_client.read(self.state_key_space,
+                                               recursive=True)
+                    vals = [rv.children]
+                    resync = True
 
-                    if rv.action == 'delete':
-                        # Nova doesn't much care when ports go away.
-                        pass
-                    else:
-                        self.notify_bound(port, host)
-                else:
+                    next_tick = rv.etcd_index + 1
+
+                    LOG.debug("Etcd watch index recovered at index:%s"
+                              % next_tick)
+
+                if resync:
+                    # resync should clear old state and then
+                    # add back new state; the only thing we remember of the
+                    # state are the physnets.
+                    self.physical_networks = set()
+
+                # 'vals' is a list of keys with relevant values to fold into
+                # the physnets array.
+
+                for kv in vals:
+
+                    LOG.debug("ML2_VPP(%s): return worker active"
+                              % self.__class__.__name__)
+
                     # Matches a port key, gets host and uuid
-                    m = re.match(LEADIN + '/state/([^/]+)/alive$', rv.key)
+                    m = re.match(self.state_key_space +
+                                 '/([^/]+)/ports/([^/]+)$',
+                                 kv.key)
 
                     if m:
-                        # TODO(ijw): this should be fed into the agents table.
                         host = m.group(1)
+                        port = m.group(2)
 
-                        if rv.action == 'delete':
-                            LOG.info('host %s has died' % host)
+                        if kv.action == 'delete':
+                            # Nova doesn't much care when ports go away.
+                            pass
                         else:
-                            LOG.info('host %s is alive' % host)
+                            self.notify_bound(port, host)
                     else:
-                        m = re.match(
-                            LEADIN + '/state/([^/]+)/physnets/([^/]+)$',
-                            rv.key)
+                        # Matches a port key, gets host and uuid
+                        m = re.match(self.state_key_space + '/([^/]+)/alive$',
+                                     kv.key)
 
                         if m:
+                            # TODO(ijw): this should be fed into the agents
+                            # table.
                             host = m.group(1)
-                            net = m.group(2)
-                            if rv.action == 'delete':
-                                self.physical_networks.remove((host, net))
+
+                            if kv.action == 'delete':
+                                LOG.info('host %s has died' % host)
                             else:
-                                self.physical_networks.add((host, net))
+                                LOG.info('host %s is alive' % host)
                         else:
-                            LOG.warn('Unexpected key change in '
-                                     'etcd port feedback: %s' % rv.key)
+                            m = re.match(
+                                self.state_key_space +
+                                '/([^/]+)/physnets/([^/]+)$',
+                                kv.key)
+
+                            if m:
+                                host = m.group(1)
+                                net = m.group(2)
+                                if kv.action == 'delete':
+                                    self.physical_networks.remove((host, net))
+                                else:
+                                    self.physical_networks.add((host, net))
+                            else:
+                                LOG.warn('Unexpected key change in '
+                                         'etcd port feedback: %s' % kv.key)
+
+            # Update the tick only when all the above completes so that
+            # exceptions don't cause the count to skip before the data
+            # is processed
+            tick = next_tick
 
             except etcd.EtcdWatchTimedOut:
                 # this is normal
@@ -600,6 +641,3 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # exceptions, the pause here avoids eating all the
                 # CPU
                 time.sleep(2)
-                # TODO(ijw): Should be specific to etcd faults? should
-                # have sensible behaviour; don't just kill the
-                # thread...
