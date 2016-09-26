@@ -371,10 +371,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
-
         # We need certain directories to exist
-        self.do_etcd_mkdir(LEADIN + '/state')
-        self.do_etcd_mkdir(LEADIN + '/nodes')
+        self.state_key_space = LEADIN + '/state'
+        self.port_key_space = LEADIN + '/nodes'
+        self.do_etcd_mkdir(self.state_key_space)
+        self.do_etcd_mkdir(self.port_key_space)
 
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
@@ -392,7 +393,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _find_physnets(self):
         for rv in self.etcd_client.read(LEADIN, recursive=True).children:
             # Find all known physnets
-            m = re.match(LEADIN + '/state/([^/]+)/physnets/([^/]+)$', rv.key)
+            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
+                         rv.key)
 
             if m:
                 host = m.group(1)
@@ -401,7 +403,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 self.physical_networks.add((host, net))
 
     def _port_path(self, host, port):
-        return LEADIN + "/nodes/" + host + "/ports/" + port['id']
+        return self.port_key_space + "/" + host + "/ports/" + port['id']
 
     ######################################################################
     # These functions use a DB journal to log messages before
@@ -534,7 +536,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # of agents but also of any notifications for which we missed
         # the watch event.
 
-        self._find_physnets()
         # TODO(ijw): agents
         # TODO(ijw): notifications
 
@@ -544,14 +545,36 @@ class EtcdAgentCommunicator(AgentCommunicator):
             try:
                 LOG.debug("ML2_VPP(%s): return worker pausing"
                           % self.__class__.__name__)
-                rv = self.etcd_client.watch(LEADIN + "/state", recursive=True,
-                                            index=tick)
+                try:
+                    rv = self.etcd_client.watch(self.state_key_space,
+                                                recursive=True,
+                                                index=tick)
+                    resync = False
+                except etcd.EtcdEventIndexCleared:
+                    LOG.debug("Received etcd event index cleared. "
+                              "Recovering etcd watch index")
+                    rv = self.etcd_client.read(self.state_key_space,
+                                               recursive=True)
+                    tick = rv.etcd_index + 1
+                    resync = True
+                    LOG.debug("Etcd watch index recovered at index:%s"
+                              % tick)
+
+                # resync should clear old state and then
+                # add back new state; the only thing we remember of the state
+                # are the physnets. If resync is False, set the tick to
+                # rv.modifiedIndex + 1
+                if resync:
+                    self.physical_networks = set()
+                else:
+                    tick = rv.modifiedIndex + 1
+
                 LOG.debug("ML2_VPP(%s): return worker active"
                           % self.__class__.__name__)
-                tick = rv.modifiedIndex + 1
 
                 # Matches a port key, gets host and uuid
-                m = re.match(LEADIN + '/state/([^/]+)/ports/([^/]+)$', rv.key)
+                m = re.match(self.state_key_space + '/([^/]+)/ports/([^/]+)$',
+                             rv.key)
 
                 if m:
                     host = m.group(1)
@@ -564,7 +587,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         self.notify_bound(port, host)
                 else:
                     # Matches a port key, gets host and uuid
-                    m = re.match(LEADIN + '/state/([^/]+)/alive$', rv.key)
+                    m = re.match(self.state_key_space + '/([^/]+)/alive$',
+                                 rv.key)
 
                     if m:
                         # TODO(ijw): this should be fed into the agents table.
@@ -576,7 +600,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                             LOG.info('host %s is alive' % host)
                     else:
                         m = re.match(
-                            LEADIN + '/state/([^/]+)/physnets/([^/]+)$',
+                            self.state_key_space +
+                            '/([^/]+)/physnets/([^/]+)$',
                             rv.key)
 
                         if m:
