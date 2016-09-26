@@ -27,7 +27,6 @@ function init_vpp {
 }
 
 function configure_vpp {
-    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp agents $MECH_VPP_AGENTLIST
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp physnets $MECH_VPP_PHYSNETLIST
 
     if [ ! -z "$VXLAN_SRC_ADDR" ] ; then
