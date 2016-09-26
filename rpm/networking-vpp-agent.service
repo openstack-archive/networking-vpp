@@ -1,0 +1,12 @@
+[Unit]
+Description=Networking VPP ML2 Agent
+Requires=vpp.service
+After=vpp.service
+
+[Service]
+ExecStart=/usr/bin/vpp-agent --config-file /etc/neutron/plugins/ml2/ml2_conf.ini
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+
