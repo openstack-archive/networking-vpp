@@ -30,9 +30,6 @@ vpp_opts = [
                help=_("QEMU user. Leave blank for default user")),
     cfg.StrOpt('qemu_group',
                help=_("QEMU group. Leave blank for default group.")),
-    cfg.StrOpt('agents',
-               help=_("Name=HTTP URL mapping list of agents on compute "
-                      "nodes.")),
     cfg.StrOpt('etcd_host', default="127.0.0.1",
                help=_("Etcd host IP address to connect etcd client.")),
     cfg.IntOpt('etcd_port', default=4001,
