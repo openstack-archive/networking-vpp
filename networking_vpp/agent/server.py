@@ -38,6 +38,7 @@ import time
 import traceback
 import vpp
 
+from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
@@ -393,6 +394,7 @@ class EtcdListener(object):
         self.etcd_client = etcd_client
         self.vppf = vppf
         self.physnets = physnets
+        self.etcd_helper = EtcdHelper(self.etcd_client)
 
         # We need certain directories to exist
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
@@ -434,6 +436,8 @@ class EtcdListener(object):
             self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
                                    % (self.host, f), 1)
 
+        port_key_space = LEADIN + "/nodes/%s/ports" % self.host
+        state_key_space = LEADIN + "/state/%s/ports" % self.host
         tick = None
         while True:
 
@@ -445,8 +449,7 @@ class EtcdListener(object):
             try:
                 LOG.error("ML2_VPP(%s): thread pausing"
                           % self.__class__.__name__)
-                rv = self.etcd_client.watch(LEADIN + "/nodes/%s/ports"
-                                            % self.host,
+                rv = self.etcd_client.watch(port_key_space,
                                             recursive=True,
                                             index=tick,
                                             timeout=self.HEARTBEAT)
@@ -457,7 +460,7 @@ class EtcdListener(object):
                           % self.__class__.__name__)
 
                 # Matches a port key, gets host and uuid
-                m = re.match(LEADIN + '/nodes/%s/ports/([^/]+)$' % self.host,
+                m = re.match(port_key_space + '/([^/]+)$',
                              rv.key)
 
                 if m:
@@ -468,8 +471,8 @@ class EtcdListener(object):
                         self.unbind(port)
                         try:
                             self.etcd_client.delete(
-                                LEADIN + '/state/%s/ports/%s'
-                                % (self.host, port))
+                                port_key_space + '/%s'
+                                % port)
                         except etcd.EtcdKeyNotFound:
                             # Gone is fine, if we didn't delete it
                             # it's no problem
@@ -483,8 +486,8 @@ class EtcdListener(object):
                                           data['physnet'],
                                           data['network_type'],
                                           data['segmentation_id'])
-                        self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
-                                               % (self.host, port),
+                        self.etcd_client.write(state_key_space + '/%s'
+                                               % port,
                                                json.dumps(props))
 
                 else:
@@ -493,6 +496,11 @@ class EtcdListener(object):
             except etcd.EtcdWatchTimedOut:
                 # This is normal
                 pass
+            except etcd.EtcdEventIndexCleared:
+                LOG.debug("Received etcd event index cleared. "
+                          "Recovering etcd watch index")
+                tick = self.etcd_helper.recover_etcd_state(port_key_space)
+                LOG.debug("Etcd watch index recovered at %s" % tick)
             except Exception as e:
                 LOG.error('etcd threw exception %s' % traceback.format_exc(e))
 
