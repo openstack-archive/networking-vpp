@@ -26,6 +26,7 @@ import six
 import time
 import traceback
 
+from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from neutron.common import constants as n_const
@@ -371,10 +372,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
-
+        self.etcd_helper = EtcdHelper(self.etcd_client)
         # We need certain directories to exist
-        self.do_etcd_mkdir(LEADIN + '/state')
-        self.do_etcd_mkdir(LEADIN + '/nodes')
+        self.state_key_space = LEADIN + '/state'
+        self.port_key_space = LEADIN + '/nodes'
+        self.do_etcd_mkdir(self.state_key_space)
+        self.do_etcd_mkdir(self.node_key_space)
 
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
@@ -389,10 +392,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
-    def _find_physnets(self):
-        for rv in self.etcd_client.read(LEADIN, recursive=True).children:
+    def _read_physnets(self, rv):
+        for rv in rv.children:
             # Find all known physnets
-            m = re.match(LEADIN + '/state/([^/]+)/physnets/([^/]+)$', rv.key)
+            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$', rv.key)
 
             if m:
                 host = m.group(1)
@@ -401,7 +404,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 self.physical_networks.add((host, net))
 
     def _port_path(self, host, port):
-        return LEADIN + "/nodes/" + host + "/ports/" + port['id']
+        return self.node_key_space + "/" + host + "/ports/" + port['id']
 
     ######################################################################
     # These functions use a DB journal to log messages before
@@ -534,7 +537,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # of agents but also of any notifications for which we missed
         # the watch event.
 
-        self._find_physnets()
         # TODO(ijw): agents
         # TODO(ijw): notifications
 
@@ -544,54 +546,80 @@ class EtcdAgentCommunicator(AgentCommunicator):
             try:
                 LOG.debug("ML2_VPP(%s): return worker pausing"
                           % self.__class__.__name__)
-                rv = self.etcd_client.watch(LEADIN + "/state", recursive=True,
-                                            index=tick)
+                try:
+                    rv = self.etcd_client.watch(self.state_key_space,
+                                                recursive=True,
+                                                index=tick)
+                    resync = False
+                catch EtcdEventIndexCleared:
+                    # This normal, but infrequent, event will happen
+                    # if the loop runs out of recorded etcd history
+                    # because updates from the writers are too frequent
+
+                    LOG.debug("Received etcd event index cleared. "
+                              "Recovering etcd watch index")
+                    rv = self.etcd_client.read(self.state_key_space,
+                                               recursive=True)
+                    resync = True
+                    LOG.debug("Etcd watch index recovered at index:%s" % tick)
+
+                # resync should clear old state and then
+                # add back new state; the only thing we remember of the state
+                # are the physnets
+                if resync:
+                    self.physical_networks = set()
+
                 LOG.debug("ML2_VPP(%s): return worker active"
                           % self.__class__.__name__)
-                tick = rv.modifiedIndex + 1
 
-                # Matches a port key, gets host and uuid
-                m = re.match(LEADIN + '/state/([^/]+)/ports/([^/]+)$', rv.key)
-
-                if m:
-                    host = m.group(1)
-                    port = m.group(2)
-
-                    if rv.action == 'delete':
-                        # Nova doesn't much care when ports go away.
-                        pass
-                    else:
-                        self.notify_bound(port, host)
-                else:
+                for k in rv.children:
                     # Matches a port key, gets host and uuid
-                    m = re.match(LEADIN + '/state/([^/]+)/alive$', rv.key)
+                    m = re.match(
+                        self.state_key_space + /([^/]+)/ports/([^/]+)$',
+                        k.key)
 
                     if m:
-                        # TODO(ijw): this should be fed into the agents table.
                         host = m.group(1)
+                        port = m.group(2)
 
-                        if rv.action == 'delete':
-                            LOG.info('host %s has died' % host)
+                        if k.action == 'delete':
+                            # Nova doesn't much care when ports go away.
+                            pass
                         else:
-                            LOG.info('host %s is alive' % host)
+                            self.notify_bound(port, host)
                     else:
-                        m = re.match(
-                            LEADIN + '/state/([^/]+)/physnets/([^/]+)$',
-                            rv.key)
+                        # Matches a port key, gets host and uuid
+                        m = re.match(self.state_key_space + '/([^/]+)/alive$', rv.key)
 
                         if m:
+                            # TODO(ijw): this should be fed into the agents table.
                             host = m.group(1)
-                            net = m.group(2)
+
                             if rv.action == 'delete':
-                                self.physical_networks.remove((host, net))
+                                LOG.info('host %s has died' % host)
                             else:
-                                self.physical_networks.add((host, net))
+                                LOG.info('host %s is alive' % host)
                         else:
-                            LOG.warn('Unexpected key change in '
-                                     'etcd port feedback: %s' % rv.key)
+                            m = re.match(
+                                self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
+                                rv.key)
+
+                            if m:
+                                host = m.group(1)
+                                net = m.group(2)
+                                if rv.action == 'delete':
+                                    self.physical_networks.remove((host, net))
+                                else:
+                                    self.physical_networks.add((host, net))
+                            else:
+                                LOG.warn('Unexpected key change in '
+                                         'etcd port feedback: %s' % rv.key)
+
+                tick = rv.etcd_index + 1
 
             except etcd.EtcdWatchTimedOut:
-                # this is normal
+                # this is normal, and healthy.  Better that the watch times out
+                # than the connection dies silently.
                 pass
             except Exception as e:
                 LOG.warning('etcd threw exception %s'
