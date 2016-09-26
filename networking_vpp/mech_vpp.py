@@ -26,6 +26,7 @@ import six
 import time
 import traceback
 
+from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from neutron.common import constants as n_const
@@ -371,7 +372,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
-
+        self.etcd_helper = EtcdHelper(self.etcd_client)
         # We need certain directories to exist
         self.do_etcd_mkdir(LEADIN + '/state')
         self.do_etcd_mkdir(LEADIN + '/nodes')
@@ -537,7 +538,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self._find_physnets()
         # TODO(ijw): agents
         # TODO(ijw): notifications
-
         tick = None
         while True:
 
@@ -593,6 +593,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
             except etcd.EtcdWatchTimedOut:
                 # this is normal
                 pass
+            except etcd.EtcdEventIndexCleared:
+                LOG.debug("Received etcd event index cleared. "
+                          "Recovering etcd watch index")
+                tick = self.etcd_helper.recover_etcd_state(LEADIN + "/state")
+                LOG.debug("Etcd watch index recovered at index:%s" % tick)
             except Exception as e:
                 LOG.warning('etcd threw exception %s'
                             % traceback.format_exc(e))
