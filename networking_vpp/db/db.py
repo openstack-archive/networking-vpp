@@ -50,8 +50,9 @@ def journal_read(session, func):
                 session.delete(entry)
             else:
                 # For some reason, we can't do the job.
-                entry.retries = entry.retries + 1
-                session.update(entry)
+                entry.retry_count = entry.retry_count + 1
+                entry.update(entry)
+
         else:
             # The table is empty - no work available.
             maybe_more = False
