@@ -42,6 +42,7 @@ from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
+from neutron.agent.linux import utils
 from neutron.common import constants as n_const
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -427,6 +428,28 @@ class EtcdListener(object):
 
     HEARTBEAT = 60  # seconds
 
+    def _sync_state(self, port_key_space):
+        """Sync VPP port state with etcd and return correct watchIndex"""
+        LOG.debug('Syncing VPP port state with etcd..')
+        rv = self.etcd_client.read(port_key_space, recursive=True)
+        for child in rv.children:
+            m = re.match(port_key_space + '/([^/]+)$', child.key)
+            if m:
+                port = m.group(1)
+                LOG.debug('Syncing vpp state by binding existing port:%s'
+                          % port)
+                data = json.loads(child.value)
+                props = self.bind(port,
+                                  data['binding_type'],
+                                  data['mac_address'],
+                                  data['physnet'],
+                                  data['network_type'],
+                                  data['segmentation_id'])
+                self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
+                                       % (self.host, port),
+                                       json.dumps(props))
+        return self.etcd_helper.recover_etcd_state(port_key_space)
+
     def process_ops(self):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
@@ -438,7 +461,9 @@ class EtcdListener(object):
 
         port_key_space = LEADIN + "/nodes/%s/ports" % self.host
         state_key_space = LEADIN + "/state/%s/ports" % self.host
-        tick = None
+        self.etcd_helper.clear_state(state_key_space)
+        tick = self._sync_state(port_key_space)
+        LOG.debug("Starting watch on ports key space from Index: %s" % tick)
         while True:
 
             # The key that indicates to people that we're alive
@@ -512,8 +537,20 @@ class EtcdListener(object):
                 # sensible behaviour - Don't just kill the thread...
 
 
+class VPPRestart(object):
+    def __init__(self):
+        self.timeout = 10  # VPP connect timeout in seconds
+        LOG.debug("Agent is restarting VPP")
+        utils.execute(['service', 'vpp', 'restart'], run_as_root=True)
+
+    def wait(self):
+        time.sleep(self.timeout)  # TODO(najoy): check if vpp is actually up
+
+
 def main():
     cfg.CONF(sys.argv[1:])
+    LOG.debug('Restarting VPP..')
+    VPPRestart().wait()
 
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on

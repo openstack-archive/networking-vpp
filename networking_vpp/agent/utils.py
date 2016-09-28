@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from etcd import EtcdNotFile
 from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -33,3 +34,13 @@ class EtcdHelper(object):
         LOG.debug("Recovering etcd key space: %s" % key_space)
         rv = self.etcd_client.read(key_space)
         return rv.etcd_index + 1
+
+    def clear_state(self, key_space):
+        """Clear the keys in the key_space"""
+        LOG.debug("Clearing key space: %s" % key_space)
+        try:
+            rv = self.etcd_client.read(key_space)
+            for child in rv.children:
+                self.etcd_client.delete(child.key)
+        except EtcdNotFile:
+            pass
