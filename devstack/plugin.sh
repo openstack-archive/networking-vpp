@@ -30,8 +30,8 @@ function configure_vpp {
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp physnets $MECH_VPP_PHYSNETLIST
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_host $ETCD_HOST
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_port $ETCD_PORT
-    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_port $ETCD_USER
-    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_port $ETCD_PASS
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_user $ETCD_USER
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_pass $ETCD_PASS
 
     if [ ! -z "$VXLAN_SRC_ADDR" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_src_addr $VXLAN_SRC_ADDR
