@@ -539,7 +539,7 @@ class EtcdListener(object):
 
 def main():
     cfg.CONF(sys.argv[1:])
-
+    logging.setup(cfg.CONF, 'vpp_agent')
 
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
