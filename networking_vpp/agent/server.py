@@ -397,7 +397,6 @@ class EtcdListener(object):
         self.etcd_client = etcd_client
         self.vppf = vppf
         self.physnets = physnets
-
         # We need certain directories to exist
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
@@ -438,6 +437,8 @@ class EtcdListener(object):
             self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
                                    % (self.host, f), 1)
 
+        port_key_space = LEADIN + "/nodes/%s/ports" % self.host
+        state_key_space = LEADIN + "/state/%s/ports" % self.host
         tick = None
         while True:
 
@@ -449,19 +450,23 @@ class EtcdListener(object):
             try:
                 LOG.error("ML2_VPP(%s): thread pausing"
                           % self.__class__.__name__)
-                rv = self.etcd_client.watch(LEADIN + "/nodes/%s/ports"
-                                            % self.host,
+                rv = self.etcd_client.watch(port_key_space,
                                             recursive=True,
                                             index=tick,
                                             timeout=self.HEARTBEAT)
                 LOG.error('watch received %s on %s at tick %s',
                           rv.action, rv.key, rv.modifiedIndex)
+                # TODO(ijw) can this be etcd_index?
+                # Now we have resynced, we know that all data is recovered
+                # not just to the last modified index, but all the way
+                # to the present (or we would have had a newer last
+                # modified index)
                 tick = rv.modifiedIndex + 1
                 LOG.error("ML2_VPP(%s): thread active"
                           % self.__class__.__name__)
 
                 # Matches a port key, gets host and uuid
-                m = re.match(LEADIN + '/nodes/%s/ports/([^/]+)$' % self.host,
+                m = re.match(port_key_space + '/([^/]+)$',
                              rv.key)
 
                 if m:
@@ -472,8 +477,8 @@ class EtcdListener(object):
                         self.unbind(port)
                         try:
                             self.etcd_client.delete(
-                                LEADIN + '/state/%s/ports/%s'
-                                % (self.host, port))
+                                port_key_space + '/%s'
+                                % port)
                         except etcd.EtcdKeyNotFound:
                             # Gone is fine, if we didn't delete it
                             # it's no problem
@@ -487,16 +492,32 @@ class EtcdListener(object):
                                           data['physnet'],
                                           data['network_type'],
                                           data['segmentation_id'])
-                        self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
-                                               % (self.host, port),
+                        self.etcd_client.write(state_key_space + '/%s'
+                                               % port,
                                                json.dumps(props))
 
                 else:
-                    LOG.warn('Unexpected key change in etcd port feedback')
+                    LOG.warn('Unexpected key change in etcd port feedback, '
+                             'key %s' % rv.key)
 
             except etcd.EtcdWatchTimedOut:
                 # This is normal
                 pass
+            except etcd.EtcdEventIndexCleared:
+                LOG.debug("Received etcd event index cleared. "
+                          "Recovering etcd watch index")
+                rv = self.etcd_client.read(port_key_space)
+                # TODO(ijw): we need to resync our state
+                # with the value of 'rv' here
+                # Now we have resynced, we know that all data is recovered
+                # not just to the last modified index, but all the way
+                # to the present (or we would have had a newer last
+                # modified index).
+                # A resync need not involve writing the physnets (they don't
+                # change) but should involve updating any ports in VPP that are
+                # not in the state we believe they should be in.
+                tick = rv.etcd_index + 1
+                LOG.debug("Etcd watch index recovered at %s" % tick)
             except Exception as e:
                 LOG.error('etcd threw exception %s' % traceback.format_exc(e))
 
@@ -510,6 +531,7 @@ class EtcdListener(object):
 
 def main():
     cfg.CONF(sys.argv[1:])
+    logging.setup(cfg.CONF, 'vpp_agent')
 
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
