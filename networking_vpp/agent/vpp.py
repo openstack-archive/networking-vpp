@@ -216,6 +216,16 @@ class VPPInterface(object):
                 True)                   # enable bridge mode
             self._check_retval(t)
 
+    def delete_from_bridge(self, *ifidxes):
+        for ifidx in ifidxes:
+            t = vpp_papi.sw_interface_set_l2_bridge(
+                ifidx,
+                0,                      # no bridge id is necessary
+                False,                  # BVI (no thanks)
+                0,                      # shared horizon group
+                False)                  # disable bridge mode (sets l3 mode)
+            self._check_retval(t)
+
     def ifup(self, *ifidxes):
         for ifidx in ifidxes:
             vpp_papi.sw_interface_set_flags(

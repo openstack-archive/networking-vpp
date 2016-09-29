@@ -356,8 +356,12 @@ class VPPForwarder(object):
             # released.  So, here, we destroy it.
 
             if props['bind_type'] == 'vhostuser':
+                # remove port from bridge (sets to l3 mode) prior to deletion
+                self.vpp.delete_from_bridge(iface_idx)
                 self.vpp.delete_vhostuser(iface_idx)
             elif props['bind_type'] in ['maketap', 'plugtap']:
+                # remove port from bridge (sets to l3 mode) prior to deletion
+                self.vpp.delete_from_bridge(iface_idx)
                 self.vpp.delete_tap(iface_idx)
                 if props['bind_type'] == 'plugtap':
                     name = uuid[0:11]
