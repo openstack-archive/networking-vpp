@@ -27,7 +27,6 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
-import distro
 import etcd
 import json
 import os
@@ -73,13 +72,6 @@ VHOSTUSER_DIR = '/tmp'
 
 def get_vhostuser_name(uuid):
     return os.path.join(VHOSTUSER_DIR, uuid)
-
-
-def get_distro_family():
-    if distro.id() in ['rhel', 'centos', 'fedora']:
-        return 'redhat'
-    else:
-        return distro.id()
 
 
 ######################################################################
