@@ -457,7 +457,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         try:
             # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
             if v is None:
-                LOG.error('deleting key %s' % k)
+                LOG.debug('deleting key %s' % k)
                 try:
                     self.etcd_client.delete(k)
                 except etcd.EtcdKeyNotFound:
@@ -465,7 +465,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     # no problem here
                     pass
             else:
-                LOG.error('writing key %s' % k)
+                LOG.debug('writing key %s' % k)
                 self.etcd_client.write(k, json.dumps(v))
             return True
         except Exception:       # TODO(ijw) select your exceptions
