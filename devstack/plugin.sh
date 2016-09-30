@@ -137,3 +137,8 @@ function neutron_plugin_setup_interface_driver {
     local conf_file=$1
     iniset $conf_file DEFAULT interface_driver linuxbridge
 }
+
+# This tells devstack that no, we're not using OVS in our plugin.
+function is_neutron_ovs_base_plugin {
+    false
+}
