@@ -22,9 +22,12 @@ from neutron import version
 # that passes constants and functions according to version number.
 
 IS_PRE_NEWTON = True
+DEVICE_OWNER_PREFIXES = None
 if StrictVersion(str(version.version_info)) >= StrictVersion('9.0.0'):
     # >= Newton
     IS_PRE_NEWTON = False
+    from neutron_lib import constants as nl_const
+    DEVICE_OWNER_PREFIXES = nl_const.DEVICE_OWNER_PREFIXES
 elif StrictVersion(str(version.version_info)) >= StrictVersion('8.0.0'):
     # Mitaka <= version < Newton
     from neutron_lib import constants as nl_const
