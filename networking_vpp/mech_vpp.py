@@ -26,6 +26,8 @@ import six
 import time
 import traceback
 
+import backward_compatibility as bc_attr
+
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from neutron.common import constants as n_const
@@ -35,7 +37,7 @@ from neutron.extensions import portbindings
 from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
-from neutron_lib import constants as nl_const
+
 
 eventlet.monkey_patch()
 
@@ -66,7 +68,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         # care of those.
 
         owner = port_context.current['device_owner']
-        for f in nl_const.DEVICE_OWNER_PREFIXES:
+        for f in bc_attr.DEVICE_OWNER_PREFIXES:
             if owner.startswith(f):
                 vif_type = 'plugtap'
         LOG.debug("ML2_VPP: vif_type to be bound is: %s", vif_type)

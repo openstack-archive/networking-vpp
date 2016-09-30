@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from neutron._i18n import _
+from _i18n import _
 from oslo_config import cfg
 
 vpp_opts = [
