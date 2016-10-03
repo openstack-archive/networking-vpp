@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from etcd import EtcdKeyNotFound
 from etcd import EtcdNotFile
 from oslo_log import log as logging
 
@@ -33,4 +34,8 @@ class EtcdHelper(object):
                 self.etcd_client.delete(child.key)
         except EtcdNotFile:
             # Can't delete directories - they're harmless anyway
+            pass
+        except EtcdKeyNotFound:
+            # Saftely ignore if we can't find the key as the key_space
+            # directory may not exist
             pass

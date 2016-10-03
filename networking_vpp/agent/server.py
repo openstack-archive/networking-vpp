@@ -451,6 +451,9 @@ class EtcdListener(object):
         # reconfigure from start (which means that VPP needs it
         # storing, so it's lost on reboot of VPP)
         physnets = self.physnets.keys()
+        # Clear physnet state to remove any previous stale physnets
+        self.etcd_helper.clear_state(LEADIN + '/state/%s/physnets'
+                                     % self.host)
         for f in physnets:
             self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
                                    % (self.host, f), 1)
