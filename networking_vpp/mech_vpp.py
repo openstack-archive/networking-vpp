@@ -187,7 +187,14 @@ class VPPMechanismDriver(api.MechanismDriver):
         return True
 
     def physnet_known(self, host, physnet):
-        return (host, physnet) in self.communicator.physical_networks
+        LOG.debug("ML2_VPP:Checking if host:%s can bind to "
+                  "physnet:%s" % (host, physnet))
+        # Needs instantiation of the agent communicator to pick up
+        # the physnets updated by the return_worker thread
+        status = (host, physnet) in EtcdAgentCommunicator().physical_networks
+        LOG.debug("ML2_VPP:Binding state is %s for physnet:%s on host:%s"
+                  % (status, physnet, host))
+        return status
 
     def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
@@ -622,8 +629,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                 host = m.group(1)
                                 net = m.group(2)
                                 if kv.action == 'delete':
+                                    LOG.debug("Removing physnet:%s from "
+                                              "host:%s" % (net, host))
                                     self.physical_networks.remove((host, net))
                                 else:
+                                    LOG.debug("Adding physnet:%s from host:%s"
+                                              % (net, host))
                                     self.physical_networks.add((host, net))
                             else:
                                 LOG.warn('Unexpected key change in '
