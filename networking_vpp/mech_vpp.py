@@ -38,6 +38,7 @@ from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
+from urllib3.exceptions import TimeoutError
 
 eventlet.monkey_patch()
 
@@ -633,7 +634,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # is processed
                 tick = next_tick
 
-            except etcd.EtcdWatchTimedOut:
+            except (etcd.EtcdWatchTimedOut, TimeoutError):
                 # this is normal
                 pass
             except Exception as e:

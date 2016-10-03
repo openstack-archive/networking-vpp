@@ -45,6 +45,7 @@ from neutron.agent.linux import utils
 from neutron.common import constants as n_const
 from oslo_config import cfg
 from oslo_log import log as logging
+from urllib3.exceptions import TimeoutError
 
 LOG = logging.getLogger(__name__)
 
@@ -519,7 +520,7 @@ class EtcdListener(object):
                     LOG.warn('Unexpected key change in etcd port feedback, '
                              'key %s' % rv.key)
 
-            except etcd.EtcdWatchTimedOut:
+            except (etcd.EtcdWatchTimedOut, TimeoutError):
                 # This is normal
                 pass
             except etcd.EtcdEventIndexCleared:
