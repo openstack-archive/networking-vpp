@@ -187,7 +187,12 @@ class VPPMechanismDriver(api.MechanismDriver):
         return True
 
     def physnet_known(self, host, physnet):
-        return (host, physnet) in self.communicator.physical_networks
+        LOG.debug("ML2_VPP:Checking if host:%s can bind to "
+                  "physnet:%s" % (host, physnet))
+        status = (host, physnet) in EtcdAgentCommunicator.physical_networks
+        LOG.info("ML2_VPP:Binding state is %s for physnet:%s on host:%s"
+                 % (status, physnet, host))
+        return status
 
     def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
@@ -362,6 +367,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
     Specifically a key here (regardless of value) indicates
     the port has been bound and is receiving traffic.
     """
+    # Get the physnets the agents know about.  This is updated
+    # periodically in the return thread below. Set as a class
+    # variable for the mech driver to see the updated data
+    physical_networks = set()
 
     def __init__(self):
         super(EtcdAgentCommunicator, self).__init__()
@@ -383,9 +392,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
 
-        # Get the physnets the agents know about.  This is updated
-        # periodically in the return thread below.
-        self.physical_networks = set()
         self._find_physnets()
 
         self.db_q_ev = eventlet.event.Event()
@@ -403,7 +409,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 host = m.group(1)
                 net = m.group(2)
 
-                self.physical_networks.add((host, net))
+                self.__class__.physical_networks.add((host, net))
 
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
@@ -574,7 +580,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     # resync should clear old state and then
                     # add back new state; the only thing we remember of the
                     # state are the physnets.
-                    self.physical_networks = set()
+                    self.__class__.physical_networks = set()
 
                 # 'vals' is a list of keys with relevant values to fold into
                 # the physnets array.
@@ -622,9 +628,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                 host = m.group(1)
                                 net = m.group(2)
                                 if kv.action == 'delete':
-                                    self.physical_networks.remove((host, net))
+                                    LOG.debug("Removing physnet:%s from "
+                                              "host:%s" % (net, host))
+                                    self.__class__.physical_networks.remove(
+                                        (host, net))
                                 else:
-                                    self.physical_networks.add((host, net))
+                                    LOG.debug("Adding physnet:%s from host:%s"
+                                              % (net, host))
+                                    self.__class__.physical_networks.add(
+                                        (host, net))
                             else:
                                 LOG.warn('Unexpected key change in '
                                          'etcd port feedback: %s' % kv.key)
