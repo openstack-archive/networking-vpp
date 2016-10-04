@@ -545,6 +545,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 LOG.debug("ML2_VPP(%s): return worker pausing"
                           % self.__class__.__name__)
                 try:
+                    if tick is None:
+                        # We have no state, so we have effectively
+                        # 'fallen off of the history' and need to
+                        # resync in full.
+                        raise etcd.EtcdEventIndexCleared()
                     rv = self.etcd_client.watch(self.state_key_space,
                                                 recursive=True,
                                                 index=tick)
@@ -557,7 +562,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
                               "Recovering etcd watch index")
                     rv = self.etcd_client.read(self.state_key_space,
                                                recursive=True)
-                    vals = [rv.children]
+
+                    # This appears as if all the keys have been updated -
+                    # because we can't tell which have been and which haven't.
+                    vals = rv.children
 
                     next_tick = rv.etcd_index + 1
 
@@ -566,8 +574,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
                 for kv in vals:
 
-                    LOG.debug("ML2_VPP(%s): return worker active"
-                              % self.__class__.__name__)
+                    LOG.debug("ML2_VPP(%s): return worker active, key %s"
+                              % (self.__class__.__name__, kv.key))
 
                     # Matches a port key, gets host and uuid
                     m = re.match(self.state_key_space +
