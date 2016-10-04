@@ -562,13 +562,14 @@ class VPPRestart(object):
 def main():
     cfg.CONF(sys.argv[1:])
     logging.setup(cfg.CONF, 'vpp_agent')
-    LOG.debug('Restarting VPP..')
-    VPPRestart().wait()
 
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
     # distribution. Currently only supporting ubuntu and redhat.
     cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
+    if cfg.CONF.ml2_vpp.enable_vpp_restart:
+        LOG.debug('Restarting VPP..')
+        VPPRestart().wait()
 
     physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
     physnets = {}
