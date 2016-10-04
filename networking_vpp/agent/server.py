@@ -497,7 +497,7 @@ class EtcdListener(object):
                         self.unbind(port)
                         try:
                             self.etcd_client.delete(
-                                port_key_space + '/%s'
+                                state_key_space + '/%s'
                                 % port)
                         except etcd.EtcdKeyNotFound:
                             # Gone is fine, if we didn't delete it
