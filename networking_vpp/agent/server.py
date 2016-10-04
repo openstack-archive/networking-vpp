@@ -29,18 +29,17 @@ import re
 import sys
 from threading import Thread
 import time
-import traceback
 import vpp
 
 from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
+from networking_vpp.etcdutils import EtcdWatcher
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.common import constants as n_const
 from oslo_config import cfg
 from oslo_log import log as logging
-from urllib3.exceptions import TimeoutError
 
 LOG = logging.getLogger(__name__)
 
@@ -417,29 +416,7 @@ class EtcdListener(object):
                                                 network_type,
                                                 segmentation_id)
 
-    HEARTBEAT = 60  # seconds
-
-    def _sync_state(self, port_key_space):
-        """Sync VPP port state with etcd and return correct watchIndex"""
-        LOG.debug('Syncing VPP port state with etcd..')
-        rv = self.etcd_client.read(port_key_space, recursive=True)
-        for child in rv.children:
-            m = re.match(port_key_space + '/([^/]+)$', child.key)
-            if m:
-                port = m.group(1)
-                LOG.debug('Syncing vpp state by binding existing port:%s'
-                          % port)
-                data = json.loads(child.value)
-                props = self.bind(port,
-                                  data['binding_type'],
-                                  data['mac_address'],
-                                  data['physnet'],
-                                  data['network_type'],
-                                  data['segmentation_id'])
-                self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
-                                       % (self.host, port),
-                                       json.dumps(props))
-        return rv.etcd_index
+    AGENT_HEARTBEAT = 60  # seconds
 
     def process_ops(self):
         # TODO(ijw): needs to remember its last tick on reboot, or
@@ -450,98 +427,63 @@ class EtcdListener(object):
             self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
                                    % (self.host, f), 1)
 
-        port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        state_key_space = LEADIN + "/state/%s/ports" % self.host
-        self.etcd_helper.clear_state(state_key_space)
-        tick = self._sync_state(port_key_space)
-        LOG.debug("Starting watch on ports key space from Index: %s" % tick)
-        while True:
+        self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
+        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
 
-            # The key that indicates to people that we're alive
-            # (not that they care)
-            self.etcd_client.write(LEADIN + '/state/%s/alive' % self.host,
-                                   1, ttl=3 * self.HEARTBEAT)
+        self.etcd_helper.clear_state(self.state_key_space)
 
-            try:
-                LOG.debug("ML2_VPP(%s): thread pausing"
-                          % self.__class__.__name__)
-                rv = self.etcd_client.watch(port_key_space,
-                                            recursive=True,
-                                            index=tick,
-                                            timeout=self.HEARTBEAT)
-                LOG.debug('watch received %s on %s at tick %s',
-                          rv.action, rv.key, rv.modifiedIndex)
-                # TODO(ijw) can this be etcd_index?
-                # Now we have resynced, we know that all data is recovered
-                # not just to the last modified index, but all the way
-                # to the present (or we would have had a newer last
-                # modified index)
-                tick = rv.modifiedIndex + 1
-                LOG.debug("ML2_VPP(%s): thread active"
-                          % self.__class__.__name__)
+        class PortWatcher(EtcdWatcher):
 
+            def do_tick(self):
+                # The key that indicates to people that we're alive
+                # (not that they care)
+                self.etcd_client.write(LEADIN + '/state/%s/alive' %
+                                       self.data.host,
+                                       1, ttl=3 * self.heartbeat)
+
+            def resync(self):
+                # TODO(ijw): Need to do something here to prompt
+                # appropriate unbind/rebind behaviour
+                pass
+
+            def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
-                m = re.match(port_key_space + '/([^/]+)$',
-                             rv.key)
+                m = re.match(self.data.port_key_space + '/([^/]+)$', key)
 
                 if m:
                     port = m.group(1)
 
-                    if rv.action == 'delete':
+                    if action == 'delete':
                         # Removing key == desire to unbind
-                        self.unbind(port)
+                        self.data.unbind(port)
                         try:
                             self.etcd_client.delete(
-                                state_key_space + '/%s'
+                                self.data.state_key_space + '/%s'
                                 % port)
                         except etcd.EtcdKeyNotFound:
-                            # Gone is fine, if we didn't delete it
+                            # Gone is fine; if we didn't delete it
                             # it's no problem
                             pass
                     else:
                         # Create or update == bind
-                        data = json.loads(rv.value)
-                        props = self.bind(port,
-                                          data['binding_type'],
-                                          data['mac_address'],
-                                          data['physnet'],
-                                          data['network_type'],
-                                          data['segmentation_id'])
-                        self.etcd_client.write(state_key_space + '/%s'
+                        data = json.loads(value)
+                        props = self.data.bind(port,
+                                               data['binding_type'],
+                                               data['mac_address'],
+                                               data['physnet'],
+                                               data['network_type'],
+                                               data['segmentation_id'])
+                        self.etcd_client.write(self.data.state_key_space +
+                                               '/%s'
                                                % port,
                                                json.dumps(props))
 
                 else:
                     LOG.warn('Unexpected key change in etcd port feedback, '
-                             'key %s' % rv.key)
+                             'key %s' % key)
 
-            except (etcd.EtcdWatchTimedOut, TimeoutError):
-                # This is normal
-                pass
-            except etcd.EtcdEventIndexCleared:
-                LOG.debug("Received etcd event index cleared. "
-                          "Recovering etcd watch index")
-                rv = self.etcd_client.read(port_key_space)
-                # TODO(ijw): we need to resync our state
-                # with the value of 'rv' here
-                # Now we have resynced, we know that all data is recovered
-                # not just to the last modified index, but all the way
-                # to the present (or we would have had a newer last
-                # modified index).
-                # A resync need not involve writing the physnets (they don't
-                # change) but should involve updating any ports in VPP that are
-                # not in the state we believe they should be in.
-                tick = rv.etcd_index + 1
-                LOG.debug("Etcd watch index recovered at %s" % tick)
-            except Exception as e:
-                LOG.error('etcd threw exception %s' % traceback.format_exc(e))
-
-                # TODO(ijw): prevents tight crash loop, but adds
-                # latency
-                time.sleep(1)
-
-                # Should be specific to etcd faults, should have
-                # sensible behaviour - Don't just kill the thread...
+        PortWatcher(self.etcd_client, 'return_worker', self.port_key_space,
+                    heartbeat=self.AGENT_HEARTBEAT, data=self).watch_forever()
 
 
 class VPPRestart(object):
