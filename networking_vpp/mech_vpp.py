@@ -393,17 +393,18 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
+    def _update_physnets(self, key):
+        m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$', key)
+        if m:
+            host = m.group(1)
+            net = m.group(2)
+            self.physical_networks.add((host, net))
+            LOG.debug("New physnet '%s' on host:'%s')" % (net, host))
+
     def _find_physnets(self):
         for rv in self.etcd_client.read(LEADIN, recursive=True).children:
             # Find all known physnets
-            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
-                         rv.key)
-
-            if m:
-                host = m.group(1)
-                net = m.group(2)
-
-                self.physical_networks.add((host, net))
+            self._update_physnets(rv.key)
 
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
@@ -583,6 +584,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
                     LOG.debug("ML2_VPP(%s): return worker active"
                               % self.__class__.__name__)
+
+                    # Match 'physnets', and update if necessary internal list
+                    self._update_physnets(kv.key)
 
                     # Matches a port key, gets host and uuid
                     m = re.match(self.state_key_space +
