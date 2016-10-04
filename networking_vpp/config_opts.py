@@ -34,6 +34,8 @@ vpp_opts = [
                help=_("Username for etcd authentication")),
     cfg.StrOpt('etcd_pass', default=None,
                help=_("Password for etcd authentication")),
+    cfg.BoolOpt('enable_vpp_restart', default=True,
+                help=_("Agent restarts VPP during startup")),
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
