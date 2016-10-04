@@ -575,6 +575,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     # add back new state; the only thing we remember of the
                     # state are the physnets.
                     self.physical_networks = set()
+                    self._find_physnets()
 
                 # 'vals' is a list of keys with relevant values to fold into
                 # the physnets array.
