@@ -30,6 +30,7 @@ import backward_compatibility as bc_attr
 
 from networking_vpp import config_opts
 from networking_vpp.db import db
+from networking_vpp.etcd import EtcdWatcher 
 from neutron.common import constants as n_const
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
@@ -38,7 +39,7 @@ from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
-from urllib3.exceptions import TimeoutError
+from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 
 eventlet.monkey_patch()
 
@@ -538,81 +539,48 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # TODO(ijw): agents
         # TODO(ijw): notifications
 
-        tick = None
-        while True:
 
-            try:
-                LOG.debug("ML2_VPP(%s): return worker pausing"
-                          % self.__class__.__name__)
-                try:
-                    rv = self.etcd_client.watch(self.state_key_space,
-                                                recursive=True,
-                                                index=tick)
-                    vals = [rv]
 
-                    next_tick = rv.modifiedIndex + 1
+        class ReturnWatcher(EtcdWatcher):
 
-                except etcd.EtcdEventIndexCleared:
-                    LOG.debug("Received etcd event index cleared. "
-                              "Recovering etcd watch index")
-                    rv = self.etcd_client.read(self.state_key_space,
-                                               recursive=True)
-                    vals = [rv.children]
+            def resync(self):
+                # Ports may have been bound.  do_work will send an additional 'bound'
+                # notification for every port, which is harmless
+            
+                # Agent deaths in this time will not be logged, so make this clear
+                LOG.info('Sync lost, resetting agent liveness')
 
-                    next_tick = rv.etcd_index + 1
+            def do_work(self, key, value):
+                # Matches a port key, gets host and uuid
+                m = re.match(self.state_key_space +
+                             '/([^/]+)/ports/([^/]+)$',
+                             kv.key)
 
-                    LOG.debug("Etcd watch index recovered at index:%s"
-                              % next_tick)
+                if m:
+                    host = m.group(1)
+                    port = m.group(2)
 
-                for kv in vals:
-
-                    LOG.debug("ML2_VPP(%s): return worker active"
-                              % self.__class__.__name__)
-
+                    if kv.action == 'delete':
+                        # Nova doesn't much care when ports go away.
+                        pass
+                    else:
+                        self.data.notify_bound(port, host)
+                else:
                     # Matches a port key, gets host and uuid
-                    m = re.match(self.state_key_space +
-                                 '/([^/]+)/ports/([^/]+)$',
+                    m = re.match(self.state_key_space + '/([^/]+)/alive$',
                                  kv.key)
 
                     if m:
+                        # TODO(ijw): this should be fed into the agents
+                        # table.
                         host = m.group(1)
-                        port = m.group(2)
 
                         if kv.action == 'delete':
-                            # Nova doesn't much care when ports go away.
-                            pass
+                            LOG.info('host %s has died' % host)
                         else:
-                            self.notify_bound(port, host)
+                            LOG.info('host %s is alive' % host)
                     else:
-                        # Matches a port key, gets host and uuid
-                        m = re.match(self.state_key_space + '/([^/]+)/alive$',
-                                     kv.key)
+                        LOG.warn('Unexpected key change in '
+                                 'etcd port feedback: %s' % kv.key)
 
-                        if m:
-                            # TODO(ijw): this should be fed into the agents
-                            # table.
-                            host = m.group(1)
-
-                            if kv.action == 'delete':
-                                LOG.info('host %s has died' % host)
-                            else:
-                                LOG.info('host %s is alive' % host)
-                        else:
-                            LOG.warn('Unexpected key change in '
-                                     'etcd port feedback: %s' % kv.key)
-
-                # Update the tick only when all the above completes so that
-                # exceptions don't cause the count to skip before the data
-                # is processed
-                tick = next_tick
-
-            except (etcd.EtcdWatchTimedOut, TimeoutError):
-                # this is normal
-                pass
-            except Exception as e:
-                LOG.warning('etcd threw exception %s'
-                            % traceback.format_exc(e))
-                # In case of a dead etcd causing continuous
-                # exceptions, the pause here avoids eating all the
-                # CPU
-                time.sleep(2)
+          ReturnWatcher(etcd_client, 'return_worker', self.state_key_space, data=self).watch_forever()
