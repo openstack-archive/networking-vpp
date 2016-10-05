@@ -179,6 +179,15 @@ class VPPInterface(object):
 
         return t.sw_if_index
 
+    def delete_vlan_subif(self, sw_if_index):
+        self.LOG.debug("Deleting subinterface with sw_if_index: %s"
+                       % (sw_if_index))
+        t = vpp_papi.delete_subif(sw_if_index)
+        self.LOG.debug("Delete subinterface response: %s" % str(t))
+
+        self._check_retval(t)
+        return
+
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
 #        t = vpp_papi.vxlan_add_del_tunnel(
 #            True,  # is_add
