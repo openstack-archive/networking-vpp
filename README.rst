@@ -200,3 +200,117 @@ real time with the command
 The driver and agents should deal with disconnections across the
 board, and the agents know that they must resync themselves with
 the desired state when they completely lose track of what's happening.
+
+How to Install?
+---------------
+
+1) For CentOS, get the VPP (16.09) RPM packages from:
+      https://nexus.fd.io/#view-repositories;fd.io.centos7~browsestorage
+
+   Get the python-API (16.09) RPM package for VPP from:
+      https://wiki.fd.io/view/VPP/Python_API
+
+   a) Install the RPMs.
+
+    - sudo rpm -ivh $HOME_DIR/src/rpms/vpp-lib-16.09-release.x86_64.rpm 
+    - sudo rpm -ivh $HOME_DIR/src/rpms/vpp-devel-16.09-release.x86_64.rpm 
+    - sudo rpm -ivh $HOME_DIR/src/rpms/vpp-16.09-release.x86_64.rpm 
+    - sudo rpm -ivh $HOME_DIR/src/rpms/vpp-python-api-16.09-release.x86_64.rpm
+
+   b) Install a newer qemu version
+
+    - sudo yum install -y centos-release-qemu-ev
+    - sudo yum remove -y qemu-system-x86 || true # in case you had the old version
+    - sudo yum install -y qemu-system-x86-ev # a newer version
+
+   c) Install etcd
+
+    - sudo sudo yum -y install etcd
+    - sudo systemctl enable etcd
+    - sudo systemctl start etcd
+     
+   ::
+
+    # Note: Etcd keys hang around from previous runs and confuses matters
+    # Clean up the directory in etcd that we care about
+    for f in $(etcdctl ls --recursive /networking-vpp); do etcdctl rm $f ; done 2>/dev/null
+    for f in $(etcdctl ls --recursive /networking-vpp | sort -r); do etcdctl rmdir $f ; done  2>/dev/null
+ 
+2) For Ubuntu(16.04), refer to instructions on pulling the VPP code and building from scratch:
+   https://wiki.fd.io/view/VPP/Pulling,_Building,_Running,_Hacking_and_Pushing_VPP_Code
+   
+   a) After installing VPP, install the python api package:
+
+     - cd $VPPROOT/vpp-api/python/ 
+     - sudo python setup.py install
+   
+   b) Install etcd
+
+     - sudo apt-get update
+     - sudo apt-get install etcd
+
+3) Enable HugePages
+    The below command will use 4G of memory; you're likely to want at least 8G in your system for this to   work happily. Nova doesn't respond to changes in hugepage capacity so to spot one, re-stack
+    
+  - sudo sysctl -w vm.nr_hugepages=2048
+
+4) Start the VPP service
+   
+   VPP needs to be told what hugepages to use because we have to tell the same number to OpenStack
+    - sudo sed -e '/dpdk /a socket-mem 512' -i /etc/vpp/startup.conf
+    - sudo service vpp restart (or)
+    - sudo systemctl enable vpp && sudo systemctl restart vpp
+    
+5) If you are using devstack, 
+     - git clone https://git.openstack.org/openstack-dev/devstack
+     - cd devstack
+     - git checkout stable/mitaka  #If you are using the Mitaka release
+
+   In your local.conf use the following (sample) settings,
+   
+   ::
+     
+     [[local|localrc]]
+     RABBIT_PASSWORD=password
+     DATABASE_PASSWORD=password
+     SERVICE_PASSWORD=password
+     ADMIN_PASSWORD=password
+
+     #Disable these services unless you need them
+     disable_service cinder c-sch c-api c-vol
+     disable_service tempest
+
+     # Standard settings for enabling Neutron
+     disable_service n-net
+     enable_service q-svc q-dhcp q-l3 q-meta
+     
+     # The OVS/LB agent part of Neutron is not used
+     disable_service q-agt
+
+     #Enable networking-vpp plugin
+     enable_plugin networking-vpp https://github.com/openstack/networking-vpp
+
+     Q_PLUGIN=ml2
+     Q_ML2_PLUGIN_MECHANISM_DRIVERS=vpp
+     Q_ML2_PLUGIN_TYPE_DRIVERS=vlan,flat
+     Q_ML2_TENANT_NETWORK_TYPE=vlan
+     ML2_VLAN_RANGES=physnet1:100:200
+     # Map physical networks to uplink trunk interfaces on VPP
+     # Find your uplink interfaces by using the command "sudo vppctl show int"
+     # Use local0 as the upstream interface if you are doing a one host deployment
+     MECH_VPP_PHYSNETLIST=physnet1:GigabitEthernet2/2/0
+     #Set the IP address of the etcd host to connect to
+     ETCD_HOST=X.X.X.X
+     #Etcd port to connect to
+     ETCD_PORT=2379
+     
+     [[post-config|$NOVA_CONF]]
+     [DEFAULT]
+     reserved_huge_pages = node:0,size:2048,count:256                
+
+6) ./stack.sh
+7) # For VMs to run using vhostuser interfaces, they need hugepages at present
+      - . ~/devstack/openrc admin admin
+      - nova flavor-key cirros256 set hw:mem_page_size=2048
+
+8) Now you have a working version of networking-vpp. Congrats!! 
