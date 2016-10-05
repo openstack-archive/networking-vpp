@@ -37,6 +37,7 @@ from neutron.extensions import portbindings
 from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
+from neutron.worker import NeutronWorker
 
 from urllib3.exceptions import TimeoutError
 
@@ -45,7 +46,7 @@ eventlet.monkey_patch()
 LOG = logging.getLogger(__name__)
 
 
-class VPPMechanismDriver(api.MechanismDriver):
+class VPPMechanismDriver(api.MechanismDriver, NeutronWorker):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
     allowed_network_types = [p_constants.TYPE_FLAT,
                              p_constants.TYPE_VLAN,
@@ -53,6 +54,39 @@ class VPPMechanismDriver(api.MechanismDriver):
     MECH_NAME = 'vpp'
 
     vif_details = {}
+
+    # interface: NeutronWorker
+    def start(self):
+        """NeutronWorker::start after fork """
+        super(VPPMechanismDriver, self).start()
+        self.post_fork_initialize()
+
+    def reset(self):
+        self.stop()
+        self.start()
+
+    def stop(self):
+        pass
+
+    def wait(self):
+        pass
+
+    # interface: api.MechanismDriver
+    def get_workers(self):
+        """Return a list of NeutronWorkers
+
+        We declare ourself as a NeutronWorker
+        so the method 'start' will be called for
+        each worker.
+        """
+        return [self]
+
+    def post_fork_initialize(self):
+        """Initialization after Neutron has spawned a worker."""
+        LOG.debug("post_fork_initialize")
+        # This does long running queries, and they don't want to be
+        # active until the fork happens.
+        self.communicator.init_threads()
 
     def initialize(self):
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
@@ -286,6 +320,16 @@ class AgentCommunicator(object):
         self.recursive = False
 
     @abstractmethod
+    def init_threads(self):
+        """Create any threads
+
+        Specifically, ones that have long running
+        external connections
+        """
+
+        pass
+
+    @abstractmethod
     def bind(self, port, segment, host, binding_type):
         pass
 
@@ -390,6 +434,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         self.db_q_ev = eventlet.event.Event()
 
+    def init_threads(self):
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
