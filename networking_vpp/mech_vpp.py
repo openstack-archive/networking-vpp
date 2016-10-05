@@ -58,6 +58,29 @@ class VPPMechanismDriver(api.MechanismDriver):
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
         self.communicator = EtcdAgentCommunicator()
 
+        # TODO(ijw): Either Neutron isn't good at telling mechdrivers
+        # when it forks or I haven't found the right magic for this yet.
+        # This is a workaround for now that ensures that initialises
+        # certain things after the fork rather than before.
+        # It's not reliable and wants revisiting.
+
+	def schedule_after(secs, func):
+
+	    def sched_thread():
+		 time.sleep(secs)
+		 func()
+
+	    eventlet.spawn(sched_thread)
+
+        schedule_after(10, self.post_fork_initialize)
+
+    def post_fork_initialize(self):
+        """Initialization after Neutron has spawned a worker."""
+
+        # This does long running queries, and they don't want to be
+        # active until the fork happens.
+	self.communicator.init_threads()
+
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""
 
@@ -285,6 +308,14 @@ class AgentCommunicator(object):
     def __init__(self):
         self.recursive = False
 
+    def init_threads(self):
+        """Create any threads
+        
+        Specifically, ones that have long running
+        external connections"""
+
+        pass
+
     @abstractmethod
     def bind(self, port, segment, host, binding_type):
         pass
@@ -390,6 +421,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         self.db_q_ev = eventlet.event.Event()
 
+
+    def init_threads():
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
