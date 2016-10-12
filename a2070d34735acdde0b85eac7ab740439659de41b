@@ -1,0 +1,9 @@
+Code-Review+1: Li Ma <skywalker.nick@gmail.com>
+Code-Review+2: Feng Pan <fpan@redhat.com>
+Workflow+1: Feng Pan <fpan@redhat.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Wed, 12 Oct 2016 03:47:39 +0000
+Reviewed-on: https://review.openstack.org/382675
+Project: openstack/networking-vpp
+Branch: refs/heads/master
