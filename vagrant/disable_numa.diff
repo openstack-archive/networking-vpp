@@ -1,0 +1,36 @@
+diff --git a/nova/virt/libvirt/driver.py b/nova/virt/libvirt/driver.py
+index a239135..83435a8 100644
+--- a/nova/virt/libvirt/driver.py
++++ b/nova/virt/libvirt/driver.py
+@@ -3368,7 +3368,8 @@ class LibvirtDriver(driver.ComputeDriver):
+         cpu.sockets = topology.sockets
+         cpu.cores = topology.cores
+         cpu.threads = topology.threads
+-        cpu.numa = guest_cpu_numa_config
++        #cpu.numa = guest_cpu_numa_config
++        cpu.numa = None
+ 
+         return cpu
+ 
+@@ -4406,9 +4407,9 @@ class LibvirtDriver(driver.ComputeDriver):
+         guest_numa_config = self._get_guest_numa_config(
+             instance.numa_topology, flavor, allowed_cpus, image_meta)
+ 
+-        guest.cpuset = guest_numa_config.cpuset
+-        guest.cputune = guest_numa_config.cputune
+-        guest.numatune = guest_numa_config.numatune
++        #guest.cpuset = guest_numa_config.cpuset
++        #guest.cputune = guest_numa_config.cputune
++        #guest.numatune = guest_numa_config.numatune
+ 
+         guest.membacking = self._get_guest_memory_backing_config(
+             instance.numa_topology,
+@@ -4422,7 +4423,7 @@ class LibvirtDriver(driver.ComputeDriver):
+         for event in self._supported_perf_events:
+             guest.add_perf_event(event)
+ 
+-        self._update_guest_cputune(guest, flavor, virt_type)
++        #self._update_guest_cputune(guest, flavor, virt_type)
+ 
+         guest.cpu = self._get_guest_cpu_config(
+             flavor, image_meta, guest_numa_config.numaconfig,
