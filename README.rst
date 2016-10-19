@@ -2,7 +2,7 @@
 networking-vpp
 ==============
 
-ML2 Mechanism driver and small control plane for OpenVPP forwarder
+ML2 Mechanism driver and small control plane for `OpenVPP forwarder`_
 
 This is a Neutron mechanism driver to bring the advantages of OpenVPP to
 OpenStack deployments.
@@ -377,3 +377,5 @@ How to Install?
    - sudo vppctl show vhost-user # Examine the status of vhost-user ports
        See if the memory regions have been mapped successfully
 
+
+.. _OpenVPP forwarder: https://wiki.fd.io/view/VPP/What_is_VPP%3F
