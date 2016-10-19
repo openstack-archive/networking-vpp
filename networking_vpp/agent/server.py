@@ -468,13 +468,13 @@ class EtcdListener(object):
                                    1, ttl=3 * self.HEARTBEAT)
 
             try:
-                LOG.error("ML2_VPP(%s): thread pausing"
+                LOG.debug("ML2_VPP(%s): thread pausing"
                           % self.__class__.__name__)
                 rv = self.etcd_client.watch(port_key_space,
                                             recursive=True,
                                             index=tick,
                                             timeout=self.HEARTBEAT)
-                LOG.error('watch received %s on %s at tick %s',
+                LOG.debug('watch received %s on %s at tick %s',
                           rv.action, rv.key, rv.modifiedIndex)
                 # TODO(ijw) can this be etcd_index?
                 # Now we have resynced, we know that all data is recovered
@@ -482,7 +482,7 @@ class EtcdListener(object):
                 # to the present (or we would have had a newer last
                 # modified index)
                 tick = rv.modifiedIndex + 1
-                LOG.error("ML2_VPP(%s): thread active"
+                LOG.debug("ML2_VPP(%s): thread active"
                           % self.__class__.__name__)
 
                 # Matches a port key, gets host and uuid
