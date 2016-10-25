@@ -99,16 +99,16 @@ elif [[ "$1" == "stack" && "$2" == "install" ]]; then
     agent_do install_vpp_agent
 
 elif [[ "$1" == "stack" && "$2" == "post-config" ]]; then
-    # Configure after the other layer 1 and 2 services have been configured
+    # Configure & Initialze vpp & vpp agent
     echo_summary "Configuring $name"
     configure_vpp
     agent_do configure_vpp_agent
-
-elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
-# Initialize and start the service
-    echo_summary "Initializing $name"
     init_vpp
     agent_do init_vpp_agent
+
+elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
+    # no-op
+    :
 fi
 
 if [[ "$1" == "unstack" ]]; then
