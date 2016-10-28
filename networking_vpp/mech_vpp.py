@@ -187,7 +187,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         return True
 
     def physnet_known(self, host, physnet):
-        return (host, physnet) in self.communicator.physical_networks
+        return (host, physnet) in self.communicator.find_physnets()
 
     def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
@@ -383,27 +383,23 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
 
-        # Get the physnets the agents know about.  This is updated
-        # periodically in the return thread below.
-        self.physical_networks = set()
-        self._find_physnets()
-
         self.db_q_ev = eventlet.event.Event()
 
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
-    def _find_physnets(self):
+    def find_physnets(self):
+        physical_networks = set()
         for rv in self.etcd_client.read(LEADIN, recursive=True).children:
             # Find all known physnets
             m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
                          rv.key)
-
             if m:
                 host = m.group(1)
                 net = m.group(2)
+                physical_networks.add((host, net))
 
-                self.physical_networks.add((host, net))
+        return physical_networks
 
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
@@ -553,7 +549,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                                 recursive=True,
                                                 index=tick)
                     vals = [rv]
-                    resync = False
 
                     next_tick = rv.modifiedIndex + 1
 
@@ -563,21 +558,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     rv = self.etcd_client.read(self.state_key_space,
                                                recursive=True)
                     vals = [rv.children]
-                    resync = True
 
                     next_tick = rv.etcd_index + 1
 
                     LOG.debug("Etcd watch index recovered at index:%s"
                               % next_tick)
-
-                if resync:
-                    # resync should clear old state and then
-                    # add back new state; the only thing we remember of the
-                    # state are the physnets.
-                    self.physical_networks = set()
-
-                # 'vals' is a list of keys with relevant values to fold into
-                # the physnets array.
 
                 for kv in vals:
 
@@ -613,21 +598,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                             else:
                                 LOG.info('host %s is alive' % host)
                         else:
-                            m = re.match(
-                                self.state_key_space +
-                                '/([^/]+)/physnets/([^/]+)$',
-                                kv.key)
-
-                            if m:
-                                host = m.group(1)
-                                net = m.group(2)
-                                if kv.action == 'delete':
-                                    self.physical_networks.remove((host, net))
-                                else:
-                                    self.physical_networks.add((host, net))
-                            else:
-                                LOG.warn('Unexpected key change in '
-                                         'etcd port feedback: %s' % kv.key)
+                            LOG.warn('Unexpected key change in '
+                                     'etcd port feedback: %s' % kv.key)
 
                 # Update the tick only when all the above completes so that
                 # exceptions don't cause the count to skip before the data
