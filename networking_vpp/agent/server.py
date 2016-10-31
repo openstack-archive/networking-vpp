@@ -22,12 +22,15 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
+from abc import ABCMeta
+from abc import abstractmethod
 import binascii
 import etcd
 import eventlet
 import json
 import os
 import re
+import six
 import sys
 import threading
 import time
@@ -47,12 +50,15 @@ from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from oslo_config import cfg
 from oslo_log import log as logging
+from stevedore import extension
 
 # TODO(ijw): backward compatibility, wants removing in future
 try:
     from neutron_lib import constants as n_const
 except ImportError:
     from neutron.common import constants as n_const
+
+eventlet.monkey_patch()
 
 LOG = logging.getLogger(__name__)
 eventlet.monkey_patch()
@@ -135,8 +141,9 @@ class VPPForwarder(object):
 
     def get_vpp_ifidx(self, if_name):
         """Return VPP's interface index value for the network interface"""
-        if self.vpp.get_interface(if_name):
-            return self.vpp.get_interface(if_name).sw_if_index
+        iface = self.vpp.get_interface(if_name)
+        if iface:
+            return iface.sw_if_index
         else:
             LOG.error("Error obtaining interface data from vpp "
                       "for interface:%s", if_name)
@@ -153,7 +160,6 @@ class VPPForwarder(object):
 
     def network_on_host(self, physnet, net_type, seg_id=None):
         """Find or create a network of the type required"""
-
         if (physnet, net_type, seg_id) not in self.networks:
             self.create_network_on_host(physnet, net_type, seg_id)
         return self.networks.get((physnet, net_type, seg_id), None)
@@ -883,46 +889,269 @@ class VPPForwarder(object):
 
 ######################################################################
 
-LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
 
+@six.add_metaclass(ABCMeta)
+class AgentFeature(object):
+    """Abstract class to handle etcd notifications.
 
-class EtcdListener(object):
-    def __init__(self, host, etcd_client, vppf, physnets):
-        self.host = host
-        self.etcd_client = etcd_client
-        self.vppf = vppf
-        self.physnets = physnets
+    For each 'feature', the pattern is the following:
+    - watch new data under:
+      * 'LEADIN/nodes/<host>/<feature>/<unique_id>'
+      * 'LEADIN/<feature>/<unique_id>'
+    For each event, the method 'set' or 'delete' is called.
+    - the agent returns data under 'LEADIN/state/<host>/<feature>/<unique_id>'
+    """
+
+    path = ''
+    """ For system wide features, watch under
+    'LEADING/<feature>/<unique_id>'
+    """
+    is_system_wide = False
+
+    def __init__(self, host, etcd_listener, vppf):
+        self._host = host
+        self.etcd_listener = etcd_listener
+        self.etcd_client = etcd_listener.etcd_client
         self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
-        # We need certain directories to exist
-        self.mkdir(LEADIN + '/state/%s/ports' % self.host)
-        self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
-        self.pool = eventlet.GreenPool()
-        self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
-
-    def mkdir(self, path):
-        try:
-            self.etcd_client.write(path, None, dir=True)
-        except etcd.EtcdNotFile:
-            # Thrown when the directory already exists, which is fine
-            pass
-
-    def repop_interfaces(self):
+        self.vppf = vppf
         pass
 
-    # The vppf bits
+    @property
+    def node_key_space(self):
+        if self.is_system_wide:
+            return LEADIN + '/global/%s' % (self.path)
+        else:
+            return LEADIN + '/nodes/%s/%s' % (self._host, self.path)
 
-    def unbind(self, id):
-        self.vppf.unbind_interface_on_host(id)
+    @property
+    def state_key_space(self):
+        return LEADIN + '/state/%s/%s' % (self._host, self.path)
 
-    def bind(self, id, binding_type, mac_address, physnet, network_type,
-             segmentation_id):
-        # args['binding_type'] in ('vhostuser', 'plugtap'):
-        return self.vppf.bind_interface_on_host(binding_type,
-                                                id,
-                                                mac_address,
-                                                physnet,
-                                                network_type,
-                                                segmentation_id)
+    @abstractmethod
+    def set(self, key, value):
+        """feature for host is created or updated.
+
+        eg: This is called when the server wants the agent
+        to bind a port.
+        this agent will return the state under the key
+        'self.state_key_space'
+        """
+        pass
+
+    @abstractmethod
+    def delete(self, key, value):
+        """feature for host has to be deleted.
+
+        eg: This is called when the server wants the agent
+        to unbind a port.
+        this agent will delete the state under the key
+        'self.state_key_space'
+        """
+        pass
+
+    def resync(self):
+        """Resync state on startup or etcd resync
+
+        On agent startup or when the sync with the etcd db
+        is lost, the agent has to clean its internal state
+        as the whole state will be read.
+        """
+        pass
+
+    def tick(self):
+        """Periodic method called at each watch timeout.
+
+        Usefull to advertise current status.
+        """
+        pass
+
+
+class PhysnetsAgentFeature(AgentFeature):
+    """Physnet advertisement.
+
+    This feature will on each etcd resync (and so at startup)
+    declare the declared physical networks connected on this node.
+    """
+
+    path = 'physnets'
+
+    def set(self, key, value):
+        pass
+
+    def delete(self, key, value):
+        pass
+
+    def resync(self):
+        # On resync, (also at startup), advertise on
+        # which physnets we have a connection.
+        for physnet in self.vppf.physnets.keys():
+            self.etcd_client.write(self.state_key_space +
+                                   '/' + physnet, 1)
+
+
+class PortAgentFeature(AgentFeature):
+    """Port Bind/Unbind management.
+
+    For each port bind/unbind, we watch the port info
+    under 'LEADIN/nodes/<host>/ports/<port_id>'.
+    After the connection of the port, we write the info
+    under 'LEADIN/state/<host>/ports/<port_id>' to notify
+    neutron server.
+    """
+
+    path = 'ports'
+
+    def set(self, key, value):
+        # Create or update == bind
+        port = key
+        data = json.loads(value)
+        props = self.vppf.bind_interface_on_host(data['binding_type'],
+                                                 port,
+                                                 data['mac_address'],
+                                                 data['physnet'],
+                                                 data['network_type'],
+                                                 data['segmentation_id'])
+        self._send_notification(port, props)
+
+    def _send_notification(self, port, props):
+        self.etcd_client.write(self.state_key_space +
+                               '/%s' % port,
+                               json.dumps(props))
+
+    def delete(self, key, value):
+        # Removing key == desire to unbind
+        port = key
+        self.vppf.unbind_interface_on_host(port)
+        try:
+            self.etcd_client.delete(self.state_key_space +
+                                    '/%s' % port)
+        except etcd.EtcdKeyNotFound:
+            # Gone is fine, if we didn't delete it
+            # it's no problem
+            pass
+
+    def resync(self):
+        self.etcd_helper.clear_state(self.state_key_space)
+        # TODO(ijw): Need to do something here to prompt
+        # appropriate unbind/rebind behaviour
+        pass
+
+
+class PortSecurityGroupsAgentFeature(PortAgentFeature):
+    """Port Bind/Unbind management with security groups.
+
+    The features are the same as PortAgentFeature, but
+    with Security Groups management.
+    """
+    def __init__(self, host, etcd_listener, vppf):
+        super(PortAgentFeature, self).__init__(host, etcd_listener, vppf)
+        self.sec_group = _SecurityGroupAgentFeature(host,
+                                                    etcd_listener,
+                                                    vppf)
+        self.etcd_listener.register_feature(self.sec_group)
+
+    def set(self, key, value):
+        port = key
+        data = json.loads(value)
+        props = self.vppf.bind_interface_on_host(data['binding_type'],
+                                                 port,
+                                                 data['mac_address'],
+                                                 data['physnet'],
+                                                 data['network_type'],
+                                                 data['segmentation_id'])
+
+        # Security-groups is enabled, set L3/L2 ACLs on
+        # port and then send nova notification
+        if data['binding_type'] == 'vhostuser':
+            LOG.debug("port_watcher: known secgroup to acl "
+                      "mappings %s" % secgroups)
+            security_groups = data.get('security_groups', [])
+            LOG.debug("port_watcher:Setting secgroups %s "
+                      "on sw_if_index %s for port %s" %
+                      (security_groups,
+                       props['iface_idx'],
+                       port))
+            result = self.sec_group.set_acls_on_port(
+                security_groups,
+                props['iface_idx'])
+            LOG.debug("port_watcher: setting secgroups "
+                      "%s on sw_if_index %s for port %s "
+                      "returned status code %s" %
+                      (security_groups,
+                       props['iface_idx'],
+                       port,
+                       result))
+            # TODO(najoy): section below is pending testing
+#                 aa_pairs = data.get('allowed_address_pairs', [])
+#                 LOG.debug("port_watcher: Setting allowed "
+#                           "address pairs %s on port %s "
+#                           "sw_if_index %s" %
+#                           (aa_pairs,
+#                            port,
+#                            props['iface_idx']))
+#                 result = self.data.set_mac_ip_acl_on_port(
+#                     data['mac_address'],
+#                     data.get('fixed_ips'),
+#                     aa_pairs,
+#                     props['iface_idx'])
+#                 LOG.debug("port_watcher: setting allowed-addr-"
+#                           "pairs %s on sw_if_index %s for port "
+#                           "%s returned status code %s" %
+#                           (aa_pairs,
+#                            props['iface_idx'],
+#                            port,
+#                            result))
+            LOG.debug("port_watcher: writing state "
+                      "data to etcd state_key-space "
+                      "for port %s" % port)
+            self._send_notification(port, props)
+
+    def resync(self):
+        super(PortAgentFeature, self).resync()
+        # load sw_if_index to macip acl index mappings
+        self.sec_group.load_macip_acl_mapping()
+
+        LOG.debug("loading VppAcl map from acl tags for "
+                  "performing secgroup_watcher lookups")
+        self.sec_group.populate_secgroup_acl_mappings()
+        LOG.debug("Adding ingress/egress spoof filters "
+                  "on host for secgroup_watcher spoof blocking")
+        self.sec_group.spoof_filter_on_host()
+
+
+class _SecurityGroupAgentFeature(AgentFeature):
+    """Security group management.
+
+    /!\ This feature is NOT meant to be instanciated manually
+    as it will be created / registered by PortSecurityGroupAgentFeature.
+    """
+
+    path = 'secgroup'
+    is_system_wide = True
+
+    def set(self, key, value):
+        # create or update a secgroup == add_replace vpp acl
+        secgroup = key
+        data = json.loads(value)
+        LOG.debug("secgroup_watcher: add_replace secgroup %s"
+                  % secgroup)
+        self.acl_add_replace(secgroup, data)
+        LOG.debug("secgroup_watcher: known secgroup to acl "
+                  "mappings %s" % secgroups)
+
+    def delete(self, key, value):
+        secgroup = key
+        LOG.debug("secgroup_watcher: deleting secgroup %s"
+                  % secgroup)
+        self.acl_delete(secgroup)
+        LOG.debug("secgroup watcher: known secgroup to acl "
+                  "mappings %s" % secgroups)
+        try:
+            self.etcd_client.delete(
+                self.data.secgroup_key_space + '/%s'
+                % secgroup)
+        except etcd.EtcdKeyNotFound:
+            pass
 
     def acl_add_replace(self, secgroup, data):
         """Add or replace a VPP ACL.
@@ -1147,182 +1376,119 @@ class EtcdListener(object):
         except AttributeError:
             pass   # cannot reference acl attribute - pass and exit
 
+
+LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
+
+
+class EtcdListener(object):
+    def __init__(self, host, etcd_client, vppf):
+        self.features = {}
+        self.host = host
+        self.etcd_client = etcd_client
+        self.vppf = vppf
+        self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
+        self.pool = eventlet.GreenPool()
+
+    def mkdir(self, path):
+        try:
+            self.etcd_client.write(path, None, dir=True)
+        except etcd.EtcdNotFile:
+            # Thrown when the directory already exists, which is fine
+            pass
+
+    def register_feature(self, feature):
+        if feature.path in self.features.keys():
+            raise Exception('Feature "%s" already registered' % feature.path)
+        self.features[feature.path] = feature
+        # We need directories to exist for each registered feature
+        self.mkdir(LEADIN + '/state/%s/%s' % (self.host, feature.path))
+        if feature.is_system_wide:
+            self.mkdir(LEADIN + '/global/%s' % (feature.path))
+        else:
+            self.mkdir(LEADIN + '/nodes/%s/%s' % (self.host, feature.path))
+        LOG.info('Added Feature: %s - %s' % (feature.path, str(feature)))
+
     AGENT_HEARTBEAT = 60  # seconds
 
     def process_ops(self):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
         # storing, so it's lost on reboot of VPP)
-        physnets = self.physnets.keys()
-        for f in physnets:
-            self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
-                                   % (self.host, f), 1)
 
-        self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
-        self.secgroup_key_space = LEADIN + "/secgroups"
-        # load sw_if_index to macip acl index mappings
-        self.load_macip_acl_mapping()
+        self.state_pattern = re.compile(LEADIN + '/state/(.*)')
+        self.nodes_pattern = re.compile(LEADIN + '/nodes/' +
+                                        self.host + '/([^/]+)/([^/]+)$')
+        # get system wide features
+        feature_list = '|'.join([feat.path for feat in self.features.values()
+                                 if feat.is_system_wide is True])
+        self.global_features_pattern = re.compile(LEADIN + '/global/(' +
+                                                  feature_list + ')/([^/]+)$')
 
-        self.etcd_helper.clear_state(self.state_key_space)
-
-        class PortWatcher(EtcdWatcher):
+        class NodeWatcher(EtcdWatcher):
 
             def do_tick(self):
-                # The key that indicates to people that we're alive
-                # (not that they care)
-                self.etcd_client.write(LEADIN + '/state/%s/alive' %
-                                       self.data.host,
+                self.etcd_client.write(LEADIN + '/state/%s/alive'
+                                       % self.data.host,
                                        1, ttl=3 * self.heartbeat)
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is False]:
+                    feature.tick()
 
             def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
-                pass
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is False]:
+                    feature.resync()
 
             def do_work(self, action, key, value):
-                # Matches a port key, gets host and uuid
-                m = re.match(self.data.port_key_space + '/([^/]+)$', key)
-
+                m = self.data.nodes_pattern.match(key)
                 if m:
-                    port = m.group(1)
-
-                    if action == 'delete':
-                        # Removing key == desire to unbind
-                        self.data.unbind(port)
-                        LOG.debug("port_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
-                        try:
-                            self.etcd_client.delete(
-                                self.data.state_key_space + '/%s'
-                                % port)
-                        except etcd.EtcdKeyNotFound:
-                            # Gone is fine; if we didn't delete it
-                            # it's no problem
-                            pass
-                    else:
-                        # Create or update == bind
-                        data = json.loads(value)
-                        props = self.data.bind(port,
-                                               data['binding_type'],
-                                               data['mac_address'],
-                                               data['physnet'],
-                                               data['network_type'],
-                                               data['segmentation_id'])
-
-                        # If security-groups is enabled, set L3/L2 ACLs on
-                        # port and then send nova notification
-                        if (self.data.secgroup_enabled
-                                and data['binding_type'] == 'vhostuser'):
-                            LOG.debug("port_watcher: known secgroup to acl "
-                                      "mappings %s" % secgroups)
-                            security_groups = data.get('security_groups', [])
-                            LOG.debug("port_watcher:Setting secgroups %s "
-                                      "on sw_if_index %s for port %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port))
-                            result = self.data.set_acls_on_port(
-                                security_groups,
-                                props['iface_idx'])
-                            LOG.debug("port_watcher: setting secgroups "
-                                      "%s on sw_if_index %s for port %s "
-                                      "returned status code %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port,
-                                       result))
-                            # TODO(najoy): section below is pending testing
-#                             aa_pairs = data.get('allowed_address_pairs', [])
-#                             LOG.debug("port_watcher: Setting allowed "
-#                                       "address pairs %s on port %s "
-#                                       "sw_if_index %s" %
-#                                       (aa_pairs,
-#                                        port,
-#                                        props['iface_idx']))
-#                             result = self.data.set_mac_ip_acl_on_port(
-#                                 data['mac_address'],
-#                                 data.get('fixed_ips'),
-#                                 aa_pairs,
-#                                 props['iface_idx'])
-#                             LOG.debug("port_watcher: setting allowed-addr-"
-#                                       "pairs %s on sw_if_index %s for port "
-#                                       "%s returned status code %s" %
-#                                       (aa_pairs,
-#                                        props['iface_idx'],
-#                                        port,
-#                                        result))
-                        LOG.debug("port_watcher: writing state "
-                                  "data to etcd state_key-space "
-                                  "for port %s" % port)
-                        # Send notification
-                        self.etcd_client.write(
-                            self.data.state_key_space + '/%s'
-                            % port, json.dumps(props))
-
+                    feature = m.group(1)
+                    key = m.group(2)
+                    if action is None:
+                        # occurs when resyncing
+                        action = 'set'
+                    feature_instance = self.data.features[feature]
+                    getattr(feature_instance, action)(key, value)
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
                                 'key %s', key)
 
-        LOG.debug("Spawning port_watcher")
-        self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
-                                    self.port_key_space,
-                                    heartbeat=self.AGENT_HEARTBEAT,
-                                    data=self).watch_forever)
-
-        class SecGroupWatcher(EtcdWatcher):
+        class GlobalWatcher(EtcdWatcher):
 
             def do_tick(self):
-                pass
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is True]:
+                    feature.tick()
 
             def resync(self):
-                pass
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is True]:
+                    feature.resync()
 
             def do_work(self, action, key, value):
-                # Matches a security group key and does work
-                LOG.debug("secgroup_watcher: doing work for %s %s %s" %
-                          (action, key, value))
-                # Matches a secgroup key and gets its ID and data
-                m = re.match(self.data.secgroup_key_space + '/([^/]+)$', key)
+                m = self.data.global_features_pattern.match(key)
                 if m:
-                    secgroup = m.group(1)
-                    if action == 'delete':
-                        LOG.debug("secgroup_watcher: deleting secgroup %s"
-                                  % secgroup)
-                        self.data.acl_delete(secgroup)
-                        LOG.debug("secgroup watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
-                        try:
-                            self.etcd_client.delete(
-                                self.data.secgroup_key_space + '/%s'
-                                % secgroup)
-                        except etcd.EtcdKeyNotFound:
-                            pass
-                    else:
-                        # create or update a secgroup == add_replace vpp acl
-                        data = json.loads(value)
-                        LOG.debug("secgroup_watcher: add_replace secgroup %s"
-                                  % secgroup)
-                        self.data.acl_add_replace(secgroup, data)
-                        LOG.debug("secgroup_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
+                    feature = m.group(1)
+                    key = m.group(2)
+                    if action is None:
+                        # occurs when resyncing
+                        action = 'set'
+                    feature_instance = self.data.features[feature]
+                    getattr(feature_instance, action)(key, value)
                 else:
-                    LOG.warning('secgroup_watcher: Unexpected change in '
-                                'etcd secgroup feedback for key %s' % key)
+                    LOG.warning('Unexpected key change in etcd port feedback, '
+                                'key %s', key)
 
-        if self.secgroup_enabled:
-            LOG.debug("loading VppAcl map from acl tags for "
-                      "performing secgroup_watcher lookups")
-            self.populate_secgroup_acl_mappings()
-            LOG.debug("Adding ingress/egress spoof filters "
-                      "on host for secgroup_watcher spoof blocking")
-            self.spoof_filter_on_host()
-            LOG.debug("Spawning secgroup_watcher..")
-            self.pool.spawn(SecGroupWatcher(self.etcd_client,
-                                            'secgroup_watcher',
-                                            self.secgroup_key_space,
-                                            heartbeat=self.AGENT_HEARTBEAT,
-                                            data=self).watch_forever)
+        LOG.debug("Spawning node_watcher")
+        self.pool.spawn(NodeWatcher(self.etcd_client, 'node_watcher',
+                                    LEADIN + '/nodes/' + self.host,
+                                    heartbeat=self.AGENT_HEARTBEAT,
+                                    data=self).watch_forever)
+        LOG.debug("Spawning global_watcher")
+        self.pool.spawn(GlobalWatcher(self.etcd_client, 'global_watcher',
+                                      LEADIN + '/global/',
+                                      heartbeat=self.AGENT_HEARTBEAT,
+                                      data=self).watch_forever)
         self.pool.waitall()
 
 
@@ -1366,6 +1532,7 @@ def main():
                           "physnet2:<interface>"
                           )
                 sys.exit(1)
+
     vppf = VPPForwarder(physnets,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
@@ -1384,9 +1551,20 @@ def main():
                               password=cfg.CONF.ml2_vpp.etcd_pass,
                               allow_reconnect=True)
 
-    ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
+    ops = EtcdListener(cfg.CONF.host, etcd_client, vppf)
+
+    mgr = extension.ExtensionManager(namespace='networking_vpp.agent.features',
+                                     invoke_on_load=True,
+                                     invoke_args=(cfg.CONF.host,
+                                                  ops,
+                                                  vppf))
+    agent_features = [ext.obj for ext in mgr.extensions]
+
+    for feature in agent_features:
+        ops.register_feature(feature)
 
     ops.process_ops()
+
 
 if __name__ == '__main__':
     main()
