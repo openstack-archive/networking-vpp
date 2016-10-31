@@ -130,7 +130,7 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
         segment = port_context.segments_to_bind[0]
         physnet = segment[api.PHYSICAL_NETWORK]
         host = port_context.host
-        with mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.'
+        with mock.patch('networking_vpp.mech_vpp.FeaturePhysnets.'
                         'find_physnets',
                         return_value=set([(host, physnet)])):
             assert(self.mech.physnet_known(host, physnet) is True), \
@@ -146,13 +146,13 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
             "Return value for port [%s] should have been False" % (
                 port_context.current.id)
 
-    @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.bind')
-    @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.unbind')
+    @mock.patch('networking_vpp.mech_vpp.FeaturePortBinding.bind')
+    @mock.patch('networking_vpp.mech_vpp.FeaturePortBinding.unbind')
     def test_update_port_precommit(self, m_bind, m_unbind):
         port_context = self.given_port_context()
         current_bind = port_context.binding_levels[-1]
         self.mech.update_port_precommit(port_context)
-        self.mech.communicator.bind.assert_called_once_with(
+        self.mech.ports.bind.assert_called_once_with(
             port_context._plugin_context.session,
             port_context.current,
             current_bind[api.BOUND_SEGMENT],
@@ -160,7 +160,7 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
             'vhostuser')
         port_context.binding_levels = [None]
         self.mech.update_port_precommit(port_context)
-        self.mech.communicator.unbind.assert_called_once_with(
+        self.mech.ports.unbind.assert_called_once_with(
             port_context._plugin_context.session,
             port_context.current,
             port_context.original_host)
@@ -174,11 +174,11 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
         self.mech.update_port_postcommit(port_context)
         self.mech.communicator.kick.assert_called()
 
-    @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.unbind')
+    @mock.patch('networking_vpp.mech_vpp.FeaturePortBinding.unbind')
     def test_delete_port_precommit(self, m_unbind):
         port_context = self.given_port_context()
         self.mech.delete_port_precommit(port_context)
-        self.mech.communicator.unbind.called_once_with(
+        self.mech.ports.unbind.called_once_with(
             port_context._plugin_context.session,
             port_context.current,
             port_context.host)
