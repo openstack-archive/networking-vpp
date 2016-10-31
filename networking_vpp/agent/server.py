@@ -27,10 +27,13 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
+from abc import ABCMeta
+from abc import abstractmethod
 import etcd
 import json
 import os
 import re
+import six
 import sys
 from threading import Thread
 import time
@@ -45,6 +48,7 @@ from neutron.agent.linux import utils
 from neutron.common import constants as n_const
 from oslo_config import cfg
 from oslo_log import log as logging
+from stevedore import extension
 from urllib3.exceptions import TimeoutError
 
 LOG = logging.getLogger(__name__)
@@ -120,7 +124,6 @@ class VPPForwarder(object):
 
     def network_on_host(self, physnet, net_type, seg_id=None):
         """Find or create a network of the type required"""
-
         if (physnet, net_type, seg_id) not in self.networks:
             self.create_network_on_host(physnet, net_type, seg_id)
         return self.networks.get((physnet, net_type, seg_id), None)
@@ -376,26 +379,121 @@ class VPPForwarder(object):
             else:
                 LOG.error('Unknown port type %s during unbind'
                           % props['bind_type'])
-
         # TODO(ijw): delete structures of newly unused networks with
         # delete_network
 
 
 ######################################################################
 
+
+@six.add_metaclass(ABCMeta)
+class AgentFeature(object):
+    """Abstract class to handle etcd notifications.
+
+    For each 'feature', the pattern is the following:
+    - watch new data under 'LEADIN/nodes/<host>/<feature>/<unique_id>'
+    For each event, the method 'set' or 'delete' is called.
+    - the agent returns data under 'LEADIN/state/<host>/<feature>/<unique_id>'
+    """
+
+    path = ''
+
+    def __init__(self, host, etcd_client, vppf):
+        self._host = host
+        self._etcd_client = etcd_client
+        self._etcd_helper = EtcdHelper(self._etcd_client)
+        self._vppf = vppf
+        self._node_key_space = LEADIN + '/nodes/%s/%s' % (host, self.path)
+        self._state_key_space = LEADIN + '/state/%s/%s' % (host, self.path)
+        pass
+
+    @abstractmethod
+    def set(self, key, value):
+        """feature for host is created or updated.
+
+        eg: This is called when the server wants the agent
+        to bind a port.
+        this agent will return the state under the key
+        'self._state_key_space'
+        """
+        pass
+
+    @abstractmethod
+    def delete(self, key, value):
+        """feature for host has to be deleted.
+
+        eg: This is called when the server wants the agent
+        to unbind a port.
+        this agent will delete the state under the key
+        'self._state_key_space'
+        """
+        pass
+
+    @abstractmethod
+    def resync(self):
+        """Resync state on startup or etcd resync
+
+        On agent startup or when the sync with the etcd db
+        is lost, the agent has to clean its internal state
+        as the whole state will be read.
+        """
+        pass
+
+
+class PortAgentFeature(AgentFeature):
+    """Port Bind/Unbind management.
+
+    For each port bind/unbind, we watch the port info
+    under 'LEADIN/nodes/<host>/ports/<port_id>'.
+    After the connection of the port, we write the info
+    under 'LEADIN/state/<host>/ports/<port_id>' to notify
+    neutron server.
+    """
+
+    path = 'ports'
+
+    def set(self, key, value):
+        # Create or update == bind
+        port = key
+        data = json.loads(value)
+        props = self._vppf.bind_interface_on_host(data['binding_type'],
+                                                  port,
+                                                  data['mac_address'],
+                                                  data['physnet'],
+                                                  data['network_type'],
+                                                  data['segmentation_id'])
+        self._etcd_client.write(self._state_key_space +
+                                '/%s' % port,
+                                json.dumps(props))
+
+    def delete(self, key, value):
+        # Removing key == desire to unbind
+        port = key
+        self._vppf.unbind_interface_on_host(port)
+        try:
+            self._etcd_client.delete(self._state_key_space +
+                                     '/%s' % port)
+        except etcd.EtcdKeyNotFound:
+            # Gone is fine, if we didn't delete it
+            # it's no problem
+            pass
+
+    def resync(self):
+        self._etcd_helper.clear_state(self._state_key_space)
+        pass
+
+
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
 
 
 class EtcdListener(object):
     def __init__(self, host, etcd_client, vppf, physnets):
+        self.features = {}
         self.host = host
         self.etcd_client = etcd_client
         self.vppf = vppf
         self.physnets = physnets
         self.etcd_helper = EtcdHelper(self.etcd_client)
-        # We need certain directories to exist
-        self.mkdir(LEADIN + '/state/%s/ports' % self.host)
-        self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
 
     def mkdir(self, path):
         try:
@@ -406,21 +504,6 @@ class EtcdListener(object):
 
     def repop_interfaces(self):
         pass
-
-    # The vppf bits
-
-    def unbind(self, id):
-        self.vppf.unbind_interface_on_host(id)
-
-    def bind(self, id, binding_type, mac_address, physnet, network_type,
-             segmentation_id):
-        # args['binding_type'] in ('vhostuser', 'plugtap'):
-        return self.vppf.bind_interface_on_host(binding_type,
-                                                id,
-                                                mac_address,
-                                                physnet,
-                                                network_type,
-                                                segmentation_id)
 
     HEARTBEAT = 60  # seconds
 
@@ -446,6 +529,15 @@ class EtcdListener(object):
                                        json.dumps(props))
         return rv.etcd_index
 
+    def register_feature(self, feature):
+        if feature.path in self.features.keys():
+            raise Exception('Feature "%s" already registered' % feature.path)
+        self.features[feature.path] = feature
+        # We need directories to exist for each registered feature
+        self.mkdir(LEADIN + '/state/%s/%s' % (self.host, feature.path))
+        self.mkdir(LEADIN + '/nodes/%s/%s' % (self.host, feature.path))
+        LOG.info('Added Feature: %s' % feature.path)
+
     def process_ops(self):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
@@ -455,89 +547,70 @@ class EtcdListener(object):
             self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
                                    % (self.host, f), 1)
 
-        port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        state_key_space = LEADIN + "/state/%s/ports" % self.host
-        self.etcd_helper.clear_state(state_key_space)
-        tick = self._sync_state(port_key_space)
+        watch_key_space = LEADIN + "/nodes/%s" % self.host
+
+        tick = None
         LOG.debug("Starting watch on ports key space from Index: %s" % tick)
         while True:
-
-            # The key that indicates to people that we're alive
-            # (not that they care)
-            self.etcd_client.write(LEADIN + '/state/%s/alive' % self.host,
-                                   1, ttl=3 * self.HEARTBEAT)
-
             try:
-                LOG.debug("ML2_VPP(%s): thread pausing"
-                          % self.__class__.__name__)
-                rv = self.etcd_client.watch(port_key_space,
-                                            recursive=True,
-                                            index=tick,
-                                            timeout=self.HEARTBEAT)
-                LOG.debug('watch received %s on %s at tick %s',
-                          rv.action, rv.key, rv.modifiedIndex)
-                # TODO(ijw) can this be etcd_index?
-                # Now we have resynced, we know that all data is recovered
-                # not just to the last modified index, but all the way
-                # to the present (or we would have had a newer last
-                # modified index)
-                tick = rv.modifiedIndex + 1
-                LOG.debug("ML2_VPP(%s): thread active"
-                          % self.__class__.__name__)
+                # The key that indicates to people that we're alive
+                # (not that they care)
+                self.etcd_client.write(LEADIN + '/state/%s/alive' % self.host,
+                                       1, ttl=3 * self.HEARTBEAT)
 
-                # Matches a port key, gets host and uuid
-                m = re.match(port_key_space + '/([^/]+)$',
-                             rv.key)
+                try:
+                    if tick is None:
+                        raise etcd.EtcdEventIndexCleared()
 
-                if m:
-                    port = m.group(1)
+                    LOG.debug("ML2_VPP(%s): thread pausing"
+                              % self.__class__.__name__)
 
-                    if rv.action == 'delete':
-                        # Removing key == desire to unbind
-                        self.unbind(port)
-                        try:
-                            self.etcd_client.delete(
-                                state_key_space + '/%s'
-                                % port)
-                        except etcd.EtcdKeyNotFound:
-                            # Gone is fine, if we didn't delete it
-                            # it's no problem
-                            pass
+                    rv = self.etcd_client.watch(watch_key_space,
+                                                recursive=True,
+                                                index=tick,
+                                                timeout=self.HEARTBEAT)
+                    vals = [rv]
+                    LOG.debug('watch received %s on %s at tick %s',
+                              rv.action, rv.key, rv.modifiedIndex)
+                    # TODO(ijw) can this be etcd_index?
+                    # Now we have resynced, we know that all data is recovered
+                    # not just to the last modified index, but all the way
+                    # to the present (or we would have had a newer last
+                    # modified index)
+                    tick = rv.modifiedIndex + 1
+
+                except etcd.EtcdEventIndexCleared:
+                    rv = self.etcd_client.read(watch_key_space,
+                                               recursive=True)
+                    vals = rv.children
+                    for feature in self.features.values():
+                        feature.resync()
+                    tick = rv.etcd_index + 1
+
+                for kv in vals:
+                    LOG.error("ML2_VPP(%s): thread active"
+                              % self.__class__.__name__)
+
+                    m = re.match(LEADIN + '/nodes/' + self.host +
+                                 '/([^/]+)/([^/]+)$', kv.key)
+
+                    if m:
+                        feature = m.group(1)
+                        key = m.group(2)
+                        if kv.action is None:
+                            # occurs when resyncing
+                            kv.action = 'set'
+                        method = kv.action
+                        feature_instance = self.features[feature]
+                        getattr(feature_instance, method)(key, kv.value)
+
                     else:
-                        # Create or update == bind
-                        data = json.loads(rv.value)
-                        props = self.bind(port,
-                                          data['binding_type'],
-                                          data['mac_address'],
-                                          data['physnet'],
-                                          data['network_type'],
-                                          data['segmentation_id'])
-                        self.etcd_client.write(state_key_space + '/%s'
-                                               % port,
-                                               json.dumps(props))
-
-                else:
-                    LOG.warn('Unexpected key change in etcd port feedback, '
-                             'key %s' % rv.key)
+                        LOG.warn('Unexpected key change in etcd port feedback,'
+                                 'key %s' % kv.key)
 
             except (etcd.EtcdWatchTimedOut, TimeoutError):
                 # This is normal
                 pass
-            except etcd.EtcdEventIndexCleared:
-                LOG.debug("Received etcd event index cleared. "
-                          "Recovering etcd watch index")
-                rv = self.etcd_client.read(port_key_space)
-                # TODO(ijw): we need to resync our state
-                # with the value of 'rv' here
-                # Now we have resynced, we know that all data is recovered
-                # not just to the last modified index, but all the way
-                # to the present (or we would have had a newer last
-                # modified index).
-                # A resync need not involve writing the physnets (they don't
-                # change) but should involve updating any ports in VPP that are
-                # not in the state we believe they should be in.
-                tick = rv.etcd_index + 1
-                LOG.debug("Etcd watch index recovered at %s" % tick)
             except Exception as e:
                 LOG.error('etcd threw exception %s' % traceback.format_exc(e))
 
@@ -585,6 +658,7 @@ def main():
                           "physnet2:<interface>"
                           )
                 sys.exit(1)
+
     vppf = VPPForwarder(physnets,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
@@ -603,7 +677,18 @@ def main():
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
 
+    mgr = extension.ExtensionManager(namespace='networking_vpp.agent.features',
+                                     invoke_on_load=True,
+                                     invoke_args=(cfg.CONF.host,
+                                                  etcd_client,
+                                                  vppf))
+    agent_features = [ext.obj for ext in mgr.extensions]
+
+    for feature in agent_features:
+        ops.register_feature(feature)
+
     ops.process_ops()
+
 
 if __name__ == '__main__':
     main()
