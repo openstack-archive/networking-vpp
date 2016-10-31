@@ -57,6 +57,12 @@ class VPPMechanismDriver(api.MechanismDriver):
     def initialize(self):
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
         self.communicator = EtcdAgentCommunicator()
+        self.keepalive = FeatureKeepAlive()
+        self.ports = FeaturePortBinding()
+        self.physnets = FeaturePhysnets()
+        self.communicator.register_feature(self.keepalive)
+        self.communicator.register_feature(self.ports)
+        self.communicator.register_feature(self.physnets)
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""
@@ -187,7 +193,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         return True
 
     def physnet_known(self, host, physnet):
-        return (host, physnet) in self.communicator.find_physnets()
+        return (host, physnet) in self.physnets.find_physnets()
 
     def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
@@ -227,17 +233,17 @@ class VPPMechanismDriver(api.MechanismDriver):
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # then send the bind out (may equally be an update on a bound
                 # port)
-                self.communicator.bind(port_context._plugin_context.session,
-                                       port_context.current,
-                                       current_bind[api.BOUND_SEGMENT],
-                                       port_context.host,
-                                       binding_type)
+                self.ports.bind(port_context._plugin_context.session,
+                                port_context.current,
+                                current_bind[api.BOUND_SEGMENT],
+                                port_context.host,
+                                binding_type)
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 # If we were the last binder of this port but are no longer
-                self.communicator.unbind(port_context._plugin_context.session,
-                                         port_context.current,
-                                         port_context.original_host)
+                self.ports.unbind(port_context._plugin_context.session,
+                                  port_context.current,
+                                  port_context.original_host)
 
     def update_port_postcommit(self, port_context):
         """Work to do, post-DB commit, when updating a port
@@ -272,26 +278,149 @@ class VPPMechanismDriver(api.MechanismDriver):
         port = port_context.current
         host = port_context.host
         LOG.debug('ML2_VPP: delete_port_postcommit, port is %s' % str(port))
-        self.communicator.unbind(port_context._plugin_context.session,
-                                 port, host)
+        self.ports.unbind(port_context._plugin_context.session,
+                          port, host)
 
     def delete_port_postcommit(self, port_context):
         self.communicator.kick()
 
 
 @six.add_metaclass(ABCMeta)
-class AgentCommunicator(object):
+class Feature(object):
+    path = ''
+
+    def __init__(self):
+        # this var will be set when register_feature
+        # method will be called
+        self.communicator = None
+        pass
+
+    @abstractmethod
+    def state_set(self, host, key, value):
+        """Feature for host was set.
+
+        This is called on creation or update for a key
+        Typically called when an agent has done its job,
+        such as creating a port.
+        """
+        pass
+
+    @abstractmethod
+    def state_delete(self, host, key, value):
+        """Feature for host was deleted.
+
+        In this case, the value will always be 'None'.
+        Yet, this parameter is mandatory as the call is generated.
+        """
+        pass
+
+    @abstractmethod
+    def resync(self):
+        """Resync with etcd state.
+
+        On resync call, we must typically clean internal cached
+        values as the whole tree will be read, and method 'state_set'
+        will be called for each key/value pair.
+        """
+        pass
+
+
+class FeatureKeepAlive(Feature):
+    path = 'alive'
+
+    def state_set(self, host, key, value):
+        LOG.debug('host %s is alive' % host)
+
+    def state_delete(self, host, key, value):
+        LOG.debug('host %s has died' % host)
+        pass
+
+    def state_expire(self, host, key, value):
+        """Keep alive time-outed."""
+        LOG.debug('host %s has died' % host)
+        pass
+
+    def resync(self):
+        pass
+
+
+class FeaturePhysnets(Feature):
+    path = 'physnets'
+
+    def __init__(self):
+        self.physnets = set()
+
+    def state_set(self, host, key, value):
+        LOG.debug('host "%s" has update physnet: "%s"' % (host, key))
+        self.physnets.add((host, key))
+
+    def state_delete(self, host, key, value):
+        LOG.debug('host "%s" has no more physnet: "%s"' % (host, key))
+        self.physnets.remove((host, key))
+
+    def resync(self):
+        self.physnets = set()
+
+    def find_physnets(self):
+        physical_networks = set()
+        etcd_phynets = self.communicator.etcd_client.read(LEADIN,
+                                                          recursive=True)
+        for rv in etcd_phynets.children:
+            # Find all known physnets
+            m = re.match(self.communicator.state_key_space +
+                         '/([^/]+)/physnets/([^/]+)$', rv.key)
+            if m:
+                host = m.group(1)
+                net = m.group(2)
+                physical_networks.add((host, net))
+
+        return physical_networks
+
+
+class FeaturePortBinding(Feature):
+    path = 'ports'
 
     def __init__(self):
         self.recursive = False
 
-    @abstractmethod
-    def bind(self, port, segment, host, binding_type):
+    def state_set(self, host, key, value):
+        self.notify_bound(key, host)
         pass
 
-    @abstractmethod
-    def unbind(self, port, host):
+    def state_delete(self, host, key, value):
+        # Nove doesn't nuch care when ports go away
         pass
+
+    def resync(self):
+        self.recursive = False
+        pass
+
+    def _port_path(self, host, port):
+        return (self.communicator.port_key_space +
+                "/" + host + "/ports/" + port['id'])
+
+    def bind(self, session, port, segment, host, binding_type):
+        # NB segmentation_id is not optional in the wireline protocol,
+        # we just pass 0 for unsegmented network types
+        data = {
+            'mac_address': port['mac_address'],
+            'mtu': 1500,  # not this, but what?: port['mtu'],
+            'physnet': segment[api.PHYSICAL_NETWORK],
+            'network_type': segment[api.NETWORK_TYPE],
+            'segmentation_id': segment.get(api.SEGMENTATION_ID, 0),
+            'binding_type': binding_type,
+        }
+        LOG.debug("ML2_VPP: Queueing bind request for port:%s, "
+                  "segment:%s, host:%s, type:%s",
+                  port, data['segmentation_id'],
+                  host, data['binding_type'])
+
+        db.journal_write(session, self._port_path(host, port), data)
+        self.communicator.kick()
+
+    def unbind(self, session, port, host):
+        db.journal_write(session, self._port_path(host, port), None)
+        self.communicator.kick()
 
     def notify_bound(self, port_id, host):
         """Tell things that the port is truly bound.
@@ -339,7 +468,7 @@ PARANOIA_TIME = 50              # TODO(ijw): make configurable?
 LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
 
 
-class EtcdAgentCommunicator(AgentCommunicator):
+class EtcdAgentCommunicator(object):
     """Comms unit for etcd
 
     This will talk to etcd and tell it what is going on
@@ -364,7 +493,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     """
 
     def __init__(self):
-        super(EtcdAgentCommunicator, self).__init__()
         LOG.debug("Using etcd host:%s port:%s user:%s password:***" %
                   (cfg.CONF.ml2_vpp.etcd_host,
                    cfg.CONF.ml2_vpp.etcd_port,
@@ -374,6 +502,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
+        self.features = {}
         # We need certain directories to exist
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
@@ -388,21 +517,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
-    def find_physnets(self):
-        physical_networks = set()
-        for rv in self.etcd_client.read(LEADIN, recursive=True).children:
-            # Find all known physnets
-            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
-                         rv.key)
-            if m:
-                host = m.group(1)
-                net = m.group(2)
-                physical_networks.add((host, net))
-
-        return physical_networks
-
-    def _port_path(self, host, port):
-        return self.port_key_space + "/" + host + "/ports/" + port['id']
+    def register_feature(self, feature):
+        if feature.path in self.features.keys():
+            raise Exception('Feature "%s" can not be registered twice'
+                            % feature.path)
+        feature.communicator = self
+        self.features[feature.path] = feature
 
     ######################################################################
     # These functions use a DB journal to log messages before
@@ -422,29 +542,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # wakeup signal and harmless to send repeatedly), but
                 # we need to ignore the error
                 pass
-
-    def bind(self, session, port, segment, host, binding_type):
-        # NB segmentation_id is not optional in the wireline protocol,
-        # we just pass 0 for unsegmented network types
-        data = {
-            'mac_address': port['mac_address'],
-            'mtu': 1500,  # not this, but what?: port['mtu'],
-            'physnet': segment[api.PHYSICAL_NETWORK],
-            'network_type': segment[api.NETWORK_TYPE],
-            'segmentation_id': segment.get(api.SEGMENTATION_ID, 0),
-            'binding_type': binding_type,
-        }
-        LOG.debug("ML2_VPP: Queueing bind request for port:%s, "
-                  "segment:%s, host:%s, type:%s",
-                  port, data['segmentation_id'],
-                  host, data['binding_type'])
-
-        db.journal_write(session, self._port_path(host, port), data)
-        self.kick()
-
-    def unbind(self, session, port, host):
-        db.journal_write(session, self._port_path(host, port), None)
-        self.kick()
 
     ######################################################################
     # The post-journal part of the work that clears out the table and
@@ -559,44 +656,40 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                                recursive=True)
                     vals = [rv.children]
 
+                    for feature in self.features.values():
+                        feature.resync()
+
                     next_tick = rv.etcd_index + 1
 
                     LOG.debug("Etcd watch index recovered at index:%s"
                               % next_tick)
 
                 for kv in vals:
-
-                    LOG.debug("ML2_VPP(%s): return worker active"
+                    LOG.debug("ML2_VPP(%s): feature return worker active"
                               % self.__class__.__name__)
 
-                    # Matches a port key, gets host and uuid
                     m = re.match(self.state_key_space +
-                                 '/([^/]+)/ports/([^/]+)$',
+                                 '/([^/]+)/([^/]+)(/?)([^/]*)$',
                                  kv.key)
-
                     if m:
                         host = m.group(1)
-                        port = m.group(2)
-
-                        if kv.action == 'delete':
-                            # Nova doesn't much care when ports go away.
-                            pass
+                        feature = m.group(2)
+                        if len(m.groups()) > 3:
+                            key = m.group(4)
                         else:
-                            self.notify_bound(port, host)
-                    else:
-                        # Matches a port key, gets host and uuid
-                        m = re.match(self.state_key_space + '/([^/]+)/alive$',
-                                     kv.key)
+                            key = None
 
-                        if m:
-                            # TODO(ijw): this should be fed into the agents
-                            # table.
-                            host = m.group(1)
+                        if feature in self.features.keys():
+                            # Dynamically build method name
+                            # and call appropriate feature
+                            # eg: port->state_set
+                            if kv.action is None:
+                                kv.action = 'set'
+                            method = 'state_' + str(kv.action)
+                            feature_instance = self.features[feature]
+                            func = getattr(feature_instance, method)
+                            func(host, key, kv.value)
 
-                            if kv.action == 'delete':
-                                LOG.info('host %s has died' % host)
-                            else:
-                                LOG.info('host %s is alive' % host)
                         else:
                             LOG.warn('Unexpected key change in '
                                      'etcd port feedback: %s' % kv.key)
