@@ -22,10 +22,14 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
+from abc import ABCMeta
+from abc import abstractmethod
 import etcd
+import eventlet
 import json
 import os
 import re
+import six
 import sys
 import threading
 import time
@@ -40,12 +44,15 @@ from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from oslo_config import cfg
 from oslo_log import log as logging
+from stevedore import extension
 
 # TODO(ijw): backward compatibility, wants removing in future
 try:
     from neutron_lib import constants as n_const
 except ImportError:
     from neutron.common import constants as n_const
+
+eventlet.monkey_patch()
 
 LOG = logging.getLogger(__name__)
 
@@ -109,8 +116,9 @@ class VPPForwarder(object):
 
     def get_vpp_ifidx(self, if_name):
         """Return VPP's interface index value for the network interface"""
-        if self.vpp.get_interface(if_name):
-            return self.vpp.get_interface(if_name).sw_if_index
+        iface = self.vpp.get_interface(if_name)
+        if iface:
+            return iface.sw_if_index
         else:
             LOG.error("Error obtaining interface data from vpp "
                       "for interface:%s", if_name)
@@ -127,7 +135,6 @@ class VPPForwarder(object):
 
     def network_on_host(self, physnet, net_type, seg_id=None):
         """Find or create a network of the type required"""
-
         if (physnet, net_type, seg_id) not in self.networks:
             self.create_network_on_host(physnet, net_type, seg_id)
         return self.networks.get((physnet, net_type, seg_id), None)
@@ -404,19 +411,189 @@ class VPPForwarder(object):
 
 ######################################################################
 
+
+@six.add_metaclass(ABCMeta)
+class AgentFeature(object):
+    """Abstract class to handle etcd notifications.
+
+    For each 'feature', the pattern is the following:
+    - watch new data under:
+      * 'LEADIN/nodes/<host>/<feature>/<unique_id>'
+      * 'LEADIN/<feature>/<unique_id>'
+    For each event, the method 'set' or 'delete' is called.
+    - the agent returns data under 'LEADIN/state/<host>/<feature>/<unique_id>'
+    """
+
+    path = ''
+
+    """ For system wide features, watch under 'LEADING/<feature>/<unique_id>'
+    """
+    is_system_wide = False
+
+    def __init__(self, host, etcd_client, vppf):
+        self._host = host
+        self._etcd_client = etcd_client
+        self._etcd_helper = nwvpp_utils.EtcdHelper(self._etcd_client)
+        self._vppf = vppf
+        if self.is_system_wide:
+            self._node_key_space = LEADIN + '/global/%s' % (self.path)
+        else:
+            self._node_key_space = LEADIN + '/nodes/%s/%s' % (host, self.path)
+        self._state_key_space = LEADIN + '/state/%s/%s' % (host, self.path)
+        pass
+
+    @abstractmethod
+    def set(self, key, value):
+        """feature for host is created or updated.
+
+        eg: This is called when the server wants the agent
+        to bind a port.
+        this agent will return the state under the key
+        'self._state_key_space'
+        """
+        pass
+
+    @abstractmethod
+    def delete(self, key, value):
+        """feature for host has to be deleted.
+
+        eg: This is called when the server wants the agent
+        to unbind a port.
+        this agent will delete the state under the key
+        'self._state_key_space'
+        """
+        pass
+
+    def resync(self):
+        """Resync state on startup or etcd resync
+
+        On agent startup or when the sync with the etcd db
+        is lost, the agent has to clean its internal state
+        as the whole state will be read.
+        """
+        pass
+
+    def tick(self):
+        """Periodic method called at each watch timeout.
+
+        Usefull to advertise current status.
+        """
+        pass
+
+
+class PortAgentFeature(AgentFeature):
+    """Port Bind/Unbind management.
+
+    For each port bind/unbind, we watch the port info
+    under 'LEADIN/nodes/<host>/ports/<port_id>'.
+    After the connection of the port, we write the info
+    under 'LEADIN/state/<host>/ports/<port_id>' to notify
+    neutron server.
+    """
+
+    path = 'ports'
+
+    def set(self, key, value):
+        # Create or update == bind
+        port = key
+        data = json.loads(value)
+        props = self._vppf.bind_interface_on_host(data['binding_type'],
+                                                  port,
+                                                  data['mac_address'],
+                                                  data['physnet'],
+                                                  data['network_type'],
+                                                  data['segmentation_id'])
+        self._etcd_client.write(self._state_key_space +
+                                '/%s' % port,
+                                json.dumps(props))
+
+    def delete(self, key, value):
+        # Removing key == desire to unbind
+        port = key
+        self._vppf.unbind_interface_on_host(port)
+        try:
+            self._etcd_client.delete(self._state_key_space +
+                                     '/%s' % port)
+        except etcd.EtcdKeyNotFound:
+            # Gone is fine, if we didn't delete it
+            # it's no problem
+            pass
+
+    def resync(self):
+        self._etcd_helper.clear_state(self._state_key_space)
+        # TODO(ijw): Need to do something here to prompt
+        # appropriate unbind/rebind behaviour
+        pass
+
+
+class PhysnetsAgentFeature(AgentFeature):
+    """Physnet advertisement.
+
+    This feature will on each etcd resync (and so at startup)
+    declare the declared physical networks connected on this node.
+    """
+
+    path = 'physnets'
+
+    def set(self, key, value):
+        pass
+
+    def delete(self, key, value):
+        pass
+
+    def resync(self):
+        # On resync, (also at startup), advertise on
+        # which physnets we have a connection.
+        for physnet in self._vppf.physnets.keys():
+            self._etcd_client.write(self._state_key_space +
+                                    '/' + physnet, 1)
+
+
+class LoggerAgentFeature(AgentFeature):
+    """"Test Feature.
+
+    This feature is only meant for testing purposes.
+    You may enable this feature by adding an entry point in
+    setup.cfg under 'networking_vpp.agent.features'.
+    """
+
+    path = 'logger'
+
+    def set(self, key, value):
+        LOG.debug('LoggerAgentFeature set %s %s', key, value)
+
+    def delete(self, key, value):
+        LOG.debug('LoggerAgentFeature delete %s %s', key, value)
+
+
+class GlobalLoggerAgentFeature(AgentFeature):
+    """"System-wide test Feature.
+
+    This feature is only meant for testing purposes.
+    You may enable this feature by adding an entry point in
+    setup.cfg under 'networking_vpp.agent.features'.
+    """
+
+    path = 'global_logger'
+    is_system_wide = True
+
+    def set(self, key, value):
+        LOG.debug('GlobalLoggerAgentFeature set %s %s', key, value)
+
+    def delete(self, key, value):
+        LOG.debug('GlobalLoggerAgentFeature delete %s %s', key, value)
+
+
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
 
 
 class EtcdListener(object):
-    def __init__(self, host, etcd_client, vppf, physnets):
+    def __init__(self, host, etcd_client, vppf):
+        self.features = {}
         self.host = host
         self.etcd_client = etcd_client
         self.vppf = vppf
-        self.physnets = physnets
         self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
-        # We need certain directories to exist
-        self.mkdir(LEADIN + '/state/%s/ports' % self.host)
-        self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
 
     def mkdir(self, path):
         try:
@@ -425,23 +602,17 @@ class EtcdListener(object):
             # Thrown when the directory already exists, which is fine
             pass
 
-    def repop_interfaces(self):
-        pass
-
-    # The vppf bits
-
-    def unbind(self, id):
-        self.vppf.unbind_interface_on_host(id)
-
-    def bind(self, id, binding_type, mac_address, physnet, network_type,
-             segmentation_id):
-        # args['binding_type'] in ('vhostuser', 'plugtap'):
-        return self.vppf.bind_interface_on_host(binding_type,
-                                                id,
-                                                mac_address,
-                                                physnet,
-                                                network_type,
-                                                segmentation_id)
+    def register_feature(self, feature):
+        if feature.path in self.features.keys():
+            raise Exception('Feature "%s" already registered' % feature.path)
+        self.features[feature.path] = feature
+        # We need directories to exist for each registered feature
+        self.mkdir(LEADIN + '/state/%s/%s' % (self.host, feature.path))
+        if feature.is_system_wide:
+            self.mkdir(LEADIN + '/global/%s' % (feature.path))
+        else:
+            self.mkdir(LEADIN + '/nodes/%s/%s' % (self.host, feature.path))
+        LOG.info('Added Feature: %s' % feature.path)
 
     AGENT_HEARTBEAT = 60  # seconds
 
@@ -449,68 +620,86 @@ class EtcdListener(object):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
         # storing, so it's lost on reboot of VPP)
-        physnets = self.physnets.keys()
-        for f in physnets:
-            self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
-                                   % (self.host, f), 1)
 
-        self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
+        self.state_pattern = re.compile(LEADIN + '/state/(.*)')
+        self.nodes_pattern = re.compile(LEADIN + '/nodes/' +
+                                        self.host + '/([^/]+)/([^/]+)$')
+        # get system wide features
+        feature_list = '|'.join([feat.path for feat in self.features.values()
+                                 if feat.is_system_wide is True])
+        self.global_features_pattern = re.compile(LEADIN + '/global/(' +
+                                                  feature_list + ')/([^/]+)$')
 
-        self.etcd_helper.clear_state(self.state_key_space)
-
-        class PortWatcher(EtcdWatcher):
+        class NodeWatcher(EtcdWatcher):
 
             def do_tick(self):
-                # The key that indicates to people that we're alive
-                # (not that they care)
-                self.etcd_client.write(LEADIN + '/state/%s/alive' %
-                                       self.data.host,
+                self.etcd_client.write(LEADIN + '/state/%s/alive'
+                                       % self.data.host,
                                        1, ttl=3 * self.heartbeat)
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is False]:
+                    feature.tick()
 
             def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
-                pass
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is False]:
+                    feature.resync()
 
             def do_work(self, action, key, value):
-                # Matches a port key, gets host and uuid
-                m = re.match(self.data.port_key_space + '/([^/]+)$', key)
-
+                m = self.data.nodes_pattern.match(key)
                 if m:
-                    port = m.group(1)
-
-                    if action == 'delete':
-                        # Removing key == desire to unbind
-                        self.data.unbind(port)
-                        try:
-                            self.etcd_client.delete(
-                                self.data.state_key_space + '/%s'
-                                % port)
-                        except etcd.EtcdKeyNotFound:
-                            # Gone is fine; if we didn't delete it
-                            # it's no problem
-                            pass
-                    else:
-                        # Create or update == bind
-                        data = json.loads(value)
-                        props = self.data.bind(port,
-                                               data['binding_type'],
-                                               data['mac_address'],
-                                               data['physnet'],
-                                               data['network_type'],
-                                               data['segmentation_id'])
-                        self.etcd_client.write(self.data.state_key_space +
-                                               '/%s'
-                                               % port,
-                                               json.dumps(props))
-
+                    feature = m.group(1)
+                    key = m.group(2)
+                    if action is None:
+                        # occurs when resyncing
+                        action = 'set'
+                    feature_instance = self.data.features[feature]
+                    getattr(feature_instance, action)(key, value)
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
                                 'key %s', key)
 
-        PortWatcher(self.etcd_client, 'return_worker', self.port_key_space,
-                    heartbeat=self.AGENT_HEARTBEAT, data=self).watch_forever()
+        class GlobalWatcher(EtcdWatcher):
+
+            def do_tick(self):
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is True]:
+                    feature.tick()
+
+            def resync(self):
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is True]:
+                    feature.resync()
+
+            def do_work(self, action, key, value):
+                m = self.data.global_features_pattern.match(key)
+                if m:
+                    feature = m.group(1)
+                    key = m.group(2)
+                    if action is None:
+                        # occurs when resyncing
+                        action = 'set'
+                    feature_instance = self.data.features[feature]
+                    getattr(feature_instance, action)(key, value)
+                else:
+                    LOG.warning('Unexpected key change in etcd port feedback, '
+                                'key %s', key)
+
+        # We have to watch on the whole LEADIN tree as all features are not
+        # under LEADIN/nodes/<host>/<feature>/<uuid > but also under
+        # under LEADIN/<system_wide_feature>/<uuid>
+        nw = NodeWatcher(self.etcd_client, 'return_worker',
+                         LEADIN + '/nodes/' + self.host,
+                         heartbeat=self.AGENT_HEARTBEAT, data=self)
+
+        gw = GlobalWatcher(self.etcd_client, 'return_worker',
+                           LEADIN + '/global/',
+                           heartbeat=self.AGENT_HEARTBEAT, data=self)
+
+        nw_thread = eventlet.spawn(nw.watch_forever)
+        gw_thread = eventlet.spawn(gw.watch_forever)
+        nw_thread.wait()
+        gw_thread.wait()
 
 
 class VPPRestart(object):
@@ -553,6 +742,7 @@ def main():
                           "physnet2:<interface>"
                           )
                 sys.exit(1)
+
     vppf = VPPForwarder(physnets,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
@@ -571,9 +761,20 @@ def main():
                               password=cfg.CONF.ml2_vpp.etcd_pass,
                               allow_reconnect=True)
 
-    ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
+    ops = EtcdListener(cfg.CONF.host, etcd_client, vppf)
+
+    mgr = extension.ExtensionManager(namespace='networking_vpp.agent.features',
+                                     invoke_on_load=True,
+                                     invoke_args=(cfg.CONF.host,
+                                                  etcd_client,
+                                                  vppf))
+    agent_features = [ext.obj for ext in mgr.extensions]
+
+    for feature in agent_features:
+        ops.register_feature(feature)
 
     ops.process_ops()
+
 
 if __name__ == '__main__':
     main()
