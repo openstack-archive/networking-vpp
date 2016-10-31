@@ -96,10 +96,18 @@ class EtcdWatcher(object):
                 # to return can lead to timeouts much longer than you
                 # might expect.  So we watch for a timeout for
                 # ourselves as well.
-                with eventlet.Timeout(self.heartbeat):
+
+                # If etcd_client has a problem with the timeout management,
+                # force to reschedule with eventlet.Timeout exception.
+                # This will generate a traceback in etcd_client, but this
+                # should be harmless.
+                # TODO(cfontaine): when we are sure that etcd_client handles
+                # correctly the timeout, we can remove 'with Timeout(60+5)'
+                with eventlet.Timeout(self.heartbeat + 5):
                     rv = self.etcd_client.watch(self.watch_path,
                                                 recursive=True,
-                                                index=self.tick)
+                                                index=self.tick,
+                                                timeout=self.heartbeat)
 
                 vals = [rv]
 
