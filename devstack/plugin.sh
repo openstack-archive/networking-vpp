@@ -78,7 +78,7 @@ function install_vpp_agent {
 function init_vpp_agent {
     # sudo for now, as it needs to connect to VPP and for that requires root privs
     # to share its shmem comms channel
-    run_process $agent_service_name "sudo $VPP_CP_BINARY --config-file /$Q_PLUGIN_CONF_FILE"
+    run_process $agent_service_name "sudo $VPP_CP_BINARY --config-file /$Q_PLUGIN_CONF_FILE --config-file /$NEUTRON_CONF"
 }
 
 function configure_vpp_agent {
