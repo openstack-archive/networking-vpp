@@ -270,8 +270,12 @@ How to Install?
        - sudo apt-get update
        - sudo apt-get install etcd
        - sudo service etcd start
-
-    d) Install the python client for etcd
+    d) Install python pip.
+       for more details on pip for python goto: https://pip.pypa.io/en/stable/
+        
+       - sudo apt-get install python-pip
+       
+    e) Install the python client for etcd
 
        - sudo pip install python-etcd
 
