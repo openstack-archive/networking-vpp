@@ -454,6 +454,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.do_etcd_mkdir(self.secgroup_key_space)
         self.do_etcd_mkdir(self.election_key_space)
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
+
         if self.secgroup_enabled:
             self.register_secgroup_event_handler()
 
