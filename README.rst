@@ -299,8 +299,13 @@ How to Install?
     - sudo sed -e '/dpdk /a socket-mem 512' -i /etc/vpp/startup.conf
     - sudo service vpp restart (or)
     - sudo systemctl enable vpp && sudo systemctl restart vpp
+    
+5) At this stage vpp will try to take over the interfaces on the server, depending on server setup this might require a reboot.
+   after reboot , vpp configurations can be made using vppctl to recover/create IP connectivity as needed, look at:
+   https://wiki.fd.io/view/VPP/Command-line_Interface_(CLI)_Guide 
+   
 
-5) Steps for devstack
+6) Steps for devstack
     We have tested our code against the Mitaka release and as a
     result it is recommended to start with.
 
