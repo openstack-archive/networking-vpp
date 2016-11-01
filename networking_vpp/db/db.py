@@ -14,7 +14,10 @@
 
 from networking_vpp.db import models
 
+from sqlalchemy.sql.expression import func
+
 from oslo_log import log as logging
+
 LOG = logging.getLogger(__name__)
 
 
@@ -70,3 +73,36 @@ def journal_write(session, k, v):
     entry = models.VppEtcdJournal(k=k, v=v)
     session.add(entry)
     session.flush()
+
+
+def add_router_vrf(session, router_id):
+    with session.begin():
+        # Get the highest VRF number in the DB
+        new_vrf = session.query(
+            func.max(models.VppRouterVrf.vrf_id)).scalar() or 0
+        new_vrf += 1
+
+        row = models.VppRouterVrf(router_id=router_id, vrf_id=new_vrf)
+        session.add(row)
+
+    return new_vrf
+
+
+def get_router_vrf(session, router_id):
+    row = session.query(
+        models.VppRouterVrf).filter_by(router_id=router_id).one()
+    if row:
+        return row.vrf_id
+
+    return None
+
+
+def delete_router_vrf(session, router_id):
+    with session.begin():
+        try:
+            row = session.query(
+                models.VppRouterVrf).filter_by(router_id=router_id).one()
+            session.delete(row)
+            session.flush()
+        except Exception:
+            pass
