@@ -1,4 +1,4 @@
-# Copyright (c) 2016 Cisco Systems, Inc.
+# Copyright (c) 2017 Cisco Systems, Inc.
 # All Rights Reserved
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -19,6 +19,7 @@ import enum
 import eventlet
 import fnmatch
 import grp
+import ipaddress
 import os
 import pwd
 import sys
@@ -28,6 +29,7 @@ import vpp_papi
 
 L2_VTR_POP_1 = 3
 L2_VTR_DISABLED = 0
+NO_BVI_SET = 4294967295
 
 
 def mac_to_bytes(mac):
@@ -564,3 +566,63 @@ class VPPInterface(object):
                           admin_up_down=0,
                           link_up_down=0,
                           deleted=0)
+
+    def create_loopback(self, mac_address):
+        # Create a loopback interface to act as a BVI
+        mac_address = mac_to_bytes(mac_address)
+        loop = self.call_vpp('create_loopback', mac_address=mac_address)
+        self.ifup(loop.sw_if_index)
+
+        return loop.sw_if_index
+
+    def set_loopback_bridge_bvi(self, loopback, bridge_id):
+        # Sets the specified loopback interface to act as  the BVI
+        # for the bridge. This interface will act as a gateway and
+        # terminate the VLAN.
+        self.call_vpp('sw_interface_set_l2_bridge', rx_sw_if_index=loopback,
+                      bd_id=bridge_id, shg=0, bvi=True, enable=True)
+
+    def set_loopback_vrf(self, loopback, vrf_id, is_ipv6=False):
+        # Set the loopback interface's VRF to the routers's table id
+        # allocated by neutron.
+        self.call_vpp('sw_interface_set_table', sw_if_index=loopback,
+                      vrf_id=vrf_id, is_ipv6=is_ipv6)
+
+    def set_loopback_ip(self, loopback_idx, ip, prefixlen, is_ipv6=False):
+        # Set the loopback's IP address, usually the subnet's
+        # gateway IP.
+        self.call_vpp('sw_interface_add_del_address',
+                      sw_if_index=loopback_idx, is_add=True, is_ipv6=is_ipv6,
+                      del_all=False, address_length=prefixlen,
+                      address=ip)
+
+    def delete_loopback(self, loopback):
+        # Delete a loopback interface, this also removes it automatically
+        # from the bridge that it was set as the BVI for.
+        self.LOG.debug("Deleting loopback interface - index: %s" % loopback)
+        self.call_vpp('delete_loopback', sw_if_index=loopback)
+
+    def get_bridge_bvi(self, bd_id):
+        # Returns a BVI interface for the specified bridge id
+        br_details = self.call_vpp('bridge_domain_dump', bd_id=bd_id)
+        if br_details[0][9] and int(br_details[0][9]) != NO_BVI_SET:
+            return br_details[0].bvi_sw_if_index
+
+        return False
+
+    def get_interface_ip_addresses(self, sw_if_idx):
+        int_addrs = []
+        v4_addrs = self.call_vpp('ip_address_dump', sw_if_index=sw_if_idx,
+                                 is_ipv6=False)
+        for v4_addr in v4_addrs:
+            # Only count the first 4 bytes for v4 addresses
+            sanitized_v4 = v4_addr[3][:4]
+            int_addrs.append((str(ipaddress.ip_address(sanitized_v4).exploded),
+                             v4_addr[4]))
+
+        v6_addrs = self.call_vpp('ip_address_dump', sw_if_index=sw_if_idx,
+                                 is_ipv6=True)
+        for v6_addr in v6_addrs:
+            int_addrs.append((str(ipaddress.ip_address(v6_addr[3]).exploded),
+                             v6_addr[4]))
+        return int_addrs
