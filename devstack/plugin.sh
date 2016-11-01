@@ -84,7 +84,7 @@ function install_vpp_agent {
 function init_vpp_agent {
     # The VPP startup file should specify that this user is authorised to access the
     # api segment, and if we're installing we fix that
-    run_process $agent_service_name "$VPP_CP_BINARY --config-file /$Q_PLUGIN_CONF_FILE"
+    run_process $agent_service_name "sudo $VPP_CP_BINARY --config-file /$Q_PLUGIN_CONF_FILE --config-file /$NEUTRON_CONF"
 }
 
 function configure_vpp_agent {
