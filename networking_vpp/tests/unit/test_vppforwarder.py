@@ -1,4 +1,4 @@
-# Copyright (c) 2016 Cisco Systems, Inc.
+# Copyright (c) 2017 Cisco Systems, Inc.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -109,8 +109,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.ensure_network_on_host('test_net', 'flat', '1')
         self.vpp.vpp.ifup.assert_called_once_with(720)
         self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            720,
-            'net-vpp.uplink:flat.1')
+            720, 'net-vpp.uplink:flat.1')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -121,8 +120,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.ensure_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
         self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            740,
-            'net-vpp.uplink:vlan.1')
+            740, 'net-vpp.uplink:vlan.1')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -249,5 +247,60 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                  net_type, seg_id)
         assert (retval == expected_val)
 
-    def test_unbind_interface_on_host(self):
-        pass
+    def _get_mock_router(self):
+        return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
+                'segmentation_id': 100, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '10.0.0.1', 'is_ipv6': False, 'prefixlen': 24}
+
+    def _get_mock_v6_router(self):
+        return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
+                'segmentation_id': 100, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '2001:db8:1234::1', 'is_ipv6': False,
+                'prefixlen': 64}
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_create_router_on_host(self, m_network_on_host, router):
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=False):
+            loopback_idx = self.vpp.create_router_on_host(router)
+            self.vpp.vpp.create_loopback.assert_called_once_with(
+                router['loopback_mac'])
+            self.vpp.vpp.set_loopback_bridge_bvi.assert_called_once_with(
+                loopback_idx, 'fake_dom_id')
+            self.vpp.vpp.set_loopback_vrf.assert_called_once_with(
+                loopback_idx, router['vrf_id'], router['is_ipv6'])
+            self.vpp.vpp.set_loopback_ip.assert_called_once_with(
+                loopback_idx, self.vpp._pack_address(router['gateway_ip']),
+                router['prefixlen'], router['is_ipv6'])
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_router_create_with_existing_bvi(self, m_network_on_host,
+                                              router):
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
+            self.vpp.create_router_on_host(router)
+
+            self.vpp.vpp.create_loopback.assert_not_called()
+            self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
+            self.vpp.vpp.set_loopback_vrf.assert_not_called()
+            self.vpp.vpp.set_loopback_ip.assert_not_called()
+
+    def test_v4_router_create_on_host(self):
+        self._test_create_router_on_host(router=self._get_mock_router())
+
+    def test_v6_router_create_on_host(self):
+        self._test_create_router_on_host(router=self._get_mock_v6_router())
+
+    def test_v4_router_create_with_existing_bvi(self):
+        self._test_router_create_with_existing_bvi(
+            router=self._get_mock_router())
+
+    def test_v6_router_create_with_existing_bvi(self):
+        self._test_router_create_with_existing_bvi(
+            router=self._get_mock_v6_router())
