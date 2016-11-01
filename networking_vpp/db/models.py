@@ -41,3 +41,11 @@ class VppEtcdJournal(model_base.BASEV2):
                              server_default=sa.func.now(),
                              onupdate=sa.func.now(),
                              nullable=False)
+
+
+class VppRouterVrf(model_base.BASEV2):
+    """Table to map vrf number to neutron routers."""
+    __tablename__ = 'vpp_router_vrfs'
+
+    router_id = sa.Column(sa.String(36), primary_key=True)
+    vrf_id = sa.Column(sa.Integer, nullable=False)

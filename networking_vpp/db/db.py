@@ -13,8 +13,12 @@
 #    under the License.
 
 from networking_vpp.db.models import VppEtcdJournal
+from networking_vpp.db.models import VppRouterVrf
+
+from sqlalchemy.sql.expression import func
 
 from oslo_log import log as logging
+
 LOG = logging.getLogger(__name__)
 
 
@@ -70,3 +74,30 @@ def journal_write(session, k, v):
     entry = VppEtcdJournal(k=k, v=v)
     session.add(entry)
     session.flush()
+
+
+def add_router_vrf(session, router_id):
+    with session.begin():
+        # Get the highest VRF number in the DB
+        new_vrf = session.query(func.max(VppRouterVrf.vrf_id)).scalar() or 0
+        new_vrf += 1
+
+        row = VppRouterVrf(router_id=router_id, vrf_id=new_vrf)
+        session.add(row)
+
+    return new_vrf
+
+
+def get_router_vrf(session, router_id):
+    row = session.query(VppRouterVrf).filter_by(router_id=router_id).one()
+    if row:
+        return row.vrf_id
+
+    return None
+
+
+def delete_router_vrf(session, router_id):
+    with session.begin():
+        row = session.query(VppRouterVrf).filter_by(router_id=router_id).one()
+        session.delete(row)
+        session.flush()

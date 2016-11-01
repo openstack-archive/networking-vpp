@@ -36,6 +36,8 @@ vpp_opts = [
                help=_("Password for etcd authentication")),
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
+    cfg.StrOpt('l3_host', default="127.0.0.1",
+               help=_("Hostname to render L3 services on.")),
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")

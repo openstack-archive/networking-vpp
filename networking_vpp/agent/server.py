@@ -377,8 +377,27 @@ class VPPForwarder(object):
                 LOG.error('Unknown port type %s during unbind'
                           % props['bind_type'])
 
-        # TODO(ijw): delete structures of newly unused networks with
-        # delete_network
+    # TODO(ijw): delete structures of newly unused networks with
+    # delete_network
+
+    def create_router_on_host(self, router):
+        net_data = self.network_on_host(router['physnet'], router['net_type'],
+                                        router['segmentation_id'])
+        net_br_idx = net_data['bridge_domain_id']
+        loopback_idx = self.vpp.create_loopback(router['loopback_mac'])
+        self.vpp.set_loopback_bridge_bvi(loopback_idx, net_br_idx)
+        self.vpp.set_loopback_vrf(loopback_idx, router['vrf_id'])
+        self.vpp.set_loopback_ip(loopback_idx, router['gateway_ip'])
+
+    def delete_router_on_host(self, router):
+        net_data = self.network_on_host(router['physnet'], router['net_type'],
+                                        router['segmentation_id'])
+        net_br_idx = net_data['bridge_domain_id']
+        bd_dump = self.vpp.get_bridge_domain(net_br_idx)
+        # Get bvi interface from bridge details
+        bvi_if_idx = bd_dump[0].bvi_sw_if_index
+        if bvi_if_idx:
+            self.vpp.delete_loopback(bvi_if_idx)
 
 
 ######################################################################
@@ -396,6 +415,7 @@ class EtcdListener(object):
         # We need certain directories to exist
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.mkdir(LEADIN + '/nodes/%s/routers' % self.host)
 
     def mkdir(self, path):
         try:
@@ -424,26 +444,38 @@ class EtcdListener(object):
 
     HEARTBEAT = 60  # seconds
 
-    def _sync_state(self, port_key_space):
+    def _sync_state(self, node_key_space):
         """Sync VPP port state with etcd and return correct watchIndex"""
         LOG.debug('Syncing VPP port state with etcd..')
-        rv = self.etcd_client.read(port_key_space, recursive=True)
+        rv = self.etcd_client.read(node_key_space, recursive=True)
         for child in rv.children:
-            m = re.match(port_key_space + '/([^/]+)$', child.key)
+            m = re.match(node_key_space + '/([^/]+)/([^/]+)$', child.key)
             if m:
-                port = m.group(1)
-                LOG.debug('Syncing vpp state by binding existing port:%s'
-                          % port)
-                data = json.loads(child.value)
-                props = self.bind(port,
-                                  data['binding_type'],
-                                  data['mac_address'],
-                                  data['physnet'],
-                                  data['network_type'],
-                                  data['segmentation_id'])
-                self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
-                                       % (self.host, port),
-                                       json.dumps(props))
+                if m.group(1) == 'ports':
+                    port = m.group(2)
+                    LOG.debug('Syncing vpp state by binding existing port:%s'
+                              % port)
+                    data = json.loads(child.value)
+                    props = self.bind(port,
+                                      data['binding_type'],
+                                      data['mac_address'],
+                                      data['physnet'],
+                                      data['network_type'],
+                                      data['segmentation_id'])
+                    self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
+                                           % (self.host, port),
+                                           json.dumps(props))
+                elif m.group(1) == 'routers':
+                    router_id = m.group(2)
+                    router = json.loads(child.value)
+                    if router.get('delete', False):
+                        self.vppf.delete_router_on_host(router)
+                        self.etcd_client.delete(
+                            node_key_space + "/routers/%s" % (self.host,
+                                                              router_id))
+                    else:
+                        self.vppf.create_router_on_host(router)
+
         return rv.etcd_index
 
     def process_ops(self):
@@ -455,11 +487,14 @@ class EtcdListener(object):
             self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
                                    % (self.host, f), 1)
 
-        port_key_space = LEADIN + "/nodes/%s/ports" % self.host
+        node_key_space = LEADIN + "/nodes/%s" % self.host
+        port_key_space = node_key_space + "/ports"
         state_key_space = LEADIN + "/state/%s/ports" % self.host
+
         self.etcd_helper.clear_state(state_key_space)
-        tick = self._sync_state(port_key_space)
-        LOG.debug("Starting watch on ports key space from Index: %s" % tick)
+        tick = self._sync_state(node_key_space)
+
+        LOG.debug("Starting watch on node key space from Index: %s" % tick)
         while True:
 
             # The key that indicates to people that we're alive
@@ -470,7 +505,7 @@ class EtcdListener(object):
             try:
                 LOG.error("ML2_VPP(%s): thread pausing"
                           % self.__class__.__name__)
-                rv = self.etcd_client.watch(port_key_space,
+                rv = self.etcd_client.watch(node_key_space,
                                             recursive=True,
                                             index=tick,
                                             timeout=self.HEARTBEAT)
@@ -482,43 +517,51 @@ class EtcdListener(object):
                 # to the present (or we would have had a newer last
                 # modified index)
                 tick = rv.modifiedIndex + 1
-                LOG.error("ML2_VPP(%s): thread active"
+                LOG.debug("ML2_VPP(%s): thread active"
                           % self.__class__.__name__)
 
                 # Matches a port key, gets host and uuid
-                m = re.match(port_key_space + '/([^/]+)$',
-                             rv.key)
+                m = re.match(node_key_space + '/([^/]+)/([^/]+)$', rv.key)
 
                 if m:
-                    port = m.group(1)
+                    if m.group(1) == 'ports':
+                        port = m.group(2)
 
-                    if rv.action == 'delete':
-                        # Removing key == desire to unbind
-                        self.unbind(port)
-                        try:
+                        if rv.action == 'delete':
+                            # Removing key == desire to unbind
+                            self.unbind(port)
+                            try:
+                                self.etcd_client.delete(
+                                    state_key_space + '/%s'
+                                    % port)
+                            except etcd.EtcdKeyNotFound:
+                                # Gone is fine, if we didn't delete it
+                                # it's no problem
+                                pass
+                        else:
+                            # Create or update == bind
+                            data = json.loads(rv.value)
+                            props = self.bind(port,
+                                              data['binding_type'],
+                                              data['mac_address'],
+                                              data['physnet'],
+                                              data['network_type'],
+                                              data['segmentation_id'])
+                            self.etcd_client.write(state_key_space + '/%s'
+                                                   % port,
+                                                   json.dumps(props))
+                    elif m.group(1) == 'routers':
+                        router_id = m.group(2)
+                        router = json.loads(rv.value)
+                        if router.get('delete', False):
+                            self.vppf.delete_router_on_host(router)
                             self.etcd_client.delete(
-                                state_key_space + '/%s'
-                                % port)
-                        except etcd.EtcdKeyNotFound:
-                            # Gone is fine, if we didn't delete it
-                            # it's no problem
-                            pass
+                                node_key_space + "/routers/%s" % router_id)
+                        else:
+                            self.vppf.create_router_on_host(router)
                     else:
-                        # Create or update == bind
-                        data = json.loads(rv.value)
-                        props = self.bind(port,
-                                          data['binding_type'],
-                                          data['mac_address'],
-                                          data['physnet'],
-                                          data['network_type'],
-                                          data['segmentation_id'])
-                        self.etcd_client.write(state_key_space + '/%s'
-                                               % port,
-                                               json.dumps(props))
-
-                else:
-                    LOG.warn('Unexpected key change in etcd port feedback, '
-                             'key %s' % rv.key)
+                        LOG.warn('Unexpected key change in etcd port feedback,'
+                                 ' key %s' % rv.key)
 
             except (etcd.EtcdWatchTimedOut, TimeoutError):
                 # This is normal

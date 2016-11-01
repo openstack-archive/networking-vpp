@@ -15,6 +15,7 @@
 
 
 import grp
+import ipaddress
 import os
 import pwd
 import vpp_papi
@@ -69,6 +70,10 @@ class VPPInterface(object):
         for (ifname, f) in self.get_interfaces():
             if ifname == name:
                 return f
+
+    def get_iface_for_mac(self, mac):
+        """Returns the interface matching the given mac address."""
+        return vpp_papi.sw_interface_dump(0, b'ignored')
 
     def get_version(self):
         t = vpp_papi.show_version()
@@ -239,3 +244,43 @@ class VPPInterface(object):
                 ifidx,
                 0, 0,               # admin and link down
                 0)                   # err, I can set the delected flag?
+
+    def create_loopback(self, mac_address):
+        loop = vpp_papi.create_loopback(mac_to_bytes(mac_address))
+        self.ifup(loop.sw_if_index)
+
+        return loop.sw_if_index
+
+    def set_loopback_bridge_bvi(self, loopback, bridge_id):
+        vpp_papi.sw_interface_set_l2_bridge(loopback, bridge_id, 0,
+                                            True, True)
+
+    def set_loopback_vrf(self, loopback, vrf_id):
+        vpp_papi.sw_interface_set_table(loopback, vrf_id, False)
+
+    def set_loopback_ip(self, loopback, ip):
+        ip = str(ipaddress.IPv4Address(ip).packed)
+        vpp_papi.sw_interface_add_del_address(
+            loopback, 1, 0, 0, 24, ip)
+
+    def set_loopback_route(self, loopback, cidr, vrf_id, gateway_ip):
+        gateway_ip = str(ipaddress.IPv4Address(gateway_ip).packed)
+        dst_address = str(ipaddress.IPv4Address(cidr.split('/')[0]).packed)
+        dst_mask = int(cidr.split('/')[1])
+
+        vpp_papi.ip_add_del_route(
+            next_hop_sw_if_index=loopback, vrf_id=vrf_id, lookup_in_vrf=1,
+            resolve_attempts=1, classify_table_index=0,
+            create_vrf_if_needed=1, resolve_if_needed=1, is_add=1,
+            is_drop=0, is_ipv6=0, is_local=0, is_classify=0, is_multipath=0,
+            not_last=0, next_hop_weight=1, dst_address_length=dst_mask,
+            dst_address=dst_address, next_hop_address=gateway_ip)
+
+    def delete_loopback(self, loopback):
+        self.LOG.debug("Deleting loopback interface - index: %s" % loopback)
+        t = vpp_papi.delete_loopback(loopback)
+
+        self._check_retval(t)
+
+    def get_bridge_domain(self, bd_id):
+        return vpp_papi.bridge_domain_dump(bd_id)
