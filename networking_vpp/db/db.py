@@ -14,6 +14,12 @@
 
 from networking_vpp.db import models
 
+from sqlalchemy.sql.expression import func
+
+from oslo_log import log as logging
+
+LOG = logging.getLogger(__name__)
+
 
 def journal_read(session, func):
     """Read, process and delete (if successful) the oldest journal row.
@@ -33,7 +39,12 @@ def journal_read(session, func):
     # are running)
 
     maybe_more = True
-    with session.begin():
+    with session.begin(subtransactions=True):
+        # Set subtransactions to True otherwise this generates a failure
+        # in the L3 plugin API. This is invoked from within the greater
+        # create/delete router API call and we ideally want both to pass or
+        # fail together.
+
         # Note also that this will, if the other thread succeeds, lock a
         # row that someone else deletes, so its session will abort.
         entry = session.query(models.VppEtcdJournal) \
@@ -63,7 +74,57 @@ def journal_write(session, k, v):
     This is expected to be used in the precommit, so is a part of a
     larger transaction.  It doesn't commit itself.
     """
-
     entry = models.VppEtcdJournal(k=k, v=v)
     session.add(entry)
     session.flush()
+
+
+def get_all_journal_rows(session):
+    """Returns all journal rows in the DB.
+
+    This method returns all rows in the journal table, this is mainly
+    used in unit tests.
+    """
+    return session.query(
+        models.VppEtcdJournal).order_by(
+        models.VppEtcdJournal.id).all()
+
+
+def add_router_vrf(session, router_id):
+    """Allocates a new VRF to a router.
+
+    This method finds the highest extant VRF number from the DB and
+    allocates a new VRF id = highest + 1 to the router requested.
+    """
+    with session.begin(subtransactions=True):
+        # Get the highest VRF number in the DB
+        new_vrf = session.query(
+            func.max(models.VppRouterVrf.vrf_id)).scalar() or 0
+        new_vrf += 1
+
+        row = models.VppRouterVrf(router_id=router_id, vrf_id=new_vrf)
+        session.add(row)
+
+    return new_vrf
+
+
+def get_router_vrf(session, router_id):
+    # Returns a VRF id for the specified router id
+    row = session.query(
+        models.VppRouterVrf).filter_by(router_id=router_id).one_or_none()
+    if row:
+        return row.vrf_id
+
+    return None
+
+
+def delete_router_vrf(session, router_id):
+    # Removes VRF allocation for the specified router id
+    with session.begin(subtransactions=True):
+        row = session.query(
+            models.VppRouterVrf).filter_by(
+            router_id=router_id).one_or_none()
+
+        if row:
+            session.delete(row)
+            session.flush()
