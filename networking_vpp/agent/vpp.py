@@ -1,4 +1,4 @@
-# Copyright (c) 2016 Cisco Systems, Inc.
+# Copyright (c) 2017 Cisco Systems, Inc.
 # All Rights Reserved
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -19,6 +19,7 @@ import enum
 import eventlet
 import fnmatch
 import grp
+import ipaddress
 import os
 import pwd
 import sys
@@ -28,6 +29,7 @@ import vpp_papi
 
 L2_VTR_POP_1 = 3
 L2_VTR_DISABLED = 0
+NO_BVI_SET = 4294967295
 
 
 def mac_to_bytes(mac):
@@ -564,3 +566,62 @@ class VPPInterface(object):
                           admin_up_down=0,
                           link_up_down=0,
                           deleted=0)
+
+    def create_loopback(self, mac_address):
+        # Create a loopback interface to act as a BVI
+        mac_address = mac_to_bytes(mac_address)
+        loop = self.call_vpp('create_loopback', mac_address=mac_address)
+        self.ifup(loop.sw_if_index)
+
+        return loop.sw_if_index
+
+    def set_loopback_bridge_bvi(self, loopback, bridge_id):
+        # Sets the specified loopback interface to act as  the BVI
+        # for the bridge. This interface will act as a gateway and
+        # terminate the VLAN.
+        self.call_vpp('sw_interface_set_l2_bridge', rx_sw_if_index=loopback,
+                      bd_id=bridge_id, shg=0, bvi=True, enable=True)
+
+    def set_loopback_vrf(self, loopback, vrf_id):
+        # Set the loopback interface's VRF to the routers's table id
+        # allocated by neutron.
+        self.call_vpp('sw_interface_set_table', sw_if_index=loopback,
+                      vrf_id=vrf_id, is_ipv6=False)
+
+    def set_loopback_ip(self, loopback, ip):
+        # Set the loopback's IP address, usually the subnet's
+        # gateway IP.
+        ip = str(ipaddress.IPv4Address(ip).packed)
+        self.call_vpp('sw_interface_add_del_address',
+                      sw_if_index=loopback, is_add=True, is_ipv6=False,
+                      del_all=False, address_length=24, address=ip)
+
+    def set_loopback_route(self, loopback, cidr, vrf_id, gateway_ip):
+        # Add an explicit route to the subnet via the gateway
+        # set to the loopback interface's IP address.
+        gateway_ip = str(ipaddress.IPv4Address(gateway_ip).packed)
+        dst_address = str(ipaddress.IPv4Address(cidr.split('/')[0]).packed)
+        dst_mask = int(cidr.split('/')[1])
+
+        self.call_vpp(
+            'ip_add_del_route',
+            next_hop_sw_if_index=loopback, vrf_id=vrf_id, lookup_in_vrf=1,
+            resolve_attempts=1, classify_table_index=0,
+            create_vrf_if_needed=1, resolve_if_needed=1, is_add=1,
+            is_drop=0, is_ipv6=0, is_local=0, is_classify=0, is_multipath=0,
+            not_last=0, next_hop_weight=1, dst_address_length=dst_mask,
+            dst_address=dst_address, next_hop_address=gateway_ip)
+
+    def delete_loopback(self, loopback):
+        # Delete a loopback interface, this also removes it automatically
+        # from the bridge that it was set as the BVI for.
+        self.LOG.debug("Deleting loopback interface - index: %s" % loopback)
+        self.call_vpp('delete_loopback', sw_if_index=loopback)
+
+    def get_bridge_bvi(self, bd_id):
+        # Returns a BVI interface for the specified bridge id
+        br_details = self.call_vpp('bridge_domain_dump', bd_id=bd_id)
+        if br_details[0][9] and int(br_details[0][9]) != NO_BVI_SET:
+            return br_details[0].bvi_sw_if_index
+
+        return False
