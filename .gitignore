@@ -3,6 +3,7 @@ build
 *.egg-info
 *.pyc
 .tox
+*.swp
 *~
 .testrepository/
 .idea/

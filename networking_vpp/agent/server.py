@@ -1138,6 +1138,30 @@ class VPPForwarder(object):
         # Works for both addresses and the net address of masked networks
         return ip_network(unicode(ip_addr)).network_address.packed
 
+    def create_router_on_host(self, router):
+        net_data = self.ensure_network_on_host(
+            router['physnet'], router['net_type'], router['segmentation_id'])
+        net_br_idx = net_data['bridge_domain_id']
+        # Check if a loopback is already set as the BVI for this bridge
+        br_details = self.vpp.get_bridge_domain(net_br_idx)
+        if br_details[0][9] and int(br_details[0][9]) != 4294967295:
+            # BVI already set, do nothing
+            return
+        loopback_idx = self.vpp.create_loopback(router['loopback_mac'])
+        self.vpp.set_loopback_bridge_bvi(loopback_idx, net_br_idx)
+        self.vpp.set_loopback_vrf(loopback_idx, router['vrf_id'])
+        self.vpp.set_loopback_ip(loopback_idx, router['gateway_ip'])
+
+    def delete_router_on_host(self, router):
+        net_data = self.ensure_network_on_host(
+            router['physnet'], router['net_type'], router['segmentation_id'])
+        net_br_idx = net_data['bridge_domain_id']
+        bd_dump = self.vpp.get_bridge_domain(net_br_idx)
+        # Get bvi interface from bridge details
+        bvi_if_idx = bd_dump[0].bvi_sw_if_index
+        if bvi_if_idx:
+            self.vpp.delete_loopback(bvi_if_idx)
+
     def get_spoof_filter_rules(self):
         """Build and return a list of anti-spoofing rules.
 
@@ -1240,6 +1264,7 @@ class EtcdListener(object):
         # We need certain directories to exist
         self.etcd_helper.ensure_dir(LEADIN + '/state/%s/ports' % self.host)
         self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/routers' % self.host)
         # If the agent is started before q-svc, etcd watch fails as this
         # directory may not exist. Make sure it exists
         self.etcd_helper.ensure_dir(LEADIN + '/global/secgroups')
@@ -1575,6 +1600,40 @@ class EtcdListener(object):
 
     AGENT_HEARTBEAT = 60  # seconds
 
+    def _sync_state(self, node_key_space):
+        """Sync VPP port state with etcd and return correct watchIndex"""
+        LOG.debug('Syncing VPP port state with etcd..')
+        rv = self.etcd_client.read(node_key_space, recursive=True)
+        for child in rv.children:
+            m = re.match(node_key_space + '/([^/]+)/([^/]+)$', child.key)
+            if m:
+                if m.group(1) == 'ports':
+                    port = m.group(2)
+                    LOG.debug('Syncing vpp state by binding existing port:%s'
+                              % port)
+                    data = json.loads(child.value)
+                    props = self.bind(port,
+                                      data['binding_type'],
+                                      data['mac_address'],
+                                      data['physnet'],
+                                      data['network_type'],
+                                      data['segmentation_id'])
+                    self.etcd_client.write(LEADIN + '/state/%s/ports/%s'
+                                           % (self.host, port),
+                                           json.dumps(props))
+                elif m.group(1) == 'routers':
+                    router_id = m.group(2)
+                    router = json.loads(child.value)
+                    if router.get('delete', False):
+                        self.vppf.delete_router_on_host(router)
+                        self.etcd_client.delete(
+                            node_key_space + "/routers/%s" % (self.host,
+                                                              router_id))
+                    else:
+                        self.vppf.create_router_on_host(router)
+
+        return rv.etcd_index
+
     def process_ops(self):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
@@ -1585,6 +1644,7 @@ class EtcdListener(object):
                                    % (self.host, f), 1)
 
         self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
+        self.router_key_space = LEADIN + "/nodes/%s/routers" % self.host
         self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.secgroup_key_space = LEADIN + "/global/secgroups"
         # load sw_if_index to macip acl index mappings
@@ -1708,6 +1768,34 @@ class EtcdListener(object):
                                     self.port_key_space,
                                     heartbeat=self.AGENT_HEARTBEAT,
                                     data=self).watch_forever)
+
+        class RouterWatcher(EtcdWatcher):
+            def do_tick(self):
+                pass
+
+            def resync(self):
+                pass
+
+            def do_work(self, action, key, value):
+                m = re.match(self.data.router_key_space + '/([^/]+)$', key)
+                if m:
+                    router_id = m.group(1)
+                    router = json.loads(value)
+                    if router.get('delete', False):
+                        self.data.vppf.delete_router_on_host(router)
+                        self.etcd_client.delete(
+                            self.data.router_key_space + "/%s" % router_id)
+                    else:
+                        self.data.vppf.create_router_on_host(router)
+                else:
+                    LOG.warn('Unexpected key change in etcd router feedback,'
+                             ' key %s' % key)
+
+        LOG.debug("Spawning router_watcher")
+        self.pool.spawn(RouterWatcher(self.etcd_client, 'router_watcher',
+                                      self.router_key_space,
+                                      heartbeat=self.AGENT_HEARTBEAT,
+                                      data=self).watch_forever)
 
         class SecGroupWatcher(EtcdWatcher):
 
