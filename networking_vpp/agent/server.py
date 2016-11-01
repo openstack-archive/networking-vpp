@@ -1,4 +1,4 @@
-# Copyright (c) 2016 Cisco Systems, Inc.
+# Copyright (c) 2017 Cisco Systems, Inc.
 # All Rights Reserved
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -42,7 +42,6 @@ from collections import defaultdict
 from collections import namedtuple
 from ipaddress import ip_address
 from ipaddress import ip_network
-from networking_vpp._i18n import _
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
 from networking_vpp.compat import n_const
@@ -50,9 +49,11 @@ from networking_vpp import config_opts
 from networking_vpp.etcdutils import EtcdChangeWatcher
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
+
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
+from neutron.conf.agent import securitygroups_rpc
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -71,13 +72,7 @@ secgroups = {}     # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 # VPP does not maintain any session states
 reflexive_acls = True
 
-# Register security group option
-security_group_opts = [
-    cfg.BoolOpt('enable_security_group', default=True,
-                help=_('Controls whether neutron security groups is enabled '
-                       'Set it to false to disable security groups')),
-    ]
-cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
+securitygroups_rpc.register_securitygroups_opts()
 # config_opts is required to configure the options within it, but
 # not referenced from here, so shut up tox:
 assert config_opts
@@ -1140,6 +1135,43 @@ class VPPForwarder(object):
         # Works for both addresses and the net address of masked networks
         return ip_network(unicode(ip_addr)).network_address.packed
 
+    def create_router_on_host(self, router):
+        """Create a router on the local host.
+
+        Creates a loopback interface and sets the bridge's BVI to the
+        loopback interface to act as an L3 gateway for the bridge network.
+        """
+        net_data = self.ensure_network_on_host(
+            router['physnet'], router['net_type'], router['segmentation_id'])
+        net_br_idx = net_data['bridge_domain_id']
+        # Check if a loopback is already set as the BVI for this bridge
+        br_bvi = self.vpp.get_bridge_bvi(net_br_idx)
+        if br_bvi:
+            # BVI already set, do nothing
+            return
+        loopback_idx = self.vpp.create_loopback(router['loopback_mac'])
+        self.vpp.set_loopback_bridge_bvi(loopback_idx, net_br_idx)
+        self.vpp.set_loopback_vrf(loopback_idx, router['vrf_id'],
+                                  router['is_ipv6'])
+        self.vpp.set_loopback_ip(loopback_idx, router['gateway_ip'],
+                                 router['prefixlen'], router['is_ipv6'])
+
+        return loopback_idx
+
+    def delete_router_on_host(self, router):
+        """Deletes a router from the host.
+
+        Deletes a loopback interface from the host, this removes the BVI
+        interface from the local bridge.
+        """
+        net_data = self.ensure_network_on_host(
+            router['physnet'], router['net_type'], router['segmentation_id'])
+        net_br_idx = net_data['bridge_domain_id']
+        bvi_if_idx = self.vpp.get_bridge_bvi(net_br_idx)
+        # Get bvi interface from bridge details
+        if bvi_if_idx:
+            self.vpp.delete_loopback(bvi_if_idx)
+
     def get_spoof_filter_rules(self):
         """Build and return a list of anti-spoofing rules.
 
@@ -1242,6 +1274,7 @@ class EtcdListener(object):
         # We need certain directories to exist
         self.etcd_helper.ensure_dir(LEADIN + '/state/%s/ports' % self.host)
         self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/routers' % self.host)
         # If the agent is started before q-svc, etcd watch fails as this
         # directory may not exist. Make sure it exists
         self.etcd_helper.ensure_dir(LEADIN + '/global/secgroups')
@@ -1587,6 +1620,7 @@ class EtcdListener(object):
                                    % (self.host, f), 1)
 
         self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
+        self.router_key_space = LEADIN + "/nodes/%s/routers" % self.host
         self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.secgroup_key_space = LEADIN + "/global/secgroups"
         # load sw_if_index to macip acl index mappings
@@ -1708,6 +1742,54 @@ class EtcdListener(object):
                 else:
                     LOG.warning('Unexpected key change in etcd '
                                 'port feedback, key %s', key)
+
+        LOG.debug("Spawning port_watcher")
+        self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
+                                    self.port_key_space,
+                                    heartbeat=self.AGENT_HEARTBEAT,
+                                    data=self).watch_forever)
+
+        class RouterWatcher(EtcdChangeWatcher):
+            """Start an etcd watcher for router operations.
+
+            Starts an etcd watcher on the /routers directory for
+            this node. This watcher is responsible for consuming
+            Neutron router CRUD operations.
+            """
+            def do_tick(self):
+                pass
+
+            def key_change(self, action, key, value):
+                LOG.debug("router_watcher: doing work for %s %s %s" %
+                          (action, key, value))
+                m = re.match(self.data.router_key_space + '/([^/]+)$', key)
+                if m:
+                    router_id = m.group(1)
+                    router = json.loads(value)
+                    if router.get('delete', False):
+                        self.data.vppf.delete_router_on_host(router)
+                    elif action == 'delete':
+                        self.etcd_client.delete(
+                            self.data.router_key_space + "/%s" % router_id)
+                        try:
+                            self.etcd_client.delete(
+                                self.data.router_key_space + '/%s'
+                                % router_id)
+                        except etcd.EtcdKeyNotFound:
+                            # Gone is fine; if we didn't delete it
+                            # it's no problem
+                            pass
+                    else:
+                        self.data.vppf.create_router_on_host(router)
+                else:
+                    LOG.warn('Unexpected key change in etcd router feedback,'
+                             ' key %s' % key)
+
+        LOG.debug("Spawning router_watcher")
+        self.pool.spawn(RouterWatcher(self.etcd_client, 'router_watcher',
+                                      self.router_key_space,
+                                      heartbeat=self.AGENT_HEARTBEAT,
+                                      data=self).watch_forever)
 
         class SecGroupWatcher(EtcdChangeWatcher):
 
