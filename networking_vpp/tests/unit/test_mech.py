@@ -20,8 +20,10 @@ import etcd
 from etcd import EtcdResult
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
+from neutron.plugins.ml2 import config
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
+from neutron.tests.unit.db import test_db_base_plugin_v2
 
 from oslo_config import cfg
 
@@ -45,7 +47,9 @@ FAKE_PORT = {'status': 'DOWN',
              'mac_address': '12:34:56:78:21:b6'}
 
 
-class VPPMechanismDriverTestCase(base.BaseTestCase):
+class VPPMechanismDriverTestCase(
+    test_db_base_plugin_v2.NeutronDbPluginV2TestCase,
+    base.BaseTestCase):
     _mechanism_drivers = ['vpp']
 
     def etcd_client(self):
@@ -58,11 +62,15 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
     @mock.patch('etcd.Client')
     @mock.patch('networking_vpp.agent.utils.EtcdClientFactory.client')
     def setUp(self, mock_eventlet, mock_client, mock_make_client):
-        super(VPPMechanismDriverTestCase, self).setUp()
-
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
 
+        config.cfg.CONF.set_override('mechanism_drivers',
+                                     ['logger', 'vpp'], 'ml2')
+        config.cfg.CONF.set_override('core_plugin',
+                                     'neutron.plugins.ml2.plugin.Ml2Plugin')
+        core_plugin = cfg.CONF.core_plugin
+        super(VPPMechanismDriverTestCase, self).setUp(plugin=core_plugin)
         self.mech = mech_vpp.VPPMechanismDriver()
         self.mech.initialize()
 
