@@ -249,5 +249,154 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                  net_type, seg_id)
         assert (retval == expected_val)
 
-    def test_unbind_interface_on_host(self):
-        pass
+    def _get_mock_router_interface(self):
+        # Return a mock IPv4 router interface.
+        return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
+                'segmentation_id': 100, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '10.0.0.1', 'is_ipv6': False, 'prefixlen': 24}
+
+    def _get_mock_v6_router_interface(self):
+        # Returns a mock IPv6 router interface.
+        return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
+                'segmentation_id': 100, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '2001:db8:1234::1', 'is_ipv6': False,
+                'prefixlen': 64}
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_create_router_interface_on_host(self, m_network_on_host, router):
+        # Test adding an interface to the router to create it in VPP.
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=False):
+            loopback_idx = self.vpp.create_router_interface_on_host(router)
+            self.vpp.vpp.create_loopback.assert_called_once_with(
+                router['loopback_mac'])
+            self.vpp.vpp.set_loopback_bridge_bvi.assert_called_once_with(
+                loopback_idx, 'fake_dom_id')
+            self.vpp.vpp.set_loopback_vrf.assert_called_once_with(
+                loopback_idx, router['vrf_id'], router['is_ipv6'])
+            self.vpp.vpp.set_loopback_ip.assert_called_once_with(
+                loopback_idx, self.vpp._pack_address(router['gateway_ip']),
+                router['prefixlen'], router['is_ipv6'])
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_create_router_interface_with_existing_bvi_and_ip(
+        self, m_network_on_host, router):
+        # Test repeat adding the same router interface.
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
+            with mock.patch.object(
+                self.vpp.vpp, 'get_interface_ip_addresses',
+                return_value=[(router['gateway_ip'], router['prefixlen'])]):
+                self.vpp.create_router_interface_on_host(router)
+
+                self.vpp.vpp.create_loopback.assert_not_called()
+                self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
+                self.vpp.vpp.set_loopback_vrf.assert_not_called()
+                self.vpp.vpp.set_loopback_ip.assert_not_called()
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_create_router_interface_with_existing_bvi_different_ip(
+        self, m_network_on_host, router, other_router):
+        # Test adding a different router interface.
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
+            with mock.patch.object(
+                self.vpp.vpp, 'get_interface_ip_addresses',
+                return_value=[]):
+                self.vpp.create_router_interface_on_host(router)
+
+                self.vpp.vpp.create_loopback.assert_not_called()
+                self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
+                self.vpp.vpp.set_loopback_vrf.assert_not_called()
+                self.vpp.vpp.set_loopback_ip.assert_called_once_with(
+                    5, self.vpp._pack_address(router['gateway_ip']),
+                    router['prefixlen'], router['is_ipv6'])
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_delete_router_interface_on_host(self, m_network_on_host, router):
+        # Test deleting a router interface to delete the router in VPP.
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
+            with mock.patch.object(
+                self.vpp.vpp, 'get_interface_ip_addresses',
+                return_value=[(router['gateway_ip'], router['prefixlen'])]):
+                self.vpp.delete_router_interface_on_host(router)
+                self.vpp.vpp.delete_loopback.called_once_with(5)
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def _test_delete_router_interface_with_multiple_interfaces(
+        self, m_network_on_host, router, other_router):
+        # Test deleting a router interface with interfaces from other subnets
+        # also present on the router.
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+
+        return_ip_list = [(router['gateway_ip'], router['prefixlen']),
+                          (other_router['gateway_ip'],
+                           other_router['prefixlen'])]
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
+            with mock.patch.object(
+                self.vpp.vpp, 'get_interface_ip_addresses',
+                return_value=return_ip_list):
+                self.vpp.delete_router_interface_on_host(router)
+                self.vpp.vpp.delete_loopback.assert_not_called()
+                self.vpp.vpp.del_loopback_ip.assert_called_once_with(
+                    5, self.vpp._pack_address(router['gateway_ip']),
+                    router['prefixlen'], router['is_ipv6'])
+
+    def test_v4_router_interface_create_on_host(self):
+        self._test_create_router_interface_on_host(
+            router=self._get_mock_router_interface())
+
+    def test_v6_router_interface_create_on_host(self):
+        self._test_create_router_interface_on_host(
+            router=self._get_mock_v6_router_interface())
+
+    def test_v4_router_interface_create_with_existing_bvi_and_ip(self):
+        self._test_create_router_interface_with_existing_bvi_and_ip(
+            router=self._get_mock_router_interface())
+
+    def test_v6_router_interface_create_with_existing_bvi_and_ip(self):
+        self._test_create_router_interface_with_existing_bvi_and_ip(
+            router=self._get_mock_v6_router_interface())
+
+    def test_v4_router_interface_create_with_existing_bvi_different_ip(self):
+        self._test_create_router_interface_with_existing_bvi_different_ip(
+            router=self._get_mock_router_interface(),
+            other_router=self._get_mock_v6_router_interface())
+
+    def test_v6_router_interface_create_with_existing_bvi_different_ip(self):
+        self._test_create_router_interface_with_existing_bvi_different_ip(
+            router=self._get_mock_v6_router_interface(),
+            other_router=self._get_mock_router_interface())
+
+    def test_v4_router_interface_delete(self):
+        self._test_delete_router_interface_on_host(
+            router=self._get_mock_router_interface())
+
+    def test_v6_router_interface_delete(self):
+        self._test_delete_router_interface_on_host(
+            router=self._get_mock_v6_router_interface())
+
+    def test_v4_router_interface_delete_with_v6_address(self):
+        self._test_delete_router_interface_with_multiple_interfaces(
+            router=self._get_mock_v6_router_interface(),
+            other_router=self._get_mock_router_interface())
+
+    def test_v6_router_interface_delete_with_v4_address(self):
+        self._test_delete_router_interface_with_multiple_interfaces(
+            router=self._get_mock_v6_router_interface(),
+            other_router=self._get_mock_router_interface())

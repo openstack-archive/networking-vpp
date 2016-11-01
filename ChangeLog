@@ -46,7 +46,7 @@ For 17.01:
 * Introduction of MAC aging feature implemented in VPP version 17.01-rc1
 * Fix typo in attribute returned from VPP API
 * Removes unnecessary utf-8 coding
-* Support for security-groups and allowed-address-pairs.
+* Support for security-groups and allowed-address-pairs
 * Use ifidx of uplink interface as bridge domain ID
 * Add VPP branch configuration
 * Rework interface-get code

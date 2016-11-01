@@ -14,6 +14,8 @@
 
 from networking_vpp.db import models
 
+from sqlalchemy.sql.expression import func
+
 
 def journal_read(session, func):
     """Read, process and delete (if successful) the oldest journal row.
@@ -67,3 +69,43 @@ def journal_write(session, k, v):
     entry = models.VppEtcdJournal(k=k, v=v)
     session.add(entry)
     session.flush()
+
+
+def add_router_vrf(session, router_id):
+    """Allocates a new VRF to a router.
+
+    This method finds the highest extant VRF number from the DB and
+    allocates a new VRF id = highest + 1 to the router requested.
+    """
+    with session.begin(subtransactions=True):
+        # Get the highest VRF number in the DB
+        new_vrf = session.query(
+            func.max(models.VppRouterVrf.vrf_id)).scalar() or 0
+        new_vrf += 1
+
+        row = models.VppRouterVrf(router_id=router_id, vrf_id=new_vrf)
+        session.add(row)
+
+    return new_vrf
+
+
+def get_router_vrf(session, router_id):
+    # Returns a VRF id for the specified router id
+    row = session.query(
+        models.VppRouterVrf).filter_by(router_id=router_id).one_or_none()
+    if row:
+        return row.vrf_id
+
+    return None
+
+
+def delete_router_vrf(session, router_id):
+    # Removes VRF allocation for the specified router id
+    with session.begin(subtransactions=True):
+        row = session.query(
+            models.VppRouterVrf).filter_by(
+            router_id=router_id).one_or_none()
+
+        if row:
+            session.delete(row)
+            session.flush()
