@@ -49,7 +49,9 @@ vpp_opts = [
     cfg.IntOpt('tap_wait_time', default=60,
                help=_("Maximum time to wait for a tap device.")),
     cfg.IntOpt('vpp_cmd_queue_len', default=None,
-               help=_("Size of the VPP command queue (in messages)"))
+               help=_("Size of the VPP command queue (in messages)")),
+    cfg.StrOpt('l3_host', default="127.0.0.1",
+               help=_("Hostname to render L3 services on.")),
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
