@@ -1,8 +1,12 @@
 CHANGES
 =======
 
-For 17.01:
+* L3 router service plugin for networking-vpp
 
+17.01
+-----
+
+* Update documentation and ancillary documents in prep for 17.01
 * Push out security group rules when a security group is created
 * Enable metadata request from VMs
 * Use embedded etcd client timeout
@@ -46,7 +50,7 @@ For 17.01:
 * Introduction of MAC aging feature implemented in VPP version 17.01-rc1
 * Fix typo in attribute returned from VPP API
 * Removes unnecessary utf-8 coding
-* Support for security-groups and allowed-address-pairs.
+* Support for security-groups and allowed-address-pairs
 * Use ifidx of uplink interface as bridge domain ID
 * Add VPP branch configuration
 * Rework interface-get code
@@ -60,12 +64,12 @@ For 17.01:
 * Bring backward compatibility work into one place
 * Remove NUMATopologyFilter setting
 * Address Liberty compatibility with neutron_lib import
-* Fix translator functions.
+* Fix translator functions
 * Add environment setup to Devstack scripts
 * Fix python-etcd version requirement
 * neutron_lib related updates
 * VPP Python API 1.3
-* Enhance vpp_agent to support multiple etcd format.
+* Enhance vpp_agent to support multiple etcd format
 * Add monkey patch to make bridge_lib to be Liberty compatible
 * Fixes the crash when vpp-agent doesn't take config file
 * tests/unit/*: Enhancing unit tests for ML2
@@ -79,13 +83,13 @@ For 17.01:
 * Clean imports in code
 * Remove duplicated requirement
 * Reformulate the etcd read/watch loop as common code
-* Fix the problem of constants move to neutron_lib.
+* Fix the problem of constants move to neutron_lib
 * Delay thread starting to post-worker-fork
 * Enable CI unit test
 * agent/server.py: Adding custom UnsupportedInterfaceException
 * Revert "Liberty DB migration compatibility."
 * Delete bridge and vlan sub interface on network deletion
-* Liberty DB migration compatibility.
+* Liberty DB migration compatibility
 * Add HACKING for networking-vpp
 * Remove flask since networking-vpp doesn't use it currently
 * Enhance debug log in vpp agent
@@ -99,9 +103,9 @@ For 17.01:
 * Fix Newton-specific backward compatibility code
 * Make devstack OVS-free
 * Reduce log severities in driver
-* Remove distro package dependency.
+* Remove distro package dependency
 * Upon Agent restart, restart VPP, clear existing port binding state and bind ports
-* Backward compatibility for liberty.
+* Backward compatibility for liberty
 * Recovers etcd watch keyspace index and updates the driver physnet data structure
 * VPP port cleanup before deletion
 * networking-vpp/tests: Initial commit for unit tests
