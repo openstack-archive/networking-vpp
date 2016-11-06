@@ -1,0 +1,10 @@
+Code-Review+1: ijw-ubuntu <iawells@cisco.com>
+Code-Review+1: Sean Chandler <sechandl@cisco.com>
+Code-Review+2: Feng Pan <fpan@redhat.com>
+Workflow+1: Feng Pan <fpan@redhat.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Sun, 06 Nov 2016 00:35:54 +0000
+Reviewed-on: https://review.openstack.org/391523
+Project: openstack/networking-vpp
+Branch: refs/heads/master
