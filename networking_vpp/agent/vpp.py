@@ -192,6 +192,72 @@ class VPPInterface(object):
         self._check_retval(t)
         return
 
+    def acl_add_replace(self, acl_index, tag, rules, count):
+        self.LOG.debug("Add_Replace vpp acl with indx %s tag %s rules %s "
+                       "count %s" % (acl_index, tag, rules, count))
+        t = self._vpp.acl_add_replace(acl_index=acl_index,
+                                      tag=str(tag),
+                                      r=rules,
+                                      count=count)
+        self.LOG.debug("ACL add_replace response: %s" % str(t))
+        self._check_retval(t)
+        return t.acl_index
+
+    def macip_acl_add(self, rules, count):
+        self.LOG.debug("Adding macip acl with rules %s count %s"
+                       % (rules, count))
+        t = self._vpp.macip_acl_add(count=count,
+                                    r=rules)
+        self.LOG.debug("macip ACL add_replace response: %s" % str(t))
+        self._check_retval(t)
+        return t.acl_index
+
+    def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
+        self.LOG.debug("Setting ACL vector %s on VPP interface %s"
+                       % (acls, sw_if_index))
+        t = self._vpp.acl_interface_set_acl_list(sw_if_index=sw_if_index,
+                                                 count=count,
+                                                 n_input=n_input,
+                                                 acls=acls)
+        self.LOG.debug("ACL set_acl_list_on_interface response: %s" % str(t))
+        self._check_retval(t)
+        return t.retval  # Return 0 on success
+
+    def set_macip_acl_on_interface(self, sw_if_index, acl_index):
+        self.LOG.debug("Setting macip acl %s on VPP interface %s"
+                       % (acl_index, sw_if_index))
+        t = self._vpp.macip_acl_interface_add_del(is_add=1,
+                                                  sw_if_index=sw_if_index,
+                                                  acl_index=acl_index)
+        self.LOG.debug("macip ACL set_acl_list_on_interface response: %s"
+                       % str(t))
+        self._check_retval(t)
+        return t.retval
+
+    def delete_macip_acl(self, acl_index):
+        self.LOG.debug("Deleting macip acl index %s" % acl_index)
+        t = self._vpp.macip_acl_del(acl_index=acl_index)
+        self.LOG.debug("macip ACL delete response: %s" % str(t))
+        self._check_retval(t)
+
+    def acl_delete(self, acl_index):
+        self.LOG.debug("Deleting vpp acl index %s" % acl_index)
+        t = self._vpp.acl_del(acl_index=acl_index)
+        self.LOG.debug("ACL delete response: %s" % str(t))
+        self._check_retval(t)
+
+    def get_acls(self):
+        self.LOG.debug("Getting the ACL dump")
+        t = self._vpp.acl_dump(acl_index=0xffffffff)
+        self.LOG.debug("ACL dump response: %s" % str(t))
+        return t
+
+    def get_macip_acl_dump(self):
+        self.LOG.debug("Getting the MAC-IP Interface ACL dump")
+        t = self._vpp.macip_acl_interface_get()
+        self.LOG.debug("MAC-IP ACL dump response: %s" % str(t))
+        return t
+
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
 #        t = self._vpp.vxlan_add_del_tunnel(
 #            True,  # is_add
