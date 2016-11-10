@@ -15,6 +15,7 @@
 
 import abc
 from abc import abstractmethod
+from collections import namedtuple
 import etcd
 import eventlet
 import eventlet.event
@@ -278,9 +279,11 @@ class VPPMechanismDriver(api.MechanismDriver):
 
             if (current_bind is not None and
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
+                self.ensure_secgroups_in_etcd(port_context)
                 self.communicator.kick()
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
+                self.ensure_secgroups_in_etcd(port_context)
                 self.communicator.kick()
 
     def delete_port_precommit(self, port_context):
@@ -292,6 +295,19 @@ class VPPMechanismDriver(api.MechanismDriver):
 
     def delete_port_postcommit(self, port_context):
         self.communicator.kick()
+
+    def ensure_secgroups_in_etcd(self, port_context):
+        """Ensure secgroup key-value is present in etcd if enabled"""
+        if self.communicator.secgroup_enabled:
+            sgids = port_context.current.get('security_groups', [])
+            for sgid in sgids:
+                if not self.communicator.secgroup_key_present(sgid):
+                    LOG.debug("ML2_VPP: Update port postcommit "
+                              "writing missing secgroup %s to etcd" % sgid)
+                    self.communicator.send_sg_updates(
+                        [sgid],
+                        port_context._plugin_context
+                        )
 
 
 @six.add_metaclass(abc.ABCMeta)
@@ -353,6 +369,16 @@ class AgentCommunicator(object):
 PARANOIA_TIME = 50              # TODO(ijw): make configurable?
 # Our prefix for etcd keys, in case others are using etcd.
 LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
+# Model for representing a security group
+SecurityGroup = namedtuple(
+    'SecurityGroup', ['id', 'ingress_rules', 'egress_rules']
+    )
+# Model for a VPP security group rule
+SecurityGroupRule = namedtuple(
+    'SecurityGroupRule', ['is_ipv6', 'remote_ip_addr',
+                          'ip_prefix_len', 'protocol',
+                          'port_min', 'port_max']
+    )
 
 
 class EtcdAgentCommunicator(AgentCommunicator):
@@ -395,8 +421,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # We need certain directories to exist
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
+        self.secgroup_key_space = LEADIN + '/secgroups'
         self.do_etcd_mkdir(self.state_key_space)
         self.do_etcd_mkdir(self.port_key_space)
+        self.do_etcd_mkdir(self.secgroup_key_space)
+        self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
+        if self.secgroup_enabled:
+            self.register_secgroup_event_handler()
 
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
@@ -429,6 +460,230 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         return physical_networks
 
+    def register_secgroup_event_handler(self):
+        """Subscribe a handler to process secgroup change notifications"""
+        # A mapping for looking up the security_group_id of the
+        # deleted_rule. This is needed as neutron does not send the
+        # security_group_id of the rule in the callback notification
+        LOG.info("ML2_VPP: Security groups feature is enabled")
+        self.deleted_rules = {}
+        registry.subscribe(self.process_secgroup_events,
+                           resources.SECURITY_GROUP,
+                           events.AFTER_DELETE)
+        registry.subscribe(self.process_secgroup_events,
+                           resources.SECURITY_GROUP_RULE,
+                           events.AFTER_CREATE)
+        registry.subscribe(self.process_secgroup_events,
+                           resources.SECURITY_GROUP_RULE,
+                           events.BEFORE_DELETE)
+        registry.subscribe(self.process_secgroup_events,
+                           resources.SECURITY_GROUP_RULE,
+                           events.AFTER_DELETE)
+        LOG.info("ML2_VPP: subscribed to receive security group delete "
+                 "and rule create/delete notifications")
+
+    def process_secgroup_events(self, resource, event, trigger, **kwargs):
+        """Callback for handling security group change events"""
+        LOG.debug("ML2_VPP: Received event %s notification for resource"
+                  " %s with kwargs %s" % (event, resource, kwargs))
+        context = kwargs['context']
+        if resource == resources.SECURITY_GROUP:
+            self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+        elif resource == resources.SECURITY_GROUP_RULE:
+            if event == events.BEFORE_DELETE:
+                rule_id = kwargs['security_group_rule_id']
+                rule = self.get_secgroup_rule(rule_id, context)
+                LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
+                          (rule, rule_id))
+                security_group_id = rule['security_group_id']
+                self.deleted_rules[rule_id] = security_group_id
+            elif event == events.AFTER_DELETE:
+                rule_id = kwargs['security_group_rule_id']
+                security_group_id = self.deleted_rules.get(rule_id)
+                LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
+                          "rule-id %s" % (security_group_id, rule_id))
+                if not security_group_id:
+                    LOG.error("ML2_VPP: Could not lookup a security group "
+                              "for rule_id %s" % rule_id)
+                else:
+                    del self.deleted_rules[rule_id]
+            elif event == events.AFTER_CREATE:
+                rule = kwargs['security_group_rule']
+                security_group_id = rule['security_group_id']
+            if security_group_id:
+                self.send_sg_updates([security_group_id], context)
+
+    def send_sg_updates(self, sgids, context):
+        """Called when security group rules are updated
+
+        Arguments:
+        sgids - A list of one or more security_group_ids
+        context - The plugin context i.e. neutron.context.Context object
+
+        1. Read security group rules from neutron DB
+        2. Build security group objects from their rules
+        3. Write secgroup to the secgroup_key_space in etcd
+        """
+        LOG.debug("ML2_VPP: etcd_communicator sending security group "
+                  "updates for groups %s to etcd" % sgids)
+        db = manager.NeutronManager.get_plugin()
+        with context.session.begin(subtransactions=True):
+            rules = db.get_security_group_rules(
+                context, filters={'security_group_id': sgids}
+                )
+            LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s" % rules)
+            # Build a generator of security group model objects from DB rules
+            secgroups = (
+                self.get_secgroup_from_rules(sgid, rules) for sgid in sgids
+                )
+            # Write security group data to etcd
+            for secgroup in secgroups:
+                self.write_secgroup_to_etcd(secgroup)
+
+    def get_secgroup_rule(self, rule_id, context):
+        """Fetch and return a security group rule from Neutron DB"""
+        LOG.debug("ML2_VPP: fetching security group rule: %s" % rule_id)
+        db = manager.NeutronManager.get_plugin()
+        with context.session.begin(subtransactions=True):
+            return db.get_security_group_rule(context, rule_id)
+
+    def get_secgroup_from_rules(self, sgid, rules):
+        """Build and return a security group namedtuple object.
+
+        Arguments:
+        sgid - ID of the security group
+        rules - A list of security group rules
+
+        1. Filter rules using the input param: sgid to ensure that rules
+        belong to that group
+        2. Split rules based on direction.
+        3. Construct and return the SecurityGroup namedtuple.
+        """
+        # A generator object of security group rules for sgid
+        sg_rules = (r for r in rules if r['security_group_id'] == sgid)
+        # A list of ingress and egress namedtuple rule objects
+        ingress_rules = []
+        egress_rules = []
+        for r in sg_rules:
+            if r['direction'] == 'ingress':
+                ingress_rules.append(self._neutron_rule_to_vpp_acl(r))
+            else:
+                egress_rules.append(self._neutron_rule_to_vpp_acl(r))
+        return SecurityGroup(sgid, ingress_rules, egress_rules)
+
+    def _neutron_rule_to_vpp_acl(self, rule):
+        """Convert a neutron rule to vpp_acl rule.
+
+        Arguments:
+        1. rule -- represents a neutron rule
+
+        - Convert the neutron rule to a vpp_acl rule model
+        - Return the SecurityGroupRule namedtuple.
+        """
+        LOG.debug("ML2_VPP:Converting neutron rule %s" % rule)
+        is_ipv6 = 0 if rule['ethertype'] == 'IPv4' else 1
+        # Neutron uses None to represent any protocol
+        # Use 0 to represent any protocol
+        if rule['protocol'] is None:
+            protocol = 0
+        # VPP rules require IANA protocol numbers
+        elif rule['protocol'] in ['tcp', 'udp', 'icmp', 'icmpv6']:
+            protocol = {'tcp': 6,
+                        'udp': 17,
+                        'icmp': 1,
+                        'icmpv6': 58}[rule['protocol']]
+        else:
+            protocol = rule['protocol']
+        # Neutron represents any ip address by setting one
+        # or both of the of the below fields to None
+        # VPP uses all zeros to represent any Ipv4/IpV6 address
+        # TODO(najoy) handle remote_group_id when remote_ip_prefix is None
+        if (rule['remote_ip_prefix'] is None
+                or rule['remote_group_id'] is None):
+            remote_ip_addr = '0.0.0.0' if not is_ipv6 else '0:0:0:0:0:0:0:0'
+            ip_prefix_len = 0
+        else:
+            remote_ip_addr, ip_prefix_len = rule['remote_ip_prefix'
+                                                 ].split('/')
+        # TODO(najoy): Add support for remote_group_id in sec-group-rules
+        if rule['remote_group_id']:
+            LOG.warning("ML2_VPP: A remote-group-id value is specified in "
+                        "rule %s. Setting a remote_group_id in rules is "
+                        "not supported" % rule)
+        # Neutron uses -1 or None to represent all ports
+        # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
+        # ranges for ICMP types and codes
+        if rule['port_range_min'] == -1 or rule['port_range_min'] is None:
+            # Valid TCP/UDP port ranges
+            if protocol in [6, 17]:
+                port_min, port_max = (0, 65535)
+            # A Value of -1 represents all ICMP/ICMPv6 types & code ranges
+            elif protocol in [1, 58]:
+                port_min, port_max = (-1, -1)
+            # Ignore port_min and port_max fields
+            else:
+                port_min, port_max = (0, 0)
+        else:
+            port_min, port_max = (rule['port_range_min'],
+                                  rule['port_range_max'])
+        sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
+                                    protocol, port_min, port_max)
+        LOG.debug("ML2_VPP: Converted rule: is_ipv6:%s, remote_ip_addr:%s,"
+                  " ip_prefix_len:%s, protocol:%s, port_min:%s,"
+                  " port_max:%s" %
+                  (sg_rule.is_ipv6, sg_rule.remote_ip_addr,
+                   sg_rule.ip_prefix_len, sg_rule.protocol,
+                   sg_rule.port_min, sg_rule.port_max))
+        return sg_rule
+
+    def write_secgroup_to_etcd(self, secgroup):
+        """Writes a secgroup to the etcd secgroup space
+
+        Arguments:
+        secgroup -- Named tuple representing a SecurityGroup
+        """
+        secgroup_path = self._secgroup_path(secgroup.id)
+        # sg is a dict of of ingress and egress rule lists
+        sg = {}
+        ingress_rules = []
+        egress_rules = []
+        for ingress_rule in secgroup.ingress_rules:
+            ingress_rules.append(ingress_rule._asdict())
+        for egress_rule in secgroup.egress_rules:
+            egress_rules.append(egress_rule._asdict())
+        sg['ingress_rules'] = ingress_rules
+        sg['egress_rules'] = egress_rules
+        LOG.debug('ML2_VPP: Writing secgroup key-val: %s-%s to etcd' %
+                  (secgroup_path, sg))
+        self.etcd_client.write(secgroup_path, json.dumps(sg))
+
+    def delete_secgroup_from_etcd(self, secgroup_id):
+        """Deletes the secgroup key from etcd
+
+        Arguments:
+        secgroup_id -- The id of the security group that we want to delete
+        """
+        try:
+            LOG.info("ML2_VPP: Deleting secgroup %s from etcd" %
+                     secgroup_id)
+            secgroup_path = self._secgroup_path(secgroup_id)
+            self.etcd_client.delete(secgroup_path)
+        except etcd.EtcdKeyNotFound:
+            # Just log a message if the key is not found
+            LOG.debug("ML2_VPP: secgroup key %s which we were attempting"
+                      " to delete has disappeared" % secgroup_path)
+
+    def _secgroup_path(self, secgroup_id):
+        return self.secgroup_key_space + "/" + secgroup_id
+
+    def secgroup_key_present(self, secgroup_id):
+        """Return True if the key is present in etcd else False."""
+        try:
+            if self.etcd_client.read(self._secgroup_path(secgroup_id)):
+                return True
+        except etcd.EtcdKeyNotFound:
+            return False
+
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
 
@@ -454,6 +709,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def bind(self, session, port, segment, host, binding_type):
         # NB segmentation_id is not optional in the wireline protocol,
         # we just pass 0 for unsegmented network types
+        LOG.debug("ML2_VPP: Received bind request for port:%s"
+                  % port)
         data = {
             'mac_address': port['mac_address'],
             'mtu': 1500,  # not this, but what?: port['mtu'],
@@ -461,6 +718,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
             'network_type': segment[api.NETWORK_TYPE],
             'segmentation_id': segment.get(api.SEGMENTATION_ID, 0),
             'binding_type': binding_type,
+            'security_groups': port['security_groups'],
+            'allowed_address_pairs': port['allowed_address_pairs'],
+            'fixed_ips': port['fixed_ips']
         }
         LOG.debug("ML2_VPP: Queueing bind request for port:%s, "
                   "segment:%s, host:%s, type:%s",
