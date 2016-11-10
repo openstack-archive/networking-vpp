@@ -192,6 +192,40 @@ class VPPInterface(object):
         self._check_retval(t)
         return
 
+    def acl_add_replace(self, acl_index, tag, rules, count):
+        self.LOG.debug("Adding vpp acl with indx %s tag %s rules %s count %s"
+                       % (acl_index, tag, rules, count))
+        t = self._vpp.acl_add_replace(acl_index=acl_index,
+                                      tag=str(tag),
+                                      r=rules,
+                                      count=count)
+        self.LOG.debug("ACL add_replace response: %s" % str(t))
+        self._check_retval(t)
+        return t.acl_index
+
+    def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
+        self.LOG.debug("Setting ACL vector %s on VPP interface %s"
+                       % (acls, sw_if_index))
+        t = self._vpp.acl_interface_set_acl_list(sw_if_index=sw_if_index,
+                                                 count=count,
+                                                 n_input=n_input,
+                                                 acls=acls)
+        self.LOG.debug("ACL set_acl_list_on_interface response: %s" % str(t))
+        self._check_retval(t)
+
+    def acl_delete(self, acl_index):
+        self.LOG.debug("Deleting vpp acl index %s" % acl_index)
+        t = self._vpp.acl_del(acl_index=acl_index)
+        self.LOG.debug("ACL delete response: %s" % str(t))
+        self._check_retval(t)
+
+    def get_acls(self):
+        self.LOG.debug("Getting the ACL dump from vpp")
+        t = self._vpp.acl_dump(acl_index=0xffffffff)
+        self.LOG.debug("ACL dump response: %s" % str(t))
+        self._check_retval(t)
+        return t
+
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
 #        t = self._vpp.vxlan_add_del_tunnel(
 #            True,  # is_add
