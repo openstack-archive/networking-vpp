@@ -30,6 +30,9 @@ import backward_compatibility as bc_attr
 
 from networking_vpp import config_opts
 from networking_vpp.db import db
+from neutron.callbacks import events
+from neutron.callbacks import registry
+from neutron.callbacks import resources
 from neutron.common import constants as n_const
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
@@ -384,7 +387,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # heartbeat when they're functioning
 
         self.db_q_ev = eventlet.event.Event()
+        registry.subscribe(self.start_threads, resources.PROCESS, events.AFTER_CREATE)
 
+    def start_threads(self):
         self.return_thread = eventlet.spawn(self._return_worker)
         self.forward_thread = eventlet.spawn(self._forward_worker)
 
