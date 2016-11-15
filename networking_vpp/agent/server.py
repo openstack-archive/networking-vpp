@@ -13,11 +13,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-
-# This is a simple Flask application that provides REST APIs by which
-# compute and network services can communicate, plus a REST API for
-# debugging using a CLI client.
-
 # Note that it does *NOT* at this point have a persistent database, so
 # restarting this process will make Gluon forget about every port it's
 # learned, which will not do your system much good (the data is in the
