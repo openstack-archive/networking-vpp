@@ -39,6 +39,7 @@ import vpp
 
 from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
+from networking_vpp.utils import compat
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
@@ -46,6 +47,8 @@ from neutron.common import constants as n_const
 from oslo_config import cfg
 from oslo_log import log as logging
 from urllib3.exceptions import TimeoutError
+
+compat.monkey_patch()
 
 LOG = logging.getLogger(__name__)
 
