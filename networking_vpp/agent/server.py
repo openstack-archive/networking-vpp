@@ -39,6 +39,7 @@ import vpp
 
 from networking_vpp.agent.utils import EtcdHelper
 from networking_vpp import config_opts
+from networking_vpp.utils import compat
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
