@@ -512,8 +512,8 @@ class EtcdListener(object):
                                                json.dumps(props))
 
                 else:
-                    LOG.warn('Unexpected key change in etcd port feedback, '
-                             'key %s' % rv.key)
+                    LOG.warning('Unexpected key change in etcd port'
+                                ' feedback, ''key %s' % rv.key)
 
             except (etcd.EtcdWatchTimedOut, TimeoutError):
                 # This is normal
