@@ -598,7 +598,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                             else:
                                 LOG.info('host %s is alive' % host)
                         else:
-                            LOG.warn('Unexpected key change in '
+                            LOG.warning('Unexpected key change in '
                                      'etcd port feedback: %s' % kv.key)
 
                 # Update the tick only when all the above completes so that
