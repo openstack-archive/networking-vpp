@@ -45,9 +45,10 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
 
     @mock.patch('networking_vpp.mech_vpp.etcd.Client.write')
     @mock.patch('networking_vpp.mech_vpp.etcd.Client.read')
+    @mock.patch('networking_vpp.mech_vpp.etcd.Client')
     # to suppress thread creation
     @mock.patch('networking_vpp.mech_vpp.eventlet')
-    def setUp(self, mock_w, mock_r, mock_event):
+    def setUp(self, mock_w, mock_r, mock_client, mock_event):
         super(VPPMechanismDriverTestCase, self).setUp()
         self.mech = mech_vpp.VPPMechanismDriver()
         self.mech.initialize()
@@ -98,7 +99,7 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
         port_context = self.given_port_context()
         vif_details = {
             'vhostuser_socket': "/tmp/%s" % port_context.current['id'],
-            'vhostuser_mode': 'client'
+            'vhostuser_mode': 'server'
             }
         self.mech.bind_port(port_context)
         port_context.set_binding.assert_called_once_with(
@@ -129,11 +130,11 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
         segment = port_context.segments_to_bind[0]
         physnet = segment[api.PHYSICAL_NETWORK]
         host = port_context.host
-        self.mech.communicator.physical_networks.add((host, physnet))
-        assert(self.mech.physnet_known(host, physnet) is True), \
-            "Return value for host [%s] and net [%s] should have been True" % (
-                host, physnet)
-        self.mech.communicator.physical_networks.discard((host, physnet))
+        with mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.find_physnets',
+                   return_value=set([(host, physnet)])) as mock_phys:
+            assert(self.mech.physnet_known(host, physnet) is True), \
+                "Return value for host [%s] and net [%s] should have been True" % (
+                    host, physnet)
 
     def test_check_vlan_transparency(self):
         # shrircha: this is useless, as the function simply returns false.
