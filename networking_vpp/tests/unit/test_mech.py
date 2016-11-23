@@ -119,7 +119,7 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
         assert(self.mech.check_segment(segment, host) is False), \
             "Return value should have been False"
 
-    def test_phsynet_known(self):
+    def test_physnet_known(self):
         """This test is trivial.
 
         We're going to fake the input which is exactly the output
