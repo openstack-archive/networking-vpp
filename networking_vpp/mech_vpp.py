@@ -33,7 +33,6 @@ from networking_vpp.db import db
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
-from neutron.common import constants as n_const
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
 from neutron.extensions import portbindings
@@ -41,7 +40,14 @@ from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
+
 from urllib3.exceptions import TimeoutError
+
+# TODO(ijw): backward compatibility, wants removing in future
+try:
+    from neutron_lib import constants as n_const
+except ImportError:
+    from neutron.common import constants as n_const
 
 eventlet.monkey_patch()
 
