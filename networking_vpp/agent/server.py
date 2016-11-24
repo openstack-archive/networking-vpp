@@ -37,10 +37,15 @@ from networking_vpp import config_opts
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
-from neutron.common import constants as n_const
 from oslo_config import cfg
 from oslo_log import log as logging
 from urllib3.exceptions import TimeoutError
+
+# TODO(ijw): backward compatibility, wants removing in future
+try:
+    from neutron_lib import constants as n_const
+catch ImportError:
+    from neutron.common import constants as n_const
 
 LOG = logging.getLogger(__name__)
 
