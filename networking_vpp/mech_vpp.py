@@ -30,7 +30,6 @@ import backward_compatibility as bc_attr
 
 from networking_vpp import config_opts
 from networking_vpp.db import db
-from neutron.common import constants as n_const
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
 from neutron.extensions import portbindings
@@ -38,7 +37,14 @@ from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
+
 from urllib3.exceptions import TimeoutError
+
+# TODO(ijw): backward compatibility, wants removing in future
+try:
+    from neutron_lib import constants as n_const
+catch ImportError:
+    from neutron.common import constants as n_const
 
 eventlet.monkey_patch()
 
