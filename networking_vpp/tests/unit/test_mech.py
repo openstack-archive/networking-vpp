@@ -15,10 +15,11 @@
 
 import mock
 
+from etcd import EtcdResult
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
 from neutron.plugins.ml2 import driver_api as api
-from neutron.tests.unit.plugins.ml2 import test_plugin
+from neutron.tests import base
 
 
 FAKE_PORT = {'status': 'DOWN',
@@ -40,15 +41,15 @@ FAKE_PORT = {'status': 'DOWN',
              'mac_address': '12:34:56:78:21:b6'}
 
 
-class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
+class VPPMechanismDriverTestCase(base.BaseTestCase):
     _mechanism_drivers = ['vpp']
 
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client.write')
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client.read')
     @mock.patch('networking_vpp.mech_vpp.etcd.Client')
     # to suppress thread creation
     @mock.patch('networking_vpp.mech_vpp.eventlet')
-    def setUp(self, mock_w, mock_r, mock_client, mock_event):
+    @mock.patch('networking_vpp.mech_vpp.etcd.Client.write')
+    @mock.patch('networking_vpp.mech_vpp.etcd.Client.read')
+    def setUp(self, mock_w, mock_r, mock_event, mock_client):
         super(VPPMechanismDriverTestCase, self).setUp()
         self.mech = mech_vpp.VPPMechanismDriver()
         self.mech.initialize()
@@ -120,22 +121,34 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
         assert(self.mech.check_segment(segment, host) is False), \
             "Return value should have been False"
 
-    def test_phsynet_known(self):
-        """This test is trivial.
-
-        We're going to fake the input which is exactly the output
-        """
-        port_context = self.given_port_context()
-        # fake network existence
-        segment = port_context.segments_to_bind[0]
-        physnet = segment[api.PHYSICAL_NETWORK]
-        host = port_context.host
-        with mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.'
-                        'find_physnets',
-                        return_value=set([(host, physnet)])):
-            assert(self.mech.physnet_known(host, physnet) is True), \
-                "Return value for host [%s] and net [%s] should " \
-                "have been True" % (host, physnet)
+    def test_physnet_known(self):
+        child = {'key': "/networking-vpp/state/vpp0/physnets/testnet",
+                 'value': "1",
+                 'expiration': None,
+                 'ttl': None,
+                 'modifiedIndex': 5,
+                 'createdIndex': 1,
+                 'newKey': False,
+                 'dir': False,
+                 }
+        parent = {"node": {
+            'key': "/networking-vpp",
+            'value': None,
+            'expiration': None,
+            'ttl': None,
+            'modifiedIndex': 5,
+            'createdIndex': 1,
+            'newKey': False,
+            'dir': False,
+        }}
+        result = EtcdResult(**parent)
+        result._children = [child]
+        host = 'vpp0'
+        physnet = 'testnet'
+        self.mech.communicator.etcd_client.read.return_value = result
+        assert(self.mech.physnet_known(host, physnet) is True), \
+            "Return value for host [%s] and net [%s] should have been True" % (
+                host, physnet)
 
     def test_check_vlan_transparency(self):
         # shrircha: this is useless, as the function simply returns false.
@@ -146,8 +159,8 @@ class VPPMechanismDriverTestCase(test_plugin.Ml2PluginV2TestCase):
             "Return value for port [%s] should have been False" % (
                 port_context.current.id)
 
-    @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.bind')
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.unbind')
+    @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.bind')
     def test_update_port_precommit(self, m_bind, m_unbind):
         port_context = self.given_port_context()
         current_bind = port_context.binding_levels[-1]
