@@ -73,6 +73,10 @@ def get_vhostuser_name(uuid):
 ######################################################################
 
 
+class UnsupportedInterfaceException(Exception):
+    pass
+
+
 class VPPForwarder(object):
 
     def __init__(self,
@@ -304,7 +308,8 @@ class VPPForwarder(object):
                 iface_idx = self.vpp.create_vhostuser(path, mac)
                 props = {'path': path}
             else:
-                raise Exception('unsupported interface type')
+                raise UnsupportedInterfaceException(
+                    'unsupported interface type')
             props['bind_type'] = if_type
             props['iface_idx'] = iface_idx
             props['mac'] = mac
