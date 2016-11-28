@@ -1,0 +1,10 @@
+Code-Review+1: Dan Radez <dradez@redhat.com>
+Code-Review+1: Timothy Swanson <tiswanso@cisco.com>
+Code-Review+2: ijw-ubuntu <iawells@cisco.com>
+Workflow+1: ijw-ubuntu <iawells@cisco.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Mon, 28 Nov 2016 20:01:23 +0000
+Reviewed-on: https://review.openstack.org/403281
+Project: openstack/networking-vpp
+Branch: refs/heads/master
