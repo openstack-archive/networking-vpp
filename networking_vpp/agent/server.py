@@ -175,6 +175,7 @@ class VPPForwarder(object):
             'if_upstream_idx': if_upstream,
             'network_type': net_type,
             'segmentation_id': seg_id,
+            'physnet': physnet,
         }
 
     def delete_network_on_host(self, physnet, net_type, seg_id=None):
@@ -182,11 +183,14 @@ class VPPForwarder(object):
         if net is not None:
 
             self.vpp.delete_bridge_domain(net['bridge_domain_id'])
+            if net['network_type'] == 'vlan':
+                iface = self.vpp.get_interface(net['if_upstream']
+                                               + '.' + str(seg_id))
+                self.vpp.delete_vlan_subif(iface.sw_if_index)
 
-            # We leave the interface up.  Other networks may be using it
+            self.networks.pop((physnet, net_type, seg_id))
         else:
-            LOG.error("Delete Network: network is unknown "
-                      "to agent")
+            LOG.warn("Delete Network: network is unknown to agent")
 
     ########################################
     # stolen from LB driver
@@ -376,9 +380,18 @@ class VPPForwarder(object):
             else:
                 LOG.error('Unknown port type %s during unbind'
                           % props['bind_type'])
+            self.interfaces.pop(uuid)
 
-        # TODO(ijw): delete structures of newly unused networks with
-        # delete_network
+            # Check if this is the last interface on host
+            for interface in self.interfaces.values():
+                if props['net_data'] == interface['net_data']:
+                    break
+            else:
+                # Network is not used on this host, delete it
+                net = props['net_data']
+                self.delete_network_on_host(net['physnet'],
+                                            net['network_type'],
+                                            net['segmentation_id'])
 
 
 ######################################################################
