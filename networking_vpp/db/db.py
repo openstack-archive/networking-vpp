@@ -12,7 +12,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from networking_vpp.db.models import VppEtcdJournal
+from networking_vpp.db import models
 
 from oslo_log import log as logging
 LOG = logging.getLogger(__name__)
@@ -39,8 +39,8 @@ def journal_read(session, func):
     with session.begin():
         # Note also that this will, if the other thread succeeds, lock a
         # row that someone else deletes, so its session will abort.
-        entry = session.query(VppEtcdJournal) \
-                       .order_by(VppEtcdJournal.id) \
+        entry = session.query(models.VppEtcdJournal) \
+                       .order_by(models.VppEtcdJournal.id) \
                        .with_for_update() \
                        .first()
 
@@ -67,6 +67,6 @@ def journal_write(session, k, v):
     larger transaction.  It doesn't commit itself.
     """
 
-    entry = VppEtcdJournal(k=k, v=v)
+    entry = models.VppEtcdJournal(k=k, v=v)
     session.add(entry)
     session.flush()
