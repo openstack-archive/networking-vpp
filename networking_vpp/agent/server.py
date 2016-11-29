@@ -27,19 +27,19 @@ import json
 import os
 import re
 import sys
-from threading import Thread
+import threading
 import time
 import traceback
 import vpp
 
-from networking_vpp.agent.utils import EtcdHelper
+from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import config_opts
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from oslo_config import cfg
 from oslo_log import log as logging
-from urllib3.exceptions import TimeoutError
+from urllib3 import exceptions
 
 # TODO(ijw): backward compatibility, wants removing in future
 try:
@@ -306,8 +306,8 @@ class VPPForwarder(object):
                     # This is the external TAP device that will be
                     # created by an agent, say the DHCP agent later in
                     # time
-                    t = Thread(target=self.add_external_tap,
-                               args=(tap_name, br, bridge_name,))
+                    t = threading.Thread(target=self.add_external_tap,
+                                         args=(tap_name, br, bridge_name,))
                     t.start()
                     # This is the device that we just created with VPP
                     if not br.owns_interface(int_tap_name):
@@ -410,7 +410,7 @@ class EtcdListener(object):
         self.etcd_client = etcd_client
         self.vppf = vppf
         self.physnets = physnets
-        self.etcd_helper = EtcdHelper(self.etcd_client)
+        self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
         # We need certain directories to exist
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
@@ -538,7 +538,7 @@ class EtcdListener(object):
                     LOG.warn('Unexpected key change in etcd port feedback, '
                              'key %s' % rv.key)
 
-            except (etcd.EtcdWatchTimedOut, TimeoutError):
+            except (etcd.EtcdWatchTimedOut, exceptions.TimeoutError):
                 # This is normal
                 pass
             except etcd.EtcdEventIndexCleared:

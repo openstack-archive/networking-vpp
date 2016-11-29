@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from abc import ABCMeta
+import abc
 from abc import abstractmethod
 import etcd
 import eventlet
@@ -41,7 +41,7 @@ from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
 
-from urllib3.exceptions import TimeoutError
+from urllib3 import exceptions
 
 # TODO(ijw): backward compatibility, wants removing in future
 try:
@@ -288,7 +288,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         self.communicator.kick()
 
 
-@six.add_metaclass(ABCMeta)
+@six.add_metaclass(abc.ABCMeta)
 class AgentCommunicator(object):
 
     def __init__(self):
@@ -625,7 +625,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # is processed
                 tick = next_tick
 
-            except (etcd.EtcdWatchTimedOut, TimeoutError):
+            except (etcd.EtcdWatchTimedOut, exceptions.TimeoutError):
                 # this is normal
                 pass
             except Exception as e:

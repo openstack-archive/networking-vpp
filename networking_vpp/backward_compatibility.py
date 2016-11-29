@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from distutils.version import StrictVersion
+from distutils import version as d_version
 from neutron import version
 
 # Some constants and verifier functions have been deprecated but are still
@@ -23,12 +23,14 @@ from neutron import version
 
 IS_PRE_NEWTON = True
 
-if StrictVersion(str(version.version_info)) >= StrictVersion('9.0.0'):
+if d_version.StrictVersion(
+    str(version.version_info)) >= d_version.StrictVersion('9.0.0'):
     # >= Newton
     IS_PRE_NEWTON = False
     from neutron_lib import constants as nl_const
     DEVICE_OWNER_PREFIXES = nl_const.DEVICE_OWNER_PREFIXES
-elif StrictVersion(str(version.version_info)) >= StrictVersion('8.0.0'):
+elif d_version.StrictVersion(
+    str(version.version_info)) >= d_version.StrictVersion('8.0.0'):
     # Mitaka <= version < Newton
     from neutron_lib import constants as nl_const
     DEVICE_OWNER_PREFIXES = nl_const.DEVICE_OWNER_PREFIXES
