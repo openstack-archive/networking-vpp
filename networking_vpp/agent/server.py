@@ -109,7 +109,7 @@ class VPPForwarder(object):
             return self.vpp.get_interface(if_name).sw_if_index
         else:
             LOG.error("Error obtaining interface data from vpp "
-                      "for interface:%s" % if_name)
+                      "for interface:%s", if_name)
             return None
 
     def get_interface(self, physnet):
@@ -269,8 +269,8 @@ class VPPForwarder(object):
                 time.sleep(2)
                 wait_time -= 2
         if not found:
-            LOG.error('Failed waiting for external tap device:%s'
-                      % device_name)
+            LOG.error('Failed waiting for external tap device:%s',
+                      device_name)
 
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
@@ -382,8 +382,8 @@ class VPPForwarder(object):
                         except Exception as exc:
                             LOG.debug(exc)
             else:
-                LOG.error('Unknown port type %s during unbind'
-                          % props['bind_type'])
+                LOG.error('Unknown port type %s during unbind',
+                          props['bind_type'])
             self.interfaces.pop(uuid)
 
             # Check if this is the last interface on host

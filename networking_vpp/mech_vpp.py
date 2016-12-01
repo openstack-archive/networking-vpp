@@ -593,9 +593,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         host = m.group(1)
 
                         if action == 'delete':
-                            LOG.info('host %s has died' % host)
+                            LOG.info('host %s has died', host)
                         else:
-                            LOG.info('host %s is alive' % host)
+                            LOG.info('host %s is alive', host)
                     else:
                         LOG.warn('Unexpected key change in '
                                  'etcd port feedback: %s' % key)
