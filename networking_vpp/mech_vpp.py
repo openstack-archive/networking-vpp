@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from abc import ABCMeta
+import abc
 from abc import abstractmethod
 import etcd
 import eventlet
@@ -287,7 +287,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         self.communicator.kick()
 
 
-@six.add_metaclass(ABCMeta)
+@six.add_metaclass(abc.ABCMeta)
 class AgentCommunicator(object):
 
     def __init__(self):
