@@ -31,9 +31,8 @@ import threading
 import time
 import vpp
 
-from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import config_opts
-from networking_vpp.etcdutils import EtcdWatcher
+import networking_vpp.etcdutils
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
@@ -400,19 +399,14 @@ class VPPForwarder(object):
 
 ######################################################################
 
-LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
-
-
 class EtcdListener(object):
     def __init__(self, host, etcd_client, vppf, physnets):
         self.host = host
         self.etcd_client = etcd_client
         self.vppf = vppf
         self.physnets = physnets
-        self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
-        # We need certain directories to exist
-        self.mkdir(LEADIN + '/state/%s/ports' % self.host)
-        self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.etcd_helper = etcdutils.EtcdHelper(self.etcd_client)
+        self.keys = etcdutils.HostKeys(host)
 
     def mkdir(self, path):
         try:
@@ -447,21 +441,26 @@ class EtcdListener(object):
         # storing, so it's lost on reboot of VPP)
         physnets = self.physnets.keys()
         for f in physnets:
-            self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
-                                   % (self.host, f), 1)
+            self.etcd_client.write(self.keys.physnet_key(f), 1)
 
-        self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
+        # TODO(ijw): if we go stateful this might change Clear out our
+        # previous opinion of our own current state, as it will be
+        # outdated now we have to refresh VPP.
+        self.etcd_helper.clear_leaf_keys(self.keys.host_state_key_space)
 
-        self.etcd_helper.clear_state(self.state_key_space)
+        # We need certain directories to exist so that we can write to
+        # or watch them
+        self.etcd_helper.mkdir(self.keys.instruction_key_space)
+        self.etcd_helper.mkdir(self.keys.host_state_key_space)
+        self.etcd_helper.mkdir(self.keys.port_state_key_space)
+        self.etcd_helper.mkdir(self.keys.binding_key_space)
 
-        class PortWatcher(EtcdWatcher):
+        class PortWatcher(etcdutils.EtcdWatcher):
 
             def do_tick(self):
                 # The key that indicates to people that we're alive
                 # (not that they care)
-                self.etcd_client.write(LEADIN + '/state/%s/alive' %
-                                       self.data.host,
+                self.etcd_client.write(self.data.keys.host_alive_key(),
                                        1, ttl=3 * self.heartbeat)
 
             def resync(self):
@@ -471,7 +470,9 @@ class EtcdListener(object):
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
-                m = re.match(self.data.port_key_space + '/([^/]+)$', key)
+                m = re.match(self.data.keys.instruction_key_space +
+                             '/([^/]+)$',
+                             key)
 
                 if m:
                     port = m.group(1)
@@ -481,8 +482,9 @@ class EtcdListener(object):
                         self.data.unbind(port)
                         try:
                             self.etcd_client.delete(
-                                self.data.state_key_space + '/%s'
-                                % port)
+                                self.data.keys.binding_key(port))
+                            self.etcd_client.delete(
+                                self.data.keys.port_state_key(port))
                         except etcd.EtcdKeyNotFound:
                             # Gone is fine; if we didn't delete it
                             # it's no problem
@@ -496,16 +498,16 @@ class EtcdListener(object):
                                                data['physnet'],
                                                data['network_type'],
                                                data['segmentation_id'])
-                        self.etcd_client.write(self.data.state_key_space +
-                                               '/%s'
-                                               % port,
+                        # Store our own choices about this port
+                        self.etcd_client.write(self.data.port_state_key(port),
                                                json.dumps(props))
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
                                 'key %s', key)
 
-        PortWatcher(self.etcd_client, 'return_worker', self.port_key_space,
+        PortWatcher(self.etcd_client, 'return_worker',
+                    self.keys.instruction_key_space,
                     heartbeat=self.AGENT_HEARTBEAT, data=self).watch_forever()
 
 
