@@ -18,7 +18,6 @@ from abc import abstractmethod
 import etcd
 import eventlet
 import eventlet.event
-import json
 from oslo_config import cfg
 from oslo_log import log as logging
 import re
@@ -30,7 +29,7 @@ import backward_compatibility as bc_attr
 
 from networking_vpp import config_opts
 from networking_vpp.db import db
-from networking_vpp.etcdutils import EtcdWatcher
+from networking_vpp import etcdutils
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
@@ -343,8 +342,6 @@ class AgentCommunicator(object):
 # database for work.  We might have missed the kick (or another
 # process may have added work and then died before processing it).
 PARANOIA_TIME = 50              # TODO(ijw): make configurable?
-# Our prefix for etcd keys, in case others are using etcd.
-LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
 
 
 class EtcdAgentCommunicator(AgentCommunicator):
@@ -357,18 +354,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     forwarded to etcd in order even when things are not
     quite going as planned.
 
-    In etcd, the layout is:
-    LEADIN/nodes - subdirs are compute nodes
-    LEADIN/nodes/X/ports - entries are JSON-ness containing
-    all information on each bound port on the compute node.
-    (Unbound ports are homeless, so the act of unbinding is
-    the deletion of this entry.)
-    LEADIN/state/nodes/X - return state of the VPP
-    LEADIN/state/nodes/X/alive - heartbeat back
-    LEADIN/state/nodes/X/ports - port information.
-    LEADIN/state/nodes/X/physnets - physnets on node
-    Specifically a key here (regardless of value) indicates
-    the port has been bound and is receiving traffic.
     """
 
     def __init__(self):
@@ -382,11 +367,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
+        self.keys = etcdutils.SystemKeys()
+
+        self.etcdhelper = etcdutils.EtcdHelper(self.etcd_client)
+
         # We need certain directories to exist
-        self.state_key_space = LEADIN + '/state'
-        self.port_key_space = LEADIN + '/nodes'
-        self.do_etcd_mkdir(self.state_key_space)
-        self.do_etcd_mkdir(self.port_key_space)
+        self.etcdhelper.mkdir(self.keys.state_key_space)
+        self.etcdhelper.mkdir(self.keys.port_key_space)
 
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
@@ -408,9 +395,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def find_physnets(self):
         physical_networks = set()
-        for rv in self.etcd_client.read(LEADIN, recursive=True).children:
+        for rv in self.etcd_client.read(self.keys.state_key_space,
+                                        recursive=True).children:
             # Find all known physnets
-            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
+            m = re.match(self.keys.state_key_space +
+                         '/([^/]+)/physnets/([^/]+)$',
                          rv.key)
             if m:
                 host = m.group(1)
@@ -420,7 +409,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         return physical_networks
 
     def _port_path(self, host, port):
-        return self.port_key_space + "/" + host + "/ports/" + port['id']
+        return self.keys.port_key_space + "/" + host + "/ports/" + port['id']
 
     ######################################################################
     # These functions use a DB journal to log messages before
@@ -468,31 +457,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     # The post-journal part of the work that clears out the table and
     # updates etcd.
 
-    def do_etcd_update(self, k, v):
-        try:
-            # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
-            if v is None:
-                LOG.debug('deleting key %s', k)
-                try:
-                    self.etcd_client.delete(k)
-                except etcd.EtcdKeyNotFound:
-                    # The key may have already been deleted
-                    # no problem here
-                    pass
-            else:
-                LOG.debug('writing key %s', k)
-                self.etcd_client.write(k, json.dumps(v))
-            return True
-        except Exception:       # TODO(ijw) select your exceptions
-            return False
-
-    def do_etcd_mkdir(self, path):
-        try:
-            self.etcd_client.write(path, None, dir=True)
-        except etcd.EtcdNotFile:
-            # Thrown when the directory already exists, which is fine
-            pass
-
     def _forward_worker(self):
         LOG.debug('forward worker begun')
 
@@ -501,7 +465,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
             try:
                 def work(k, v):
                     LOG.debug('forward worker updating etcd key %s', k)
-                    if self.do_etcd_update(k, v):
+                    if self.etcdhelper.update(k, v):
                         return True
                     else:
                         # something went bad; breathe, in case we end
@@ -556,7 +520,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # TODO(ijw): agents
         # TODO(ijw): notifications
 
-        class ReturnWatcher(EtcdWatcher):
+        class ReturnWatcher(etcdutils.EtcdWatcher):
 
             def resync(self):
                 # Ports may have been bound.  do_work will send an
@@ -569,7 +533,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
-                m = re.match(self.data.state_key_space +
+                m = re.match(self.data.keys.state_key_space +
                              '/([^/]+)/ports/([^/]+)$',
                              key)
 
@@ -584,7 +548,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         self.data.notify_bound(port, host)
                 else:
                     # Matches a port key, gets host and uuid
-                    m = re.match(self.data.state_key_space + '/([^/]+)/alive$',
+                    m = re.match(self.data.keys.state_key_space +
+                                 '/([^/]+)/alive$',
                                  key)
 
                     if m:
@@ -601,4 +566,4 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                     'etcd port feedback: %s', key)
 
         ReturnWatcher(self.etcd_client, 'return_worker',
-                      self.state_key_space, data=self).watch_forever()
+                      self.keys.state_key_space, data=self).watch_forever()
