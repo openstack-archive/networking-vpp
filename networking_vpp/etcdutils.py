@@ -83,7 +83,7 @@ class EtcdWatcher(object):
         """
 
         try:
-            LOG.debug("%s: pausing" % self.name)
+            LOG.debug("%s: pausing", self.name)
 
             try:
                 if self.tick is None:
@@ -121,12 +121,12 @@ class EtcdWatcher(object):
 
                 next_tick = rv.etcd_index + 1
 
-                LOG.debug("%s watch index recovered: %s" % (self.name,
-                                                            str(next_tick)))
+                LOG.debug("%s watch index recovered: %s",
+                          self.name, str(next_tick))
 
             for kv in vals:
 
-                LOG.debug("%s: active, key %s" % (self.name, kv.key))
+                LOG.debug("%s: active, key %s", self.name, kv.key)
 
                 try:
                     self.do_work(kv.action, kv.key, kv.value)

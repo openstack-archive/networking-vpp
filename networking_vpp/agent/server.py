@@ -274,7 +274,7 @@ class VPPForwarder(object):
 
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
-            LOG.debug('port %s repeat binding request - ignored' % uuid)
+            LOG.debug('port %s repeat binding request - ignored', uuid)
         else:
             LOG.debug('binding port %s as type %s' %
                       (uuid, if_type))

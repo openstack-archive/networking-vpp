@@ -51,9 +51,9 @@ class VPPInterface(object):
         """
 
         try:
-            self.LOG.debug("checking return value for object: %s" % str(t))
+            self.LOG.debug("checking return value for object: %s", str(t))
             if t.retval != 0:
-                self.LOG.debug('FAIL? retval here is %s' % t.retval)
+                self.LOG.debug('FAIL? retval here is %s', t.retval)
         except AttributeError as e:
             self.LOG.debug("Unexpected request format.  Error: %s on %s"
                            % (e, t))
@@ -110,7 +110,7 @@ class VPPInterface(object):
                                           True,  # use custom MAC
                                           mac_to_bytes(mac)
                                           )
-        self.LOG.debug("Created vhost user interface object: %s" % str(t))
+        self.LOG.debug("Created vhost user interface object: %s", str(t))
         self._check_retval(t)
 
         if is_server:
@@ -126,7 +126,7 @@ class VPPInterface(object):
         return t.sw_if_index
 
     def delete_vhostuser(self, idx):
-        self.LOG.debug("Deleting VPP interface - index: %s" % idx)
+        self.LOG.debug("Deleting VPP interface - index: %s", idx)
         t = vpp_papi.delete_vhost_user_if(idx)
 
         self._check_retval(t)
@@ -170,7 +170,7 @@ class VPPInterface(object):
         t = vpp_papi.create_vlan_subif(
             if_id,
             vlan_tag)
-        self.LOG.debug("Create vlan subinterface response: %s" % str(t))
+        self.LOG.debug("Create vlan subinterface response: %s", str(t))
 
         self._check_retval(t)
 
@@ -183,7 +183,7 @@ class VPPInterface(object):
         self.LOG.debug("Deleting subinterface with sw_if_index: %s"
                        % (sw_if_index))
         t = vpp_papi.delete_subif(sw_if_index)
-        self.LOG.debug("Delete subinterface response: %s" % str(t))
+        self.LOG.debug("Delete subinterface response: %s", str(t))
 
         self._check_retval(t)
         return

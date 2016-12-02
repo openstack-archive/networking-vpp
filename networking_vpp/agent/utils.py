@@ -26,7 +26,7 @@ class EtcdHelper(object):
 
     def clear_state(self, key_space):
         """Clear the keys in the key_space"""
-        LOG.debug("Clearing key space: %s" % key_space)
+        LOG.debug("Clearing key space: %s", key_space)
         try:
             rv = self.etcd_client.read(key_space)
             for child in rv.children:

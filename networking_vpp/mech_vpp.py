@@ -279,7 +279,7 @@ class VPPMechanismDriver(api.MechanismDriver):
     def delete_port_precommit(self, port_context):
         port = port_context.current
         host = port_context.host
-        LOG.debug('ML2_VPP: delete_port_postcommit, port is %s' % str(port))
+        LOG.debug('ML2_VPP: delete_port_postcommit, port is %s', str(port))
         self.communicator.unbind(port_context._plugin_context.session,
                                  port, host)
 
@@ -472,7 +472,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         try:
             # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
             if v is None:
-                LOG.debug('deleting key %s' % k)
+                LOG.debug('deleting key %s', k)
                 try:
                     self.etcd_client.delete(k)
                 except etcd.EtcdKeyNotFound:
@@ -480,7 +480,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     # no problem here
                     pass
             else:
-                LOG.debug('writing key %s' % k)
+                LOG.debug('writing key %s', k)
                 self.etcd_client.write(k, json.dumps(v))
             return True
         except Exception:       # TODO(ijw) select your exceptions
@@ -500,7 +500,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         while True:
             try:
                 def work(k, v):
-                    LOG.debug('forward worker updating etcd key %s' % k)
+                    LOG.debug('forward worker updating etcd key %s', k)
                     if self.do_etcd_update(k, v):
                         return True
                     else:
