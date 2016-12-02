@@ -194,7 +194,7 @@ class VPPForwarder(object):
 
             self.networks.pop((physnet, net_type, seg_id))
         else:
-            LOG.warn("Delete Network: network is unknown to agent")
+            LOG.warning("Delete Network: network is unknown to agent")
 
     ########################################
     # stolen from LB driver
@@ -502,8 +502,8 @@ class EtcdListener(object):
                                                json.dumps(props))
 
                 else:
-                    LOG.warn('Unexpected key change in etcd port feedback, '
-                             'key %s' % key)
+                    LOG.warning('Unexpected key change in etcd port feedback, '
+                                'key %s', key)
 
         PortWatcher(self.etcd_client, 'return_worker', self.port_key_space,
                     heartbeat=self.AGENT_HEARTBEAT, data=self).watch_forever()

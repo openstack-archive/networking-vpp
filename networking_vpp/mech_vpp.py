@@ -597,8 +597,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         else:
                             LOG.info('host %s is alive', host)
                     else:
-                        LOG.warn('Unexpected key change in '
-                                 'etcd port feedback: %s' % key)
+                        LOG.warning('Unexpected key change in '
+                                    'etcd port feedback: %s', key)
 
         ReturnWatcher(self.etcd_client, 'return_worker',
                       self.state_key_space, data=self).watch_forever()
