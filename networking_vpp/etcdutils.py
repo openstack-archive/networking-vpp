@@ -70,7 +70,7 @@ class EtcdWatcher(object):
                 self.do_watch()
             except Exception as e:
                 LOG.warning('%s: etcd threw exception %s',
-                            (self.name, traceback.format_exc(e)))
+                            self.name, traceback.format_exc(e))
                 # In case of a dead etcd causing continuous
                 # exceptions, the pause here avoids eating all the
                 # CPU
