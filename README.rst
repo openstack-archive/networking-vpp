@@ -303,7 +303,7 @@ How to Install?
 5) Steps for devstack
     We have tested our code against the Mitaka release and as a
     result it is recommended to start with.
-
+    - apt-get install python-os-testr   ## (final missing dep on recent 16.04)
     - git clone https://git.openstack.org/openstack-dev/devstack
     - cd devstack
     - git checkout stable/mitaka
@@ -342,8 +342,8 @@ How to Install?
      # Find your uplink interfaces by using the command "sudo vppctl show int"
      # Use local0 as the upstream interface if you are doing a one host deployment
      # For a multi-node deployment make sure to use the correct uplink
-     interface in the local.conf file on each compute node. Separate multiple
-     interface mappings using a comma.
+     # interface in the local.conf file on each compute node. Separate multiple
+     # interface mappings using a comma.
      MECH_VPP_PHYSNETLIST=physnet1:GigabitEthernet2/2/0
      # Etcd host to connect to
      ETCD_HOST=X.X.X.X
