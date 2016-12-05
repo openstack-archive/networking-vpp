@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# functions - networking-vpp driver devstack utility functions
+
+function install_vpp {
+  # TODO: Make VPP branch configurable
+  if is_fedora; then
+      sudo tee /etc/yum.repos.d/fdio.repo <<EOF
+[fdio-master]
+name=fd.io master branch latest merge
+baseurl=https://nexus.fd.io/content/repositories/fd.io.master.centos7/
+enabled=1
+gpgcheck=0
+EOF
+  elif is_ubuntu; then
+      echo "deb [trusted=yes] https://nexus.fd.io/content/repositories/fd.io.master.ubuntu.$os_CODENAME.main/ ./" | sudo tee  /etc/apt/sources.list.d/99fd.io.list
+  else
+      die $LINENO "Can't install VPP on unsupported os: $os_VENDOR"
+  fi
+  install_package vpp
+  die_if_not_set $LINENO VPP_INT_PCI_DEV "VPP_INT_PCI_DEV must be set"
+  sudo sed -i "/dpdk  *{/a\ \ dev $VPP_INT_PCI_DEV" /etc/vpp/startup.conf
+}
+
+function start_vpp {
+    is_package_installed vpp || install_vpp
+    start_service vpp
+}
+
+function setup_host_env {
+    is_package_installed etcd || install_package etcd
+    restart_service etcd
+    systemctl is-active vpp || start_vpp
+    is_package_installed vpp-python-api || install_package vpp-python-api
+}

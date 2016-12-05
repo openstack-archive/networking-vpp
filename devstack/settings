@@ -5,6 +5,8 @@ MECH_VPP_DIR="$DEST/networking-vpp"
 MECH_VPP_BIN_DIR=$(get_python_exec_prefix)
 VPP_CP_BINARY="$MECH_VPP_BIN_DIR/vpp-agent"
 
+#VPP interface pci device. Only used if VPP is being installed when devstack is run.
+VPP_INT_PCI_DEV=${VPP_INT_PCI_DEV:-}
 MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:GigabitEthernet2/2/0}
 #Ip address of the host to connect to
 ETCD_HOST=${ETCD_HOST:-127.0.0.1}
@@ -20,3 +22,5 @@ ENABLE_VPP_RESTART=${ENABLE_VPP_RESTART:-False}
 VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
 VXLAN_VRF=${VXLAN_VRF:-1}
+
+FILTERS+=,NUMATopologyFilter
