@@ -1,0 +1,24 @@
+
+# Make networking-vpp the mechanism driver
+Q_ML2_PLUGIN_MECHANISM_DRIVERS=vpp
+
+# Disable nova networking and ovs agent
+disable_service n-net q-agt
+
+# Disable cinder
+disable_service c-api c-vol c-sch c-bak cinder
+
+# Enable Neutron
+ENABLED_SERVICES+=,q-svc,q-meta,q-dhcp
+
+# Enable L3 agent
+Q_L3_ENABLED=${Q_L3_ENABLED:-True}
+
+# Use VLAN as network type
+Q_ML2_TENANT_NETWORK_TYPE=${Q_ML2_TENANT_NETWORK_TYPE:-"vlan"}
+Q_ML2_PLUGIN_TYPE_DRIVERS=${Q_ML2_PLUGIN_TYPE_DRIVERS:-"vlan,flat"}
+
+# VLAN configs
+PHYSICAL_NETWORK=${PHYSICAL_NETWORK:-"physnet"}
+PUBLIC_PHYSICAL_NETWORK=${PUBLIC_PHYSICAL_NETWORK:-"physnet"}
+ML2_VLAN_RANGES=${ML2_VLAN_RANGES:-"physnet:1:1000"}

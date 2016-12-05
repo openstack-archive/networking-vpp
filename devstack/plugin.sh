@@ -1,5 +1,7 @@
 # plugin - DevStack plugin.sh dispatch script for vpp
 
+source $DEST/networking-vpp/devstack/functions
+
 vpp_debug() {
     if [ ! -z "$VPP_DEVSTACK_DEBUG" ] ; then
        "$@" || true # a debug command failing is not a failure
@@ -12,21 +14,21 @@ vpp_debug tput setab 1
 name=networking-vpp
 
 # All machines using the VPP mechdriver and agent
-function pre_install_vpp {
-    :
+function pre_install_networking_vpp {
+    setup_host_env
 }
 
-function install_vpp {
+function install_networking_vpp {
     cd "$MECH_VPP_DIR"
     echo "Installing networking-vpp"
     setup_develop "$MECH_VPP_DIR"
 }
 
-function init_vpp {
+function init_networking_vpp {
     :
 }
 
-function configure_vpp {
+function configure_networking_vpp {
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp physnets $MECH_VPP_PHYSNETLIST
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_host $ETCD_HOST
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_port $ETCD_PORT
@@ -47,7 +49,7 @@ function configure_vpp {
     fi
 }
 
-function shut_vpp_down {
+function shut_networking_vpp_down {
     :
 }
 
@@ -89,31 +91,37 @@ agent_do() {
 if [[ "$1" == "stack" && "$2" == "pre-install" ]]; then
     # Set up system services
     echo_summary "Configuring system services $name"
-    pre_install_vpp
+    pre_install_networking_vpp
     agent_do pre_install_vpp_agent
 
 elif [[ "$1" == "stack" && "$2" == "install" ]]; then
     # Perform installation of service source
     echo_summary "Installing $name"
-    install_vpp
+    install_networking_vpp
     agent_do install_vpp_agent
 
 elif [[ "$1" == "stack" && "$2" == "post-config" ]]; then
     # Configure after the other layer 1 and 2 services have been configured
     echo_summary "Configuring $name"
-    configure_vpp
+    configure_networking_vpp
     agent_do configure_vpp_agent
 
 elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
 # Initialize and start the service
     echo_summary "Initializing $name"
-    init_vpp
+    init_networking_vpp
     agent_do init_vpp_agent
+
+elif [[ "$1" == "stack" && "$2" == "test-config" ]]; then
+    for flavor in $(openstack flavor list -c Name -f value); do
+        echo "INFO: Configuring $flavor to use hugepage"
+        nova flavor-key $flavor set hw:mem_page_size=large
+    done
 fi
 
 if [[ "$1" == "unstack" ]]; then
     # Shut down services
-    shut_vpp_down
+    shut_networking_vpp_down
     agent_do shut_vpp_agent_down
 fi
 
