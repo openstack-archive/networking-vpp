@@ -531,6 +531,10 @@ def main():
         LOG.debug('Restarting VPP..')
         VPPRestart().wait()
 
+    if not cfg.CONF.ml2_vpp.physnets:
+        LOG.error("Missing physnets config. Exiting...")
+        sys.exit(1)
+
     physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
     physnets = {}
     for f in physnet_list:
