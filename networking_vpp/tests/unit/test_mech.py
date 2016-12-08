@@ -21,6 +21,8 @@ from neutron.plugins.common import constants
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 
+from oslo_config import cfg
+
 
 FAKE_PORT = {'status': 'DOWN',
              'binding:host_id': '',
@@ -201,3 +203,32 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
         port_context = self.given_port_context()
         self.mech.delete_port_postcommit(port_context)
         self.mech.communicator.kick.assert_called_once()
+
+
+class EtcdAgentCommunicatorTestCases(base.BaseTestCase):
+    @mock.patch('etcd.Client')
+    def test_etcd_single_host_config(self, mock_client):
+        cfg.CONF.set_override("etcd_host", '127.0.0.1', 'ml2_vpp')
+
+        mech_vpp.EtcdAgentCommunicator()
+        mock_client.assert_called_once_with(
+            allow_reconnect=True,
+            host='127.0.0.1',
+            password=None,
+            port=4001,
+            username=None)
+
+    @mock.patch('etcd.Client')
+    def test_etcd_multi_hosts_config(self, mock_client):
+        hosts = '192.168.1.10:1234,192.168.1.11:1235,192.168.1.12:1236'
+        cfg.CONF.set_override("etcd_host", hosts, 'ml2_vpp')
+
+        mech_vpp.EtcdAgentCommunicator()
+        mock_client.assert_called_once_with(
+            allow_reconnect=True,
+            host=(('192.168.1.10', '1234'),
+                  ('192.168.1.11', '1235'),
+                  ('192.168.1.12', '1236')),
+            password=None,
+            port=4001,
+            username=None)
