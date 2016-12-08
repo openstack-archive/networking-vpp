@@ -14,6 +14,7 @@
 #    under the License.
 
 
+import enum
 import fnmatch
 import grp
 import os
@@ -31,12 +32,25 @@ def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
 
 
-def _vpp_cb(*args, **kwargs):
-    # sw_interface_set_flags comes back when you delete interfaces
-    # print 'callback:', args, kwargs
-    pass
+def _cb(msg_name, data):
+    # Forward callback to VPPInterface instance
+    # we can pass None as the logger, as we're accessing
+    # to a singleton, and we can't be called before the
+    # real initialization of VPPInterface.
+    VPPInterface(None)._cb(msg_name, data)
 
 
+def singleton(cls):
+    instances = {}
+
+    def getinstance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return getinstance
+
+
+@singleton
 class VPPInterface(object):
 
     def _check_retval(self, t):
@@ -127,7 +141,6 @@ class VPPInterface(object):
         self._check_retval(t)
 
     ########################################
-
     def __init__(self, log):
         self.LOG = log
         jsonfiles = []
@@ -136,10 +149,66 @@ class VPPInterface(object):
                 jsonfiles.append(os.path.join(root, filename))
 
         self._vpp = vpp_papi.VPP(jsonfiles)
-        self._vpp.connect("python-VPPInterface")
         # Sometimes a callback fires unexpectedly.  We need to catch them
         # because vpp_papi will traceback otherwise
-        self._vpp.register_event_callback(_vpp_cb)
+        self._vpp.register_event_callback(_cb)
+
+        self.registered_callbacks = {}
+        for event in self.CallbackEvents:
+            self.registered_callbacks[event] = []
+
+        self._vpp.connect("python-VPPInterface")
+
+    ########################################
+    class CallbackEvents(enum.Enum):
+        """Enum of possible events from vpp.
+
+        This enum is constructed as a 2 tuple, containing:
+        - the name of the method to call, assuming all want_* methods
+          will have the following prototype: want_*(enable, pid)
+        - the returned type name, which is used to forward the event
+          to the appropriate callback.
+        """
+        INTERFACE = ('want_interface_events',
+                     'sw_interface_set_flags')
+        STATISTICS = ('want_stats',
+                      'vnet_interface_counters')
+        OAM = ('want_oam_events',
+               'oam_event')
+
+    def _cb(self, msg_name, data):
+        """VPP callback.
+
+        - msg_name: name of the structure 'data'
+        - data itself """
+
+        for event in self.CallbackEvents:
+            (unused, event_data_name) = event.value
+            if msg_name == event_data_name:
+                for callback in self.registered_callbacks[event]:
+                    callback(data)
+
+    def register_for_events(self, event, target):
+        if target in self.registered_callbacks[event]:
+            raise Exception('Target %s already registered for Event %s',
+                            str(target), str(event))
+        self.registered_callbacks[event].append(target)
+        if len(self.registered_callbacks[event]) == 1:
+            (method_name, event_cls) = event.value
+            register_method = getattr(self._vpp, method_name)
+            register_method(enable_disable=1, pid=os.getpid())
+
+    def unregister_for_event(self, event, target):
+        if target not in self.registered_callbacks[event]:
+            raise Exception('Target %s not registered for Event %s',
+                            str(target), str(event))
+        self.registered_callbacks[event].remove(target)
+        if len(self.registered_callbacks[event]) == 0:
+            (method_name, event_cls) = event.value
+            register_method = getattr(self._vpp, method_name)
+            register_method(enable_disable=0, pid=os.getpid())
+
+    ########################################
 
     def disconnect(self):
         self._vpp.disconnect()
