@@ -14,9 +14,13 @@
 #    under the License.
 
 from etcd import EtcdNotFile
+from networking_vpp.agent import exceptions as vpp_agent_exec
 from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
+
+ETC_HOSTS_DELIMITER = ','
+ETC_PORT_HOST_DELIMITER = ':'
 
 
 class EtcdHelper(object):
@@ -34,3 +38,20 @@ class EtcdHelper(object):
         except EtcdNotFile:
             # Can't delete directories - they're harmless anyway
             pass
+
+
+def parse_host_config(etc_host):
+    if ETC_HOSTS_DELIMITER in etc_host:
+        hosts = etc_host.split(ETC_HOSTS_DELIMITER)
+        etc_hosts = ()
+        for host in hosts:
+            try:
+                host, port = host.split(ETC_PORT_HOST_DELIMITER)
+                etc_hosts = etc_hosts + ((host, int(port)),)
+            except ValueError:
+                raise vpp_agent_exec.InvalidEtcHostsConfig()
+        return etc_hosts
+    else:
+        if not etc_host:
+            raise vpp_agent_exec.InvalidEtcHostConfig()
+        return etc_host
