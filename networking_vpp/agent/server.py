@@ -414,6 +414,11 @@ class EtcdListener(object):
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
 
+        self.waiting_qemu_connection = {}
+        cb_event = self.vppf.vpp.CallbackEvents.INTERFACE
+        self.vppf.vpp.register_for_events(cb_event,
+                                          self._link_status_event, self)
+
     def mkdir(self, path):
         try:
             self.etcd_client.write(path, None, dir=True)
@@ -432,12 +437,21 @@ class EtcdListener(object):
     def bind(self, id, binding_type, mac_address, physnet, network_type,
              segmentation_id):
         # args['binding_type'] in ('vhostuser', 'plugtap'):
-        return self.vppf.bind_interface_on_host(binding_type,
-                                                id,
-                                                mac_address,
-                                                physnet,
-                                                network_type,
-                                                segmentation_id)
+        props = self.vppf.bind_interface_on_host(binding_type,
+                                                 id,
+                                                 mac_address,
+                                                 physnet,
+                                                 network_type,
+                                                 segmentation_id)
+        self.waiting_qemu_connection[props['iface_idx']] = (id, props)
+
+    def _link_status_event(self, iface):
+        if iface.sw_if_index in self.waiting_qemu_connection:
+            if iface.link_up_down == 1:
+                (port, props) = self.waiting_qemu_connection[iface.sw_if_index]
+                self.etcd_client.write(self.state_key_space + '/%s' % port,
+                                       json.dumps(props))
+                self.waiting_qemu_connection.remove(iface.sw_if_index)
 
     AGENT_HEARTBEAT = 60  # seconds
 
@@ -490,16 +504,12 @@ class EtcdListener(object):
                     else:
                         # Create or update == bind
                         data = json.loads(value)
-                        props = self.data.bind(port,
-                                               data['binding_type'],
-                                               data['mac_address'],
-                                               data['physnet'],
-                                               data['network_type'],
-                                               data['segmentation_id'])
-                        self.etcd_client.write(self.data.state_key_space +
-                                               '/%s'
-                                               % port,
-                                               json.dumps(props))
+                        self.data.bind(port,
+                                       data['binding_type'],
+                                       data['mac_address'],
+                                       data['physnet'],
+                                       data['network_type'],
+                                       data['segmentation_id'])
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '

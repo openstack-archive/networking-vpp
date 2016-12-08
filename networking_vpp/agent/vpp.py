@@ -14,6 +14,7 @@
 #    under the License.
 
 
+import enum
 import grp
 import os
 import pwd
@@ -30,17 +31,25 @@ def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
 
 
-def _vpp_cb(*args, **kwargs):
-    # sw_interface_set_flags comes back when you delete interfaces
-    # print 'callback:', args, kwargs
-    pass
+def _cb(*args, **kwargs):
+    # Forward callback to VPPInterface instance
+    # we can pass None as the logger, as we're accessing
+    # to a singleton, and we can't be called before the
+    # real initialization of VPPInterface.
+    VPPInterface(None)._cb(args, kwargs)
 
 
-# Sometimes a callback fires unexpectedly.  We need to catch them
-# because vpp_papi will traceback otherwise
-vpp_papi.register_event_callback(_vpp_cb)
+def singleton(cls):
+    instances = {}
+
+    def getinstance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return getinstance
 
 
+@singleton
 class VPPInterface(object):
 
     def _check_retval(self, t):
@@ -132,10 +141,52 @@ class VPPInterface(object):
         self._check_retval(t)
 
     ########################################
-
     def __init__(self, log):
+        print('__init__')
         self.LOG = log
         self.r = vpp_papi.connect("test_papi")
+        self.registered_callbacks = {}
+        for event in self.CallbackEvents:
+            self.registered_callbacks[event] = []
+        vpp_papi.register_event_callback(_cb)
+
+    ########################################
+    class CallbackEvents(enum.Enum):
+        INTERFACE = (vpp_papi.want_interface_events,
+                     vpp_papi.vpe.sw_interface_set_flags)
+        STATISTICS = (vpp_papi.want_stats,
+                      vpp_papi.vpe.vnet_interface_counters)
+        OAM = (vpp_papi.want_oam_events,
+               vpp_papi.vpe.oam_event)
+
+    def _cb(self, *args, **kwargs):
+        # sw_interface_set_flags comes back when you delete interfaces
+        # print 'callback:', args, kwargs
+        for event in self.CallbackEvents:
+            (method, event_cls) = event.value
+            if type(args[0]) is event_cls:
+                for (cb, cb_arg) in self.registered_callbacks[event]:
+                    cb(cb_arg, args[0])
+
+    def register_for_events(self, event, target, arg):
+        if (target, arg) in self.registered_callbacks[event]:
+            raise Exception('Target %s already registered for Event %s',
+                            str(target), str(event))
+        self.registered_callbacks[event].append((target, arg))
+        if len(self.registered_callbacks[event]) == 1:
+            (register_method, event_cls) = event.value
+            register_method(1, os.getpid())
+
+    def unregister_for_event(self, event, target, arg):
+        if (target, arg) not in self.registered_callbacks[event]:
+            raise Exception('Target %s not registered for Event %s',
+                            str(target), str(event))
+        self.registered_callbacks[event].remove((target, arg))
+        if len(self.registered_callbacks[event]) == 0:
+            (register_method, event_cls) = event.value
+            register_method(0, os.getpid())
+
+    ########################################
 
     def disconnect(self):
         vpp_papi.disconnect()
