@@ -23,6 +23,7 @@
 # worked out.  The two codebases will merge in the future.
 
 import etcd
+import eventlet
 import json
 import os
 import re
@@ -53,6 +54,8 @@ LOG = logging.getLogger(__name__)
 # config_opts is required to configure the options within it, but
 # not referenced from here, so shut up tox:
 assert config_opts
+
+eventlet.monkey_patch()
 
 ######################################################################
 
@@ -107,6 +110,52 @@ class VPPForwarder(object):
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
 
+        # key: sw if index in VPP; present when vhost-user is
+        # connected and removed when we delete things.  May accumulate
+        # any other VPP interfaces too, but that's harmless.
+        self.iface_connected = set()
+
+        self.vhost_ready_callback = None
+        self.vpp.register_for_events(cb_event, self._vhost_ready_event)
+
+    ########################################
+        
+    def _vhost_ready_event(self, iface):
+        """Callback from VPP interface on vhostuser socket connection"""
+
+        # TODO(ijw): messy and a bit specific to the VPP interface -
+        # shouldn't be returning the API datastructure?
+        LOG.debug("vhost online: %s", str(iface))
+        self._notify_connected(iface.sw_if_index)
+
+    def _notify_connected(self, sw_if_index):
+        """Deal with newly active interfaces noticed by VPP
+
+        Any interface that has been created and has also been
+        connected to goes into the up state.  At this point, we can
+        safely say that the VM is ready for traffic passing.
+
+        When interacting with Nova, this usually indicates that the VM
+        has been created and the vhost-user connection made.  We
+        should send the notification only after the port has been
+        created and the hypervisor has attached to it.  (You have to
+        create the interface to be attached to but this checks for
+        the data that's written on creation to be ready to avoid
+        a race condition.)
+
+        We may send multiple notifications to Nova if an interface
+        disconnects and reconnects - this is harmless.
+        """
+        self.iface_connected.add(sw_if_index)
+
+        if self.vhost_ready_callback:
+            self.vhost_ready_callback(sw_if_index)
+
+    def vhostuser_linked_up(self, sw_if_index):
+        return sw_if_index in self.iface_connected
+    
+    ########################################
+        
     def get_vpp_ifidx(self, if_name):
         """Return VPP's interface index value for the network interface"""
         if self.vpp.get_interface(if_name):
@@ -390,6 +439,9 @@ class VPPForwarder(object):
                           props['bind_type'])
             self.interfaces.pop(uuid)
 
+            # This interface is no longer connected if it's deleted
+            self.iface_connected.remove(iface_idx)
+
             # Check if this is the last interface on host
             for interface in self.interfaces.values():
                 if props['net_data'] == interface['net_data']:
@@ -418,6 +470,10 @@ class EtcdListener(object):
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
 
+        # key: if index in VPP; value: (ID, prop-dict) tuple
+        self.iface_state = {}
+        cb_event = self.vppf.vpp.CallbackEvents.VHOST_USER_CONNECT
+
     def mkdir(self, path):
         try:
             self.etcd_client.write(path, None, dir=True)
@@ -436,12 +492,41 @@ class EtcdListener(object):
     def bind(self, id, binding_type, mac_address, physnet, network_type,
              segmentation_id):
         # args['binding_type'] in ('vhostuser', 'plugtap'):
-        return self.vppf.bind_interface_on_host(binding_type,
-                                                id,
-                                                mac_address,
-                                                physnet,
-                                                network_type,
-                                                segmentation_id)
+        props = self.vppf.bind_interface_on_host(binding_type,
+                                                 id,
+                                                 mac_address,
+                                                 physnet,
+                                                 network_type,
+                                                 segmentation_id)
+
+        iface_idx = props['iface_idx']
+        self.iface_state[iface_idx] = (id, props)
+        if self.vppf.vhostuser_linked_up(iface_idx):
+            # Handle the case were the interface has already been
+            # notified as up, as we need both the up-notification
+            # and bind information ito be ready before we tell Nova
+            self._mark_up(iface_idx)
+
+        return props
+
+self.vppf.vhost_ready_callback = self._vhost_ready
+
+    def _vhost_ready(self, sw_if_index):
+        if sw_if_index in self.iface_state:
+            # This index is linked up, and it's one of ours
+            self._mark_up(sw_if_index)
+
+    def _mark_up(self, sw_if_index):
+        """Flag to Nova that an interface is connected.
+
+        Nova watches a key's existence before sending out
+        bind events.  We set the key, and use the value
+        to store debugging information.
+        """
+        LOG.debug('marking index %s as ready', str(sw_if_index))
+        (port, props) = self.iface_state[sw_if_index]
+        self.etcd_client.write(self.state_key_space + '/%s' % port,
+                               json.dumps(props))
 
     AGENT_HEARTBEAT = 60  # seconds
 
@@ -494,16 +579,12 @@ class EtcdListener(object):
                     else:
                         # Create or update == bind
                         data = json.loads(value)
-                        props = self.data.bind(port,
-                                               data['binding_type'],
-                                               data['mac_address'],
-                                               data['physnet'],
-                                               data['network_type'],
-                                               data['segmentation_id'])
-                        self.etcd_client.write(self.data.state_key_space +
-                                               '/%s'
-                                               % port,
-                                               json.dumps(props))
+                        self.data.bind(port,
+                                       data['binding_type'],
+                                       data['mac_address'],
+                                       data['physnet'],
+                                       data['network_type'],
+                                       data['segmentation_id'])
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
