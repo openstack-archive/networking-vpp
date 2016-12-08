@@ -418,6 +418,10 @@ class EtcdListener(object):
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
 
+        self.iface_state = {}
+        cb_event = self.vppf.vpp.CallbackEvents.INTERFACE
+        self.vppf.vpp.register_for_events(cb_event, self._link_status_event)
+
     def mkdir(self, path):
         try:
             self.etcd_client.write(path, None, dir=True)
@@ -436,12 +440,52 @@ class EtcdListener(object):
     def bind(self, id, binding_type, mac_address, physnet, network_type,
              segmentation_id):
         # args['binding_type'] in ('vhostuser', 'plugtap'):
-        return self.vppf.bind_interface_on_host(binding_type,
-                                                id,
-                                                mac_address,
-                                                physnet,
-                                                network_type,
-                                                segmentation_id)
+        props = self.vppf.bind_interface_on_host(binding_type,
+                                                 id,
+                                                 mac_address,
+                                                 physnet,
+                                                 network_type,
+                                                 segmentation_id)
+
+        if props['iface_idx'] in self.iface_state:
+            # Handle the case were the interface is already notified
+            # this is for tap interfaces
+            if self.iface_state[props['iface_idx']] == 'bound':
+                self.iface_state[props['iface_idx']] = (id, props)
+                self._notify_bound(props['iface_idx'])
+                return props
+
+        self.iface_state[props['iface_idx']] = (id, props)
+        return props
+
+    def _link_status_event(self, iface):
+        LOG.debug("_link_status_event: iface_idx: %d is_up:%d",
+                  iface.sw_if_index, iface.link_up_down)
+        if iface.link_up_down == 1:
+            self._notify_bound(iface.sw_if_index)
+        elif iface.link_up_down == 0:
+            self._notify_unbound(iface.sw_if_index)
+        elif iface.deleted == 1:
+            self._notify_deleted(iface.sw_if_index)
+
+    def _notify_bound(self, sw_if_index):
+        if sw_if_index in self.iface_state:
+            (port, props) = self.iface_state[sw_if_index]
+            self.etcd_client.write(self.state_key_space + '/%s' % port,
+                                   json.dumps(props))
+            del self.iface_state[sw_if_index]
+        else:
+            # this is for tap interfaces as there is no delay
+            # between the connection and the notification
+            LOG.debug('_notify_bound port %d not yet in self.iface_state',
+                      sw_if_index)
+            self.iface_state[sw_if_index] = 'bound'
+
+    def _notify_unbound(self, sw_if_index):
+        pass
+
+    def _notify_deleted(self, sw_if_index):
+        pass
 
     AGENT_HEARTBEAT = 60  # seconds
 
@@ -494,16 +538,12 @@ class EtcdListener(object):
                     else:
                         # Create or update == bind
                         data = json.loads(value)
-                        props = self.data.bind(port,
-                                               data['binding_type'],
-                                               data['mac_address'],
-                                               data['physnet'],
-                                               data['network_type'],
-                                               data['segmentation_id'])
-                        self.etcd_client.write(self.data.state_key_space +
-                                               '/%s'
-                                               % port,
-                                               json.dumps(props))
+                        self.data.bind(port,
+                                       data['binding_type'],
+                                       data['mac_address'],
+                                       data['physnet'],
+                                       data['network_type'],
+                                       data['segmentation_id'])
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
