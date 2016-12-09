@@ -27,9 +27,14 @@ vpp_opts = [
     cfg.StrOpt('vxlan_vrf',
                help=_("VPP's VRF for the encapped VXLAN packets.")),
     cfg.StrOpt('etcd_host', default="127.0.0.1",
-               help=_("Etcd host IP address to connect etcd client.")),
+               help=_("Etcd host IP address(es) to connect etcd client."
+                      "It takes two formats: single IP/host or a multiple "
+                      "hosts list with this format: 'IP:Port,IP:Port'. "
+                      "e.g: 192.168.1.1:2379,192.168.1.2:2379")),
     cfg.IntOpt('etcd_port', default=4001,
-               help=_("Etcd port to connect the etcd client.")),
+               help=_("Etcd port to connect the etcd client. If etcd_host"
+                      "is specified as multiple host option, this option"
+                      "will be ignored.")),
     cfg.StrOpt('etcd_user', default=None,
                help=_("Username for etcd authentication")),
     cfg.StrOpt('etcd_pass', default=None,

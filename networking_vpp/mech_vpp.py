@@ -28,6 +28,7 @@ import traceback
 
 import backward_compatibility as bc_attr
 
+from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp.etcdutils import EtcdWatcher
@@ -377,7 +378,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                   (cfg.CONF.ml2_vpp.etcd_host,
                    cfg.CONF.ml2_vpp.etcd_port,
                    cfg.CONF.ml2_vpp.etcd_user,))
-        self.etcd_client = etcd.Client(host=cfg.CONF.ml2_vpp.etcd_host,
+
+        host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host)
+        self.etcd_client = etcd.Client(host=host,
                                        port=cfg.CONF.ml2_vpp.etcd_port,
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
