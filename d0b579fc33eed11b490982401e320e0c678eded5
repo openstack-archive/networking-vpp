@@ -1,0 +1,9 @@
+Code-Review+1: Naveen Joy <najoy@cisco.com>
+Code-Review+2: ijw-ubuntu <iawells@cisco.com>
+Workflow+1: ijw-ubuntu <iawells@cisco.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Fri, 09 Dec 2016 18:40:01 +0000
+Reviewed-on: https://review.openstack.org/409212
+Project: openstack/networking-vpp
+Branch: refs/heads/master
