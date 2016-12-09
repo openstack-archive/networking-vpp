@@ -11,3 +11,4 @@ oslo.log>=3.11.0 # Apache-2.0
 neutron-lib>=0.1.0 # Apache-2.0
 python-etcd>=0.4.2
 eventlet
+vpp_papi>=1.3 # Apache-2.0

@@ -14,6 +14,7 @@
 #    under the License.
 
 
+import fnmatch
 import grp
 import os
 import pwd
@@ -36,11 +37,6 @@ def _vpp_cb(*args, **kwargs):
     pass
 
 
-# Sometimes a callback fires unexpectedly.  We need to catch them
-# because vpp_papi will traceback otherwise
-vpp_papi.register_event_callback(_vpp_cb)
-
-
 class VPPInterface(object):
 
     def _check_retval(self, t):
@@ -59,11 +55,10 @@ class VPPInterface(object):
                            % (e, t))
 
     def get_interfaces(self):
-        t = vpp_papi.sw_interface_dump(0, b'ignored')
+        t = self._vpp.sw_interface_dump()
 
         for interface in t:
-            if interface.vl_msg_id == vpp_papi.vpe.VL_API_SW_INTERFACE_DETAILS:
-                yield (fix_string(interface.interface_name), interface)
+            yield (fix_string(interface.interface_name), interface)
 
     def get_interface(self, name):
         for (ifname, f) in self.get_interfaces():
@@ -71,7 +66,7 @@ class VPPInterface(object):
                 return f
 
     def get_version(self):
-        t = vpp_papi.show_version()
+        t = self._vpp.show_version()
 
         self._check_retval(t)
 
@@ -81,18 +76,18 @@ class VPPInterface(object):
 
     def create_tap(self, ifname, mac):
         # (we don't like unicode in VPP hence str(ifname))
-        t = vpp_papi.tap_connect(False,  # random MAC
-                                 str(ifname),
-                                 mac_to_bytes(mac),
-                                 False,  # renumber - who knows, no doc
-                                 0)  # customdevinstance - who knows, no doc
+        t = self._vpp.tap_connect(use_random_mac=False,
+                                  tap_name=str(ifname),
+                                  mac_address=mac_to_bytes(mac),
+                                  renumber=False,
+                                  custom_dev_instance=0)
 
         self._check_retval(t)
 
         return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
     def delete_tap(self, idx):
-        vpp_papi.tap_delete(idx)
+        self._vpp.tap_delete(sw_if_index=idx)
 
         # Err, I just got a sw_interface_set_flags here, not a delete tap?
         # self._check_retval(t)
@@ -103,13 +98,13 @@ class VPPInterface(object):
                          qemu_user=None, qemu_group=None, is_server=False):
         self.LOG.info('Creating %s as a port', ifpath)
 
-        t = vpp_papi.create_vhost_user_if(is_server,
-                                          str(ifpath),  # unicode not allowed.
-                                          False,  # Who knows what renumber is?
-                                          0,  # custom_dev_instance
-                                          True,  # use custom MAC
-                                          mac_to_bytes(mac)
-                                          )
+        t = self._vpp.create_vhost_user_if(is_server=is_server,
+                                           sock_filename=str(ifpath),
+                                           renumber=False,
+                                           custom_dev_instance=0,
+                                           use_custom_mac=True,
+                                           mac_address=mac_to_bytes(mac)
+                                           )
         self.LOG.debug("Created vhost user interface object: %s", str(t))
         self._check_retval(t)
 
@@ -127,7 +122,7 @@ class VPPInterface(object):
 
     def delete_vhostuser(self, idx):
         self.LOG.debug("Deleting VPP interface - index: %s", idx)
-        t = vpp_papi.delete_vhost_user_if(idx)
+        t = self._vpp.delete_vhost_user_if(sw_if_index=idx)
 
         self._check_retval(t)
 
@@ -135,41 +130,50 @@ class VPPInterface(object):
 
     def __init__(self, log):
         self.LOG = log
-        self.r = vpp_papi.connect("test_papi")
+        jsonfiles = []
+        for root, dirnames, filenames in os.walk('/usr/share/vpp/api/'):
+            for filename in fnmatch.filter(filenames, '*.api.json'):
+                jsonfiles.append(os.path.join(root, filename))
+
+        self._vpp = vpp_papi.VPP(jsonfiles)
+        self._vpp.connect("python-VPPInterface")
+        # Sometimes a callback fires unexpectedly.  We need to catch them
+        # because vpp_papi will traceback otherwise
+        self._vpp.register_event_callback(_vpp_cb)
 
     def disconnect(self):
-        vpp_papi.disconnect()
+        self._vpp.disconnect()
 
     def create_bridge_domain(self, id):
-        t = vpp_papi.bridge_domain_add_del(
-            id,  # the numeric ID of this domain
-            True,  # enable bcast and mcast flooding
-            True,  # enable unknown ucast flooding
-            True,  # enable forwarding on all interfaces
-            True,  # enable learning on all interfaces
-            False,  # enable ARP termination in the BD
-            True  # is an add
+        t = self._vpp.bridge_domain_add_del(
+            bd_id=id,  # the numeric ID of this domain
+            flood=True,  # enable bcast and mcast flooding
+            uu_flood=True,  # enable unknown ucast flooding
+            forward=True,  # enable forwarding on all interfaces
+            learn=True,  # enable learning on all interfaces
+            arp_term=False,  # enable ARP termination in the BD
+            is_add=True  # is an add
         )
         self._check_retval(t)
 
     def delete_bridge_domain(self, id):
-        t = vpp_papi.bridge_domain_add_del(
-            id,  # the numeric ID of this domain
-            True,  # enable bcast and mcast flooding
-            True,  # enable unknown ucast flooding
-            True,  # enable forwarding on all interfaces
-            True,  # enable learning on all interfaces
-            False,  # enable ARP termination in the BD
-            False  # is a delete
+        t = self._vpp.bridge_domain_add_del(
+            bd_id=id,  # the numeric ID of this domain
+            flood=True,  # enable bcast and mcast flooding
+            uu_flood=True,  # enable unknown ucast flooding
+            forward=True,  # enable forwarding on all interfaces
+            learn=True,  # enable learning on all interfaces
+            arp_term=False,  # enable ARP termination in the BD
+            is_add=False  # is a delete
         )
         self._check_retval(t)
 
     def create_vlan_subif(self, if_id, vlan_tag):
-        self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
+        self.LOG.debug("Creat0ng vlan subinterface with ID:%s and vlan_tag:%s"
                        % (if_id, vlan_tag))
-        t = vpp_papi.create_vlan_subif(
-            if_id,
-            vlan_tag)
+        t = self._vpp.create_vlan_subif(
+            sw_if_index=if_id,
+            vlan_id=vlan_tag)
         self.LOG.debug("Create vlan subinterface response: %s", str(t))
 
         self._check_retval(t)
@@ -182,14 +186,14 @@ class VPPInterface(object):
     def delete_vlan_subif(self, sw_if_index):
         self.LOG.debug("Deleting subinterface with sw_if_index: %s"
                        % (sw_if_index))
-        t = vpp_papi.delete_subif(sw_if_index)
+        t = self._vpp.delete_subif(sw_if_index=sw_if_index)
         self.LOG.debug("Delete subinterface response: %s", str(t))
 
         self._check_retval(t)
         return
 
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
-#        t = vpp_papi.vxlan_add_del_tunnel(
+#        t = self._vpp.vxlan_add_del_tunnel(
 #            True,  # is_add
 #            src_addr,
 #            bcast_addr,
@@ -206,45 +210,47 @@ class VPPInterface(object):
         self.set_vlan_tag_rewrite(if_id, L2_VTR_POP_1, 0, 0, 0)
 
     def set_vlan_tag_rewrite(self, if_id, vtr_op, push_dot1q, tag1, tag2):
-        t = vpp_papi.l2_interface_vlan_tag_rewrite(
-            if_id,
-            vtr_op,
-            push_dot1q,
-            tag1,
-            tag2)
+        t = self._vpp.l2_interface_vlan_tag_rewrite(
+            sw_if_index=if_id,
+            vtr_op=vtr_op,
+            push_dot1q=push_dot1q,
+            tag1=tag1,
+            tag2=tag2)
         self.LOG.info("Set subinterface vlan tag pop response: %s", str(t))
 
         self._check_retval(t)
 
     def add_to_bridge(self, bridx, *ifidxes):
         for ifidx in ifidxes:
-            t = vpp_papi.sw_interface_set_l2_bridge(
-                ifidx, bridx,
-                False,                  # BVI (no thanks)
-                0,                      # shared horizon group
-                True)                   # enable bridge mode
+            t = self._vpp.sw_interface_set_l2_bridge(
+                rx_sw_if_index=ifidx, bd_id=bridx,
+                bvi=False,                  # BVI (no thanks)
+                shg=0,                      # shared horizon group
+                enable=True)                # enable bridge mode
             self._check_retval(t)
 
     def delete_from_bridge(self, *ifidxes):
         for ifidx in ifidxes:
-            t = vpp_papi.sw_interface_set_l2_bridge(
-                ifidx,
-                0,                      # no bridge id is necessary
-                False,                  # BVI (no thanks)
-                0,                      # shared horizon group
-                False)                  # disable bridge mode (sets l3 mode)
+            t = self._vpp.sw_interface_set_l2_bridge(
+                rx_sw_if_index=ifidx,
+                bd_id=0,                    # no bridge id is necessary
+                bvi=False,                  # BVI (no thanks)
+                shg=0,                      # shared horizon group
+                enable=False)              # disable bridge mode (sets l3 mode)
             self._check_retval(t)
 
     def ifup(self, *ifidxes):
         for ifidx in ifidxes:
-            vpp_papi.sw_interface_set_flags(
-                ifidx,
-                1, 1,               # admin and link up
-                0)                   # err, I can set the delected flag?
+            self._vpp.sw_interface_set_flags(
+                sw_if_index=ifidx,
+                admin_up_down=1,
+                link_up_down=1,
+                deleted=0)  # err, I can set the delected flag?
 
     def ifdown(self, *ifidxes):
         for ifidx in ifidxes:
-            vpp_papi.sw_interface_set_flags(
-                ifidx,
-                0, 0,               # admin and link down
-                0)                   # err, I can set the delected flag?
+            self._vpp.sw_interface_set_flags(
+                sw_if_index=ifidx,
+                admin_up_down=0,
+                link_up_down=0,
+                deleted=0)  # err, I can set the delected flag?
