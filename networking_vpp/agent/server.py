@@ -34,6 +34,7 @@ import vpp
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import config_opts
 from networking_vpp.etcdutils import EtcdWatcher
+from networking_vpp.utils import compat
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
@@ -59,6 +60,9 @@ assert config_opts
 # that Neutron can find for its agents.
 
 DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
+
+# Apply monkey patch if necessary
+compat.monkey_patch()
 
 
 def get_tap_name(uuid):
