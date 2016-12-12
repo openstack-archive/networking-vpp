@@ -15,7 +15,7 @@
 
 import sqlalchemy as sa
 
-from neutron.db import model_base
+from neutron_lib.db import model_base
 
 
 class VppEtcdJournal(model_base.BASEV2):

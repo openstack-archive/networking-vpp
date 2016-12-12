@@ -23,7 +23,7 @@ from sqlalchemy import event
 
 from neutron.db.migration.alembic_migrations import external
 from neutron.db.migration.models import head  # noqa
-from neutron.db import model_base
+from neutron_lib.db import model_base
 
 MYSQL_ENGINE = None
 VPP_VERSION_TABLE = 'vpp_alembic_version'
