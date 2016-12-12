@@ -38,7 +38,6 @@ from neutron.callbacks import resources
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
 from neutron.extensions import portbindings
-from neutron import manager
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
@@ -48,6 +47,13 @@ try:
     from neutron_lib import constants as n_const
 except ImportError:
     from neutron.common import constants as n_const
+
+# TODO(cfontaine): backward compatibility, wants removing in future
+try:
+    from neutron_lib.plugins import directory
+except ImportError:
+    from neutron import manager
+    directory = manager.NeutronManager
 
 eventlet.monkey_patch()
 
@@ -322,7 +328,8 @@ class AgentCommunicator(object):
         """
 
         context = n_context.get_admin_context()
-        plugin = manager.NeutronManager.get_plugin()
+
+        plugin = directory.get_plugin()
         # Bodge TODO(ijw)
         if self.recursive:
             # This happens right now because when we update the port
