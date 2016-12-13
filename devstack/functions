@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# functions - networking-vpp driver devstack utility functions
+
+function install_vpp {
+  # TODO: Make VPP branch configurable
+  if is_fedora; then
+      sudo tee /etc/yum.repos.d/fdio.repo <<EOF
+[fdio-master]
+name=fd.io master branch latest merge
+baseurl=https://nexus.fd.io/content/repositories/fd.io.master.centos7/
+enabled=1
+gpgcheck=0
+EOF
+  elif is_ubuntu; then
+      echo "deb [trusted=yes] https://nexus.fd.io/content/repositories/fd.io.master.ubuntu.$os_CODENAME.main/ ./" | sudo tee  /etc/apt/sources.list.d/99fd.io.list
+  else
+      die $LINENO "Can't install VPP on unsupported os: $os_VENDOR"
+  fi
+  install_package vpp
+  if is_set VPP_STARTUP_CONFIG; then
+      if [[ -f "$VPP_STARTUP_CONFIG" && -r "$VPP_STARTUP_CONFIG" ]]; then
+          sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak
+          sudo cp -f $VPP_STARTUP_CONFIG /etc/vpp/startup.conf
+      else
+          die $LINENO "VPP config file $VPP_STARTUP_CONFIG not a file or unreadable"
+      fi
+  elif is_set VPP_INT_PCI_DEV; then
+      sudo sed -i "/dpdk  *{/a\ \ dev $VPP_INT_PCI_DEV" /etc/vpp/startup.conf
+  else
+      die $LINENO "VPP_STARTUP_CONFIG or VPP_INT_PCI_DEV must be set"
+  fi
+}
+
+function start_vpp {
+    is_package_installed vpp || install_vpp
+    start_service vpp
+}
+
+function set_hugepages {
+    if is_set NR_HUGEPAGES; then
+        system_hugepages="$(cat /proc/meminfo | grep HugePages_Total | awk '{print $2}')"
+        die_if_not_set $LINENO system_hugepages "Couldn't determine current system huge page count"
+        if [ "$system_hugepages" -lt  "$NR_HUGEPAGES" ]; then
+            sudo sysctl -w vm.nr_hugepages="$NR_HUGEPAGES"
+            system_hugepages=$(cat /proc/meminfo | grep HugePages_Total | awk '{print $2}')
+            if [ "$system_hugepages" -ne  "$NR_HUGEPAGES" ]; then
+                die $LINENO "Failed to set system huge page count to $NR_HUGEPAGES"
+            fi
+        fi
+    fi
+}
+
+function setup_host_env {
+    is_package_installed etcd || install_package etcd
+    restart_service etcd
+    set_hugepages
+    systemctl is-active vpp || start_vpp
+    is_package_installed vpp-python-api || install_package vpp-python-api
+}
