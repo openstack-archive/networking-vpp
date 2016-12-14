@@ -14,7 +14,11 @@
 #    under the License.
 
 from networking_vpp._i18n import _
-from neutron_lib import exceptions as n_exec
+
+try:
+    from neutron_lib import exceptions as n_exec
+except ImportError:
+    from neutron import exceptions as n_exec
 
 
 class InvalidEtcHostsConfig(n_exec.NeutronException):
