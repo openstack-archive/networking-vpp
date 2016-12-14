@@ -16,6 +16,7 @@
 from logging import config as logging_config
 
 from alembic import context
+from networking_vpp.backward_compatibility import model_base
 from oslo_config import cfg
 from oslo_db.sqlalchemy import session
 import sqlalchemy as sa
@@ -23,12 +24,6 @@ from sqlalchemy import event
 
 from neutron.db.migration.alembic_migrations import external
 from neutron.db.migration.models import head  # noqa
-
-# TODO(cfontaine): backward compatibility, wants removing in future
-try:
-    from neutron_lib.db import model_base
-except ImportError:
-    from neutron.db import model_base
 
 MYSQL_ENGINE = None
 VPP_VERSION_TABLE = 'vpp_alembic_version'

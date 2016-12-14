@@ -21,20 +21,56 @@ from neutron import version
 # backwards-compatibility with stable/mitaka this will act as a translator
 # that passes constants and functions according to version number.
 
-IS_PRE_NEWTON = True
 
-if d_version.StrictVersion(
-    str(version.version_info)) >= d_version.StrictVersion('9.0.0'):
-    # >= Newton
-    IS_PRE_NEWTON = False
-    from neutron_lib import constants as nl_const
-    DEVICE_OWNER_PREFIXES = nl_const.DEVICE_OWNER_PREFIXES
-elif d_version.StrictVersion(
-    str(version.version_info)) >= d_version.StrictVersion('8.0.0'):
-    # Mitaka <= version < Newton
-    from neutron_lib import constants as nl_const
-    DEVICE_OWNER_PREFIXES = nl_const.DEVICE_OWNER_PREFIXES
-else:
-    # version < Mitaka
-    from neutron.common import constants as n_const
-    DEVICE_OWNER_PREFIXES = n_const.DEVICE_OWNER_PREFIXES
+try:
+    from neutron_lib import constants as n_const
+    from neutron_lib import exceptions as n_exec
+    from neutron_lib.db import model_base
+    from neutron_lib.plugins import directory
+except ImportError:
+    from neutron.common import exceptions as n_exec
+    from neutron import constants as n_const
+    from neutron.db import n_model_base
+    from neutron import manager
+    directory = manager.NeutronManager
+
+from neutron.agent.linux import bridge_lib
+
+
+def monkey_patch():
+    """Add backward compatibility to networking-vpp for Liberty
+
+    This monkey-patches a couple of bits of Neutron
+    to enable compatibility with Liberty.
+    """
+
+    if 'owns_interface' not in dir(bridge_lib.BridgeDevice):
+        BRIDGE_INTERFACE_FS = "/sys/class/net/%(bridge)s/brif/%(interface)s"
+
+        def owns_interface(self, interface):
+            return os.path.exists(
+                BRIDGE_INTERFACE_FS % {'bridge': self.name,
+                                       'interface': interface})
+
+        bridge_lib.BridgeDevice.owns_interface = owns_interface
+
+    if 'get_log_fail_as_error' not in dir(bridge_lib.BridgeDevice):
+
+        def get_log_fail_as_error(self):
+            return self.log_fail_as_error
+
+        bridge_lib.BridgeDevice.get_log_fail_as_error = get_log_fail_as_error
+
+    if 'exists' not in dir(bridge_lib.BridgeDevice):
+
+        def exists(self):
+            orig_log_fail_as_error = self.get_log_fail_as_error()
+            self.set_log_fail_as_error(False)
+            try:
+                return bool(self.link.address)
+            except RuntimeError:
+                return False
+            finally:
+                self.set_log_fail_as_error(orig_log_fail_as_error)
+
+        bridge_lib.BridgeDevice.exists = exists
