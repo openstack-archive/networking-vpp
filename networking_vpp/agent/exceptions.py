@@ -13,12 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from networking_vpp._i18n import _
-
-try:
-    from neutron_lib import exceptions as n_exec
-except ImportError:
-    from neutron.common import exceptions as n_exec
+from networking_vpp.compat import n_exec
+from neutron._i18n import _
 
 
 class InvalidEtcHostsConfig(n_exec.NeutronException):
