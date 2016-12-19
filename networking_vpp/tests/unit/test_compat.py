@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from networking_vpp.utils import compat
+from networking_vpp import compat
 
 from neutron.agent.linux import bridge_lib
 from neutron.tests import base
