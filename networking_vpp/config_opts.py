@@ -41,6 +41,8 @@ vpp_opts = [
                help=_("Password for etcd authentication")),
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
+    cfg.StrOpt('vhost_user_dir', default='/tmp',
+               help=_("vhostuser socket directory"))
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")

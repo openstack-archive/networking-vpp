@@ -111,6 +111,21 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
 
     @mock.patch('networking_vpp.mech_vpp.VPPMechanismDriver.physnet_known',
                 return_value=True)
+    def test_bind_port_with_vhost_dir(self, mock_phys):
+        """Test bind port with vhost dir option."""
+        cfg.CONF.set_override("vhost_user_dir", '/vhostdir1', 'ml2_vpp')
+        port_context = self.given_port_context()
+        vif_details = {
+            'vhostuser_socket': "/vhostdir1/%s" % port_context.current['id'],
+            'vhostuser_mode': 'server'
+            }
+        self.mech.bind_port(port_context)
+        port_context.set_binding.assert_called_once_with(
+            self.valid_segment[api.ID], 'vhostuser',
+            vif_details)
+
+    @mock.patch('networking_vpp.mech_vpp.VPPMechanismDriver.physnet_known',
+                return_value=True)
     def test_check_segment(self, mock_phys):
         port_context = self.given_port_context()
         # first test valid

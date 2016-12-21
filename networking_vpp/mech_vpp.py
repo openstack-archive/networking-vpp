@@ -19,6 +19,7 @@ import etcd
 import eventlet
 import eventlet.event
 import json
+import os
 from oslo_config import cfg
 from oslo_log import log as logging
 import re
@@ -150,7 +151,8 @@ class VPPMechanismDriver(api.MechanismDriver):
                 vif_type = self.get_vif_type(port_context)
                 if vif_type == 'vhostuser':
                     vif_details['vhostuser_socket'] = \
-                        '/tmp/%s' % port_context.current['id']
+                        os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir,
+                                       port_context.current['id'])
                     vif_details['vhostuser_mode'] = 'server'
                 LOG.debug('ML2_VPP: Setting details: %s', vif_details)
                 port_context.set_binding(segment[api.ID],
