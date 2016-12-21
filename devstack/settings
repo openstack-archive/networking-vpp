@@ -12,7 +12,7 @@ VPP_INT_PCI_DEV=${VPP_INT_PCI_DEV:-'0000:02:02.0'}
 #VPP_INT_PCI_DEV will be ignored if VPP_STARTUP_CONFIG is set.
 VPP_STARTUP_CONFIG=${VPP_STARTUP_CONFIG:-}
 
-#If specified, ensure system hugepage count is at least configured as specified.
+#If specified, ensure system free hugepage count is at least configured as specified.
 #If the system is already configured with more huge pages than NR_HUGEPAGES, no action will be taken.
 NR_HUGEPAGES=${NR_HUGEPAGES:-}
 
