@@ -1,0 +1,8 @@
+Code-Review+2: ijw-ubuntu <iawells@cisco.com>
+Workflow+1: ijw-ubuntu <iawells@cisco.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Thu, 22 Dec 2016 23:06:30 +0000
+Reviewed-on: https://review.openstack.org/413418
+Project: openstack/networking-vpp
+Branch: refs/heads/master
