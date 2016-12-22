@@ -32,20 +32,16 @@ import time
 import vpp
 
 from networking_vpp.agent import utils as nwvpp_utils
+from networking_vpp import compat
+from networking_vpp.compat import n_const
 from networking_vpp import config_opts
 from networking_vpp.etcdutils import EtcdWatcher
-from networking_vpp.utils import compat
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from oslo_config import cfg
 from oslo_log import log as logging
 
-# TODO(ijw): backward compatibility, wants removing in future
-try:
-    from neutron_lib import constants as n_const
-except ImportError:
-    from neutron.common import constants as n_const
 
 LOG = logging.getLogger(__name__)
 

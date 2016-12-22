@@ -15,11 +15,7 @@
 
 import sqlalchemy as sa
 
-# TODO(cfontaine): backward compatibility, wants removing in future
-try:
-    from neutron_lib.db import model_base
-except ImportError:
-    from neutron.db import model_base
+from networking_vpp.compat import model_base
 
 
 class VppEtcdJournal(model_base.BASEV2):
