@@ -64,14 +64,9 @@ compat.monkey_patch()
 def get_tap_name(uuid):
     return n_const.TAP_DEVICE_PREFIX + uuid[0:11]
 
-# This mirrors functionality in Nova so that we're creating a vhostuser
-# name that it will be able to locate
-
-VHOSTUSER_DIR = '/tmp'
-
 
 def get_vhostuser_name(uuid):
-    return os.path.join(VHOSTUSER_DIR, uuid)
+    return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
 
 
 ######################################################################
