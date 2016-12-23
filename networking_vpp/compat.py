@@ -20,26 +20,34 @@
 
 
 try:
+    # Mitaka+
     import neutron_lib.constants
-    import neutron_lib.db.model_base
     import neutron_lib.exceptions
-    import neutron_lib.plugins.directory
 
     n_const = neutron_lib.constants
     n_exec = neutron_lib.exceptions
-    model_base = neutron_lib.db.model_base
-    directory = neutron_lib.plugins.directory
 
 except ImportError:
     import neutron.common.exceptions
     import neutron.constants
-    import neutron.db
-    import neutron.manager
 
     n_const = neutron.constants
     n_exec = neutron.common.exceptions
-    model_base = neutron.db.model_base
+
+try:
+    # Newton+
+    import neutron_lib.db.model_base
+    import neutron_lib.plugins.directory
+
+    model_base = neutron_lib.db.model_base
+    directory = neutron_lib.plugins.directory
+
+except ImportError:
+    import neutron.manager
+    import neutron.db
+
     directory = neutron.manager.NeutronManager
+    model_base = neutron.db.model_base
 
 import os
 
