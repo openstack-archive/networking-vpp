@@ -43,7 +43,7 @@ try:
     directory = neutron_lib.plugins.directory
 
 except ImportError:
-    import neutron.db
+    import neutron.db.model_base
     import neutron.manager
 
     directory = neutron.manager.NeutronManager
