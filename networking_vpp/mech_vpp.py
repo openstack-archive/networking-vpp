@@ -381,11 +381,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
+        self.pool = eventlet.GreenPool()
+        self.features = {}
         # We need certain directories to exist
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
+        self.global_key_space = LEADIN + '/global'
         self.do_etcd_mkdir(self.state_key_space)
         self.do_etcd_mkdir(self.port_key_space)
+        self.do_etcd_mkdir(self.global_key_space)
 
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
@@ -399,6 +403,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
             ev = events.AFTER_CREATE
 
         registry.subscribe(self.start_threads, resources.PROCESS, ev)
+
+    def register_feature(self, feature):
+        if feature.path in self.features.keys():
+            raise Exception('Feature "%s" can not be registered twice'
+                            % feature.path)
+        feature.communicator = self
+        self.features[feature.path] = feature
 
     def start_threads(self, resource, event, trigger):
         LOG.debug('Starting background threads for Neutron worker')
@@ -565,6 +576,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # Agent deaths in this time will not be logged, so
                 # make this clear
                 LOG.info('Sync lost, resetting agent liveness')
+                for feature in self.data.features.values():
+                    feature.resync()
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
@@ -596,8 +609,35 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         else:
                             LOG.info('host %s is alive', host)
                     else:
-                        LOG.warning('Unexpected key change in '
-                                    'etcd port feedback: %s', key)
+                        m = re.match(self.watch_path +
+                                     '/([^/]+)/([^/]+)(/?)([^/]*)$',
+                                     key)
+                        if m:
+                            # TODO(ijw): this should be fed into the agents
+                            # table.
+                            host = m.group(1)
+                            feature = m.group(2)
+                            # For some features, there is no uuid
+                            if len(m.groups()) > 3:
+                                uuid = m.group(4)
+                            else:
+                                uuid = None
+
+                            if feature in self.data.features.keys():
+                                # Dynamically build method name
+                                # and call appropriate feature
+                                # eg: port->state_set
+                                if action is None:
+                                    action = 'set'
+                                method = '_key_' + str(action)
+                                feature_instance = self.data.features[feature]
+                                func = getattr(feature_instance, method)
+                                func(host, uuid, value)
+                            else:
+                                # Dynamically added features will trigger
+                                # this log message
+                                LOG.warning('Unexpected key change in '
+                                            'etcd port feedback: %s', key)
 
         ReturnWatcher(self.etcd_client, 'return_worker',
                       self.state_key_space, data=self).watch_forever()

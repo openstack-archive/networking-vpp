@@ -23,6 +23,7 @@
 # worked out.  The two codebases will merge in the future.
 
 import etcd
+import eventlet
 import json
 import os
 import re
@@ -41,7 +42,10 @@ from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from oslo_config import cfg
 from oslo_log import log as logging
+from stevedore import extension
 
+
+eventlet.monkey_patch()
 
 LOG = logging.getLogger(__name__)
 
@@ -408,6 +412,9 @@ class EtcdListener(object):
         # We need certain directories to exist
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.mkdir(LEADIN + '/global/')
+        self.features = {}
+        self.pool = eventlet.GreenPool()
 
     def mkdir(self, path):
         try:
@@ -415,6 +422,18 @@ class EtcdListener(object):
         except etcd.EtcdNotFile:
             # Thrown when the directory already exists, which is fine
             pass
+
+    def register_feature(self, feature):
+        if feature.path in self.features.keys():
+            raise Exception('Feature "%s" already registered' % feature.path)
+        self.features[feature.path] = feature
+        # We need directories to exist for each registered feature
+        self.mkdir(LEADIN + '/state/%s/%s' % (self.host, feature.path))
+        if feature.is_system_wide:
+            self.mkdir(LEADIN + '/global/%s' % (feature.path))
+        else:
+            self.mkdir(LEADIN + '/nodes/%s/%s' % (self.host, feature.path))
+        LOG.info('Added Feature: %s' % feature.path)
 
     def repop_interfaces(self):
         pass
@@ -450,7 +469,16 @@ class EtcdListener(object):
 
         self.etcd_helper.clear_state(self.state_key_space)
 
-        class PortWatcher(EtcdWatcher):
+        self.state_pattern = re.compile(LEADIN + '/state/(.*)')
+        self.nodes_pattern = re.compile(LEADIN + '/nodes/' +
+                                        self.host + '/([^/]+)/([^/]+)$')
+        # get system wide features
+        feature_list = '|'.join([feat.path for feat in self.features.values()
+                                 if feat.is_system_wide is True])
+        self.global_features_pattern = re.compile(LEADIN + '/global/(' +
+                                                  feature_list + ')/([^/]+)$')
+
+        class NodeWatcher(EtcdWatcher):
 
             def do_tick(self):
                 # The key that indicates to people that we're alive
@@ -459,10 +487,16 @@ class EtcdListener(object):
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is False]:
+                    feature.tick()
+
             def resync(self):
                 # TODO(ijw): Need to do something here to prompt
                 # appropriate unbind/rebind behaviour
-                pass
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is False]:
+                    feature.resync()
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
@@ -497,11 +531,59 @@ class EtcdListener(object):
                                                json.dumps(props))
 
                 else:
-                    LOG.warning('Unexpected key change in etcd port feedback, '
-                                'key %s', key)
+                    m = self.data.nodes_pattern.match(key)
+                    if m:
+                        feature = m.group(1)
+                        key = m.group(2)
+                        if action is None:
+                            # occurs when resyncing
+                            action = 'set'
+                        method = '_key_' + str(action)
+                        if feature in self.data.features:
+                            feature_instance = self.data.features[feature]
+                            getattr(feature_instance, method)(key, value)
+                        else:
+                            LOG.warning('Unexpected key change in etcd port '
+                                        'feedback, key %s', key)
 
-        PortWatcher(self.etcd_client, 'return_worker', self.port_key_space,
-                    heartbeat=self.AGENT_HEARTBEAT, data=self).watch_forever()
+        class GlobalWatcher(EtcdWatcher):
+
+            def do_tick(self):
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is True]:
+                    feature.tick()
+
+            def resync(self):
+                for feature in [feat for feat in self.data.features.values()
+                                if feat.is_system_wide is True]:
+                    feature.resync()
+
+            def do_work(self, action, key, value):
+                m = self.data.global_features_pattern.match(key)
+                if m:
+                    feature = m.group(1)
+                    key = m.group(2)
+                    if action is None:
+                        # occurs when resyncing
+                        action = 'set'
+                    method = '_key_' + str(action)
+                    if feature in self.data.features:
+                        feature_instance = self.data.features[feature]
+                        getattr(feature_instance, method)(key, value)
+
+        LOG.info('features: %s', str(self.features))
+        # No need to start these threads if there is no enabled feature.
+        self.pool.spawn(NodeWatcher(self.etcd_client,
+                                    'node_worker',
+                                    LEADIN + '/nodes',
+                                    heartbeat=self.AGENT_HEARTBEAT,
+                                    data=self).watch_forever())
+        self.pool.spawn(GlobalWatcher(self.etcd_client,
+                                      'global_worker',
+                                      LEADIN + '/global',
+                                      heartbeat=self.AGENT_HEARTBEAT,
+                                      data=self).watch_forever())
+        self.pool.waitall()
 
 
 class VPPRestart(object):
@@ -563,6 +645,15 @@ def main():
                               allow_reconnect=True)
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
+
+    mgr = extension.ExtensionManager(namespace='networking_vpp.agent.features',
+                                     invoke_on_load=True,
+                                     invoke_args=(cfg.CONF.host,
+                                                  etcd_client,
+                                                  vppf))
+
+    for feature in [ext.obj for ext in mgr.extensions]:
+        ops.register_feature(feature)
 
     ops.process_ops()
 

@@ -96,10 +96,14 @@ class EtcdWatcher(object):
                 # to return can lead to timeouts much longer than you
                 # might expect.  So we watch for a timeout for
                 # ourselves as well.
-                with eventlet.Timeout(self.heartbeat):
+                # Yet, with eventlet, this creates an ugly but harmless
+                # error message, so try to use the etcd timeout and
+                # force exit at self.heartbeat+5
+                with eventlet.Timeout(self.heartbeat + 5):
                     rv = self.etcd_client.watch(self.watch_path,
                                                 recursive=True,
-                                                index=self.tick)
+                                                index=self.tick,
+                                                timeout=self.heartbeat)
 
                 vals = [rv]
 
@@ -115,7 +119,11 @@ class EtcdWatcher(object):
 
                 # This appears as if all the keys have been updated -
                 # because we can't tell which have been and which haven't.
-                vals = rv.children
+
+                # Reorder all EtcdResults in order to replay the calls
+                # in the same order of the creation
+                vals = sorted([kv for kv in rv.children],
+                              key=lambda kv: kv.createdIndex)
 
                 self.resync()
 
