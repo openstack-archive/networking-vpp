@@ -39,7 +39,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'test_iface': 720,
                 'test_iface.1': 740
             }
-            return vals[iface]
+            return vals.get(iface, None)
         self.vpp.vpp.get_ifidx_by_name.side_effect = idxes
         self.vpp.vpp.get_ifidx_by_tag.return_value = None
 
