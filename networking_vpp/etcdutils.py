@@ -46,7 +46,19 @@ class EtcdWatcher(object):
         pass
 
     @abstractmethod
-    def resync(self):
+    def resync_start(self):
+        """Begining of the resync phase.
+
+        Proceed to any action before actual read() is done.
+        """
+        pass
+
+    @abstractmethod
+    def resync_end(self):
+        """End of the resync phase.
+
+        Called after the do_work method with the whole read.
+        """
         pass
 
     @abstractmethod
@@ -81,7 +93,7 @@ class EtcdWatcher(object):
 
         This will conduct one watch or one read.
         """
-
+        did_resync = False
         try:
             LOG.debug("%s: pausing", self.name)
 
@@ -96,10 +108,11 @@ class EtcdWatcher(object):
                 # to return can lead to timeouts much longer than you
                 # might expect.  So we watch for a timeout for
                 # ourselves as well.
-                with eventlet.Timeout(self.heartbeat):
+                with eventlet.Timeout(self.heartbeat + 5):
                     rv = self.etcd_client.watch(self.watch_path,
                                                 recursive=True,
-                                                index=self.tick)
+                                                index=self.tick,
+                                                timeout=self.heartbeat)
 
                 vals = [rv]
 
@@ -117,7 +130,8 @@ class EtcdWatcher(object):
                 # because we can't tell which have been and which haven't.
                 vals = rv.children
 
-                self.resync()
+                self.resync_start()
+                did_resync = True
 
                 next_tick = rv.etcd_index + 1
 
@@ -136,6 +150,10 @@ class EtcdWatcher(object):
                     # TODO(ijw) raise or not raise?  This is probably
                     # fatal and incurable.
                     raise
+
+            if did_resync:
+                did_resync = False
+                self.resync_end()
 
             # Update the tick only when all the above completes so that
             # exceptions don't cause the count to skip before the data
