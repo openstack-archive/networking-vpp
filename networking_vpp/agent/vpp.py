@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-
+import collections
 import enum
 import eventlet
 import fnmatch
@@ -68,17 +68,47 @@ class VPPInterface(object):
         for interface in t:
             yield (fix_string(interface.interface_name), interface)
 
+    def is_vhostuser(self, iface_idx):
+        for vhost in self.get_vhostusers():
+            if vhost.sw_if_index == iface_idx:
+                return True
+        return False
+
     def get_interfaces(self):
         t = self._vpp.sw_interface_dump()
 
-        for interface in t:
-            yield (fix_string(interface.interface_name), interface)
+        for iface in t:
+            mac = bytearray(iface.l2_address[:iface.l2_address_length])
+            yield {'name': fix_string(iface.interface_name),
+                   'tag': fix_string(iface.tag),
+                   'mac': ':'.join(["%02x" % int(c) for c in mac]),
+                   'sw_if_idx': iface.sw_if_index,
+                   'sup_sw_if_idx': iface.sup_sw_if_index
+                   }
 
     def get_ifidx_by_name(self, name):
-        for (ifname, f) in self.get_interfaces():
-            if ifname == name:
-                return f.sw_if_idx
+        for iface in self.get_interfaces():
+            if iface['name'] == name:
+                return iface['sw_if_idx']
         return None
+
+    def get_ifidx_by_tag(self, tag):
+        for iface in self.get_interfaces():
+            if iface['tag'] == tag:
+                return iface['sw_if_idx']
+        return None
+
+    def set_interface_tag(self, if_idx, tag):
+        """Define interface tag field.
+
+        VPP papi does not allow to set interface tag
+        on interface creation for subinterface or loopback).
+        """
+        # TODO(ijw): this is a race condition.
+        t = self._vpp.sw_interface_tag_add_del(is_add=1,
+                                               sw_if_index=if_idx,
+                                               tag=str(tag))
+        self._check_retval(t)
 
     def get_version(self):
         t = self._vpp.show_version()
@@ -89,13 +119,14 @@ class VPPInterface(object):
 
     ########################################
 
-    def create_tap(self, ifname, mac):
+    def create_tap(self, ifname, mac, port_uuid):
         # (we don't like unicode in VPP hence str(ifname))
         t = self._vpp.tap_connect(use_random_mac=False,
                                   tap_name=str(ifname),
                                   mac_address=mac_to_bytes(mac),
                                   renumber=False,
-                                  custom_dev_instance=0)
+                                  custom_dev_instance=0,
+                                  tag=str(port_uuid))
 
         self._check_retval(t)
 
@@ -107,9 +138,21 @@ class VPPInterface(object):
         # Err, I just got a sw_interface_set_flags here, not a delete tap?
         # self._check_retval(t)
 
+    def get_taps(self):
+        t = self._vpp.sw_interface_tap_dump()
+        for iface in t:
+            yield {'dev_name': fix_string(iface.dev_name),
+                   'sw_if_idx': iface.sw_if_index}
+
+    def is_tap(self, iface_idx):
+        for tap in self.get_taps():
+            if tap['sw_if_index'] == iface_idx:
+                return True
+        return False
+
     #############################
 
-    def create_vhostuser(self, ifpath, mac,
+    def create_vhostuser(self, ifpath, mac, port_uuid,
                          qemu_user=None, qemu_group=None, is_server=False):
         self.LOG.info('Creating %s as a port', ifpath)
 
@@ -118,8 +161,9 @@ class VPPInterface(object):
                                            renumber=False,
                                            custom_dev_instance=0,
                                            use_custom_mac=True,
-                                           mac_address=mac_to_bytes(mac)
-                                           )
+                                           mac_address=mac_to_bytes(mac),
+                                           tag=str(port_uuid))
+
         self.LOG.debug("Created vhost user interface object: %s", str(t))
         self._check_retval(t)
 
@@ -263,6 +307,32 @@ class VPPInterface(object):
             is_add=False  # is a delete
         )
         self._check_retval(t)
+
+    def get_ifaces_in_bridge_domains(self):
+        """Read current bridge configuration in VPP.
+
+        - returns a dict
+          key: bridge id
+          values: array of connected sw_if_index
+        """
+        t = self._vpp.bridge_domain_dump(bd_id=0xffffffff)
+        # this method returns an array containing 2 types of object:
+        # - bridge_domain_details
+        # - bridge_domain_sw_if_details
+        # build a dict containing: {bridge_id--> list of interfaces}
+
+        bridges = collections.defaultdict(list)
+        for bd_info in t:
+            if bd_info.__class__.__name__.endswith('sw_if_details'):
+                bridges[bd_info.bd_id].append(bd_info.sw_if_index)
+            else:
+                # extending with an empty array is harmless but this ensures
+                # the key (ie: bridge_id) exists
+                bridges[bd_info.bd_id].extend([])
+        return bridges
+
+    def get_ifaces_in_bridge_domain(self, bd_id):
+        return self.get_ifaces_in_bridge_domains().get(bd_id, [])
 
     def create_vlan_subif(self, if_id, vlan_tag):
         self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
