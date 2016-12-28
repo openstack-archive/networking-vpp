@@ -515,9 +515,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
                   "updates for groups %s to etcd" % sgids)
-        db = directory.get_plugin()
+        plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
-            rules = db.get_security_group_rules(
+            rules = plugin.get_security_group_rules(
                 context, filters={'security_group_id': sgids}
                 )
             LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s" % rules)
@@ -532,9 +532,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def get_secgroup_rule(self, rule_id, context):
         """Fetch and return a security group rule from Neutron DB"""
         LOG.debug("ML2_VPP: fetching security group rule: %s" % rule_id)
-        db = directory.get_plugin()
+        plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
-            return db.get_security_group_rule(context, rule_id)
+            return plugin.get_security_group_rule(context, rule_id)
 
     def get_secgroup_from_rules(self, sgid, rules):
         """Build and return a security group namedtuple object.
