@@ -397,9 +397,12 @@ class VPPForwarder(object):
                 LOG.debug('port %s syncing with port in VPP',
                           uuid)
 
+                LOG.debug('port %s not in cache, reading info from vpp: %s',
+                          uuid, str(props))
+
             else:
-                LOG.debug('binding port %s as type %s',
-                          uuid, if_type)
+                LOG.debug('binding port %s as type %s' %
+                          (uuid, if_type))
 
                 if if_type == 'maketap':
                     iface_idx = self.vpp.create_tap(tap_name, mac, uuid)
@@ -411,7 +414,7 @@ class VPPForwarder(object):
             if if_type == 'plugtap':
                 self._ensure_kernelside_plugtap(bridge_name,
                                                 tap_name,
-                                                tap_name)
+                                                int_tap_name)
 
             props['iface_idx'] = iface_idx
 
