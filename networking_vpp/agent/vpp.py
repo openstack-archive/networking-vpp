@@ -70,7 +70,7 @@ class VPPInterface(object):
             yield (fix_string(interface.interface_name), interface)
 
     def is_vhostuser(self, iface_idx):
-        for vhost in self.get_vhostusers():
+        for vhost_name, vhost in self.get_vhostusers():
             if vhost.sw_if_index == iface_idx:
                 return True
         return False
@@ -97,6 +97,12 @@ class VPPInterface(object):
         for iface in self.get_interfaces():
             if iface['tag'] == tag:
                 return iface['sw_if_idx']
+        return None
+
+    def get_interface_by_id(self, sw_if_index):
+        for iface in self.get_interfaces():
+            if iface['sw_if_idx'] == sw_if_index:
+                return iface
         return None
 
     def set_interface_tag(self, if_idx, tag):
@@ -147,7 +153,7 @@ class VPPInterface(object):
 
     def is_tap(self, iface_idx):
         for tap in self.get_taps():
-            if tap['sw_if_index'] == iface_idx:
+            if tap['sw_if_idx'] == iface_idx:
                 return True
         return False
 
@@ -435,6 +441,14 @@ class VPPInterface(object):
         t = self._vpp.macip_acl_interface_get()
         self.LOG.debug("MAC-IP ACL dump response: %s" % str(t))
         return t
+
+    def get_acl_interface_list_dump(self, sw_if_index):
+        self.LOG.debug("Getting the acls for interface %d", sw_if_index)
+        t = self._vpp.acl_interface_list_dump(sw_if_index=sw_if_index)
+        self.LOG.debug("acl_interface_list_dump response: %s", str(t))
+        for rule in t:
+            if hasattr(rule, 'acl_index'):
+                yield rule.acl_index
 
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
 #        t = self._vpp.vxlan_add_del_tunnel(
