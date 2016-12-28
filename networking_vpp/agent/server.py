@@ -31,6 +31,7 @@ import re
 import sys
 import threading
 import time
+from uuid import UUID
 import vpp
 
 from collections import defaultdict
@@ -82,17 +83,52 @@ eventlet.monkey_patch()
 
 DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
 
+TAG_L2IFACE_NAME_PREFIX = n_const.DEVICE_OWNER_NETWORK_PREFIX
+TAG_TENANT_NETWORK_PREFIX = 'tenantnetwork:'
+
 # Apply monkey patch if necessary
 compat.monkey_patch()
-
-
-def get_tap_name(uuid):
-    return n_const.TAP_DEVICE_PREFIX + uuid[0:11]
 
 
 def get_vhostuser_name(uuid):
     return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
 
+
+def get_l2_port_tag(uuid):
+    return n_const.DEVICE_OWNER_NETWORK_PREFIX + str(uuid)
+
+
+def is_l2_port(tag):
+    if tag.startswith(n_const.DEVICE_OWNER_NETWORK_PREFIX):
+        uuid = tag[n_const.DEVICE_OWNER_NETWORK_PREFIX:]
+        try:
+            return UUID(uuid) == uuid
+        except ValueError:
+            pass
+    return False
+
+
+def get_network_tag(net_type, seg_id):
+    return TAG_TENANT_NETWORK_PREFIX + '%s.%s' % (net_type, seg_id)
+
+
+def is_network_tag(tag):
+    if tag.startswith(TAG_TENANT_NETWORK_PREFIX):
+        return True
+    return False
+
+
+def parse_network_tag(tag):
+    m = re.match(TAG_TENANT_NETWORK_PREFIX + '([a-z]*).([0-9]*)', tag)
+    if m:
+        net_type = m.group(1)
+        try:
+            seg_id = int(m.group(2))
+        except ValueError:
+            seg_id = None
+        return (net_type, seg_id)
+    else:
+        return None
 
 ######################################################################
 
@@ -120,7 +156,6 @@ class VPPForwarder(object):
         self.vxlan_bcast_addr = vxlan_bcast_addr
         self.vxlan_src_addr = vxlan_src_addr
         self.vxlan_vrf = vxlan_vrf
-        # Used as a unique number for bridge IDs
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
@@ -209,8 +244,11 @@ class VPPForwarder(object):
         # can find them when we restart.  If we add an interface
         # to two bridges that will likely not do as required
 
+        tag = get_network_tag(net_type, seg_id)
+
         if net_type == 'flat':
             if_upstream = ifidx
+            self.vpp.set_interface_tag(if_upstream, tag)
 
             LOG.debug('Adding upstream interface-idx:%s-%s to bridge '
                       'for flat networking', intf, if_upstream)
@@ -222,8 +260,7 @@ class VPPForwarder(object):
                       'to bridge for vlan networking', intf, seg_id)
             if_upstream = self.vpp.get_ifidx_by_name('%s.%s' % (intf, seg_id))
             if if_upstream is None:
-                if_upstream = self.vpp.create_vlan_subif(ifidx,
-                                                         seg_id)
+                if_upstream = self.vpp.create_vlan_subif(ifidx, seg_id, tag)
         # elif net_type == 'vxlan':
         #     # NB physnet not really used here
         #     if_upstream = \
@@ -236,11 +273,20 @@ class VPPForwarder(object):
 
         self.vpp.ifup(if_upstream)
 
-        # Out bridge IDs have one upstream interface in so we simply use
+        # Our bridge IDs have one upstream interface in so we simply use
         # that ID as their domain ID
-        self.vpp.create_bridge_domain(if_upstream, self.mac_age)
 
-        self.vpp.add_to_bridge(if_upstream, if_upstream)
+        bridge_domains = self.vpp.get_ifaces_in_bridge_domains()
+
+        # As this method is also called for resync, check every thing
+        if if_upstream not in bridge_domains:
+            self.vpp.create_bridge_domain(if_upstream, self.mac_age)
+
+        if if_upstream not in bridge_domains.get(if_upstream, []):
+            # Out bridge IDs have one upstream interface in so we simply use
+            # that ID as their domain ID
+            self.vpp.add_to_bridge(if_upstream, if_upstream)
+
         self.networks[(physnet, net_type, seg_id)] = {
             'bridge_domain_id': if_upstream,
             'if_upstream': intf,
@@ -340,6 +386,27 @@ class VPPForwarder(object):
             LOG.error('Failed waiting for external tap device:%s',
                       device_name)
 
+    def _ensure_kernelside_plugtap(self, bridge_name, tap_name, int_tap_name):
+        # This is the kernel-side config (and we should not assume
+        # that, just because the interface exists in VPP, it has
+        # been done previously - the crash could occur in the
+        # middle of the process)
+        # Running it twice is harmless.  Never running it is
+        # problematic.
+
+        # TODO(ijw): someone somewhere ought to be sorting
+        # the MTUs out
+        br = self.ensure_bridge(bridge_name)
+        # This is the external TAP device that will be
+        # created by an agent, say the DHCP agent later in
+        # time
+        t = threading.Thread(target=self.add_external_tap,
+                             args=(tap_name, br, bridge_name,))
+        t.start()
+        # This is the device that we just created with VPP
+        if not br.owns_interface(int_tap_name):
+            br.addif(int_tap_name)
+
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
             LOG.debug('port %s repeat binding request - ignored', uuid)
@@ -350,46 +417,63 @@ class VPPForwarder(object):
             # TODO(ijw): naming not obviously consistent with
             # Neutron's naming
             name = uuid[0:11]
-            bridge_name = 'br-' + name
-            tap_name = 'tap' + name
+            tap_name = n_const.TAP_DEVICE_PREFIX + name
 
-            if if_type == 'maketap' or if_type == 'plugtap':
-                if if_type == 'maketap':
-                    iface_idx = self.vpp.create_tap(tap_name, mac)
-                    props = {'name': tap_name}
-                else:
-                    int_tap_name = 'vpp' + name
+            if if_type == 'maketap':
+                props = {'name': tap_name}
+            elif if_type == 'plugtap':
+                bridge_name = 'br-' + name
+                int_tap_name = 'vpp' + name
 
-                    props = {'bridge_name': bridge_name,
-                             'ext_tap_name': tap_name,
-                             'int_tap_name': int_tap_name}
-
-                    LOG.debug('Creating tap interface %s with mac %s',
-                              int_tap_name, mac)
-                    iface_idx = self.vpp.create_tap(int_tap_name, mac)
-                    # TODO(ijw): someone somewhere ought to be sorting
-                    # the MTUs out
-                    br = self.ensure_bridge(bridge_name)
-                    # This is the external TAP device that will be
-                    # created by an agent, say the DHCP agent later in
-                    # time
-                    t = threading.Thread(target=self.add_external_tap,
-                                         args=(tap_name, br, bridge_name,))
-                    t.start()
-                    # This is the device that we just created with VPP
-                    if not br.owns_interface(int_tap_name):
-                        br.addif(int_tap_name)
+                props = {'bridge_name': bridge_name,
+                         'ext_tap_name': tap_name,
+                         'int_tap_name': int_tap_name}
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
-                iface_idx = self.vpp.create_vhostuser(path, mac)
                 props = {'path': path}
             else:
                 raise UnsupportedInterfaceException(
                     'unsupported interface type')
+
             props['bind_type'] = if_type
-            props['iface_idx'] = iface_idx
             props['mac'] = mac
+            tag = get_l2_port_tag(uuid)
+
+            iface_idx = self.vpp.get_ifidx_by_tag(tag)
+            if iface_idx is not None:
+                # The agent has at some point reset, but before the reset
+                # this interface was at least created
+
+                # TODO(ijw): we should resync by populating
+                # self.interfaces() at startup from VPP, which means
+                # this code would never be needed.
+                # TODO(ijw): this also has the issue that - while the interface
+                # now definitely exists - we don't check its type is correct.
+
+                LOG.debug('port %s syncing with port in VPP',
+                          uuid)
+
+            else:
+                LOG.debug('binding port %s as type %s' %
+                          (uuid, if_type))
+
+                if if_type == 'maketap':
+                    iface_idx = self.vpp.create_tap(tap_name, mac, tag)
+                elif if_type == 'plugtap':
+                    iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
+                elif if_type == 'vhostuser':
+                    iface_idx = self.vpp.create_vhostuser(path, mac, tag)
+
+                props['iface_idx'] = iface_idx
+
+            if if_type == 'plugtap':
+                self._ensure_kernelside_plugtap(bridge_name,
+                                                tap_name,
+                                                int_tap_name)
+
+            props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
+
         return self.interfaces[uuid]
 
     def bind_interface_on_host(self, if_type, uuid, mac, physnet,
@@ -418,6 +502,9 @@ class VPPForwarder(object):
         if uuid not in self.interfaces:
             LOG.debug('unknown port %s unbinding request - ignored',
                       uuid)
+
+            # TODO(ijw): if we're out of sync we still need to check
+            # VPP for cleanups
         else:
             props = self.interfaces[uuid]
             iface_idx = props['iface_idx']
@@ -439,6 +526,8 @@ class VPPForwarder(object):
                     del self.port_vpp_acls[iface_idx]
                     LOG.debug("secgroup_watcher: Current port acl_vector "
                               "mappings %s" % str(self.port_vpp_acls))
+                # This interface is no longer connected if it's deleted
+                self.iface_connected.remove(iface_idx)
             elif props['bind_type'] in ['maketap', 'plugtap']:
                 # remove port from bridge (sets to l3 mode) prior to deletion
                 self.vpp.delete_from_bridge(iface_idx)
@@ -462,9 +551,6 @@ class VPPForwarder(object):
                 LOG.error('Unknown port type %s during unbind',
                           props['bind_type'])
             self.interfaces.pop(uuid)
-
-            # This interface is no longer connected if it's deleted
-            self.iface_connected.remove(iface_idx)
 
             # Check if this is the last interface on host
             for interface in self.interfaces.values():
@@ -932,6 +1018,154 @@ class VPPForwarder(object):
         """Get a dump of macip ACLs on the node"""
         return self.vpp.get_macip_acl_dump()
 
+    def read_vpp_state(self):
+        """Read VPP interfaces and networks current config.
+
+        Called on resync_start, this method rebuilds the internal
+        cache for the interfaces and networks.
+        returns:
+        - list of iface (tuple {uuid, if_index}) which does not belong to
+          a bridge domain
+        """
+        self.networks = {}
+        self.interfaces = {}
+        l3_interfaces = []
+
+        ifaces_in_bds = self.vpp.get_ifaces_in_bridge_domains().items()
+
+        def iface_belongs_to_any_bd(if_idx):
+            for (bd, if_list) in ifaces_in_bds:
+                if if_idx in if_list:
+                    return True
+            return False
+
+        # Read interfaces configuration
+        vpp_interfaces = list(self.vpp.get_interfaces())
+        for iface in vpp_interfaces:
+            LOG.debug('Processing port %s', str(iface))
+            if not iface_belongs_to_any_bd(iface['sw_if_idx']):
+                l3_interfaces.append((iface['tag'], iface['sw_if_idx']))
+            # all interfaces created by the agent do have a UUID
+            elif is_l2_port(iface['tag']):
+                uuid = iface['tag']
+                props = {}
+                if self.vpp.is_vhostuser(iface['sw_if_idx']):
+                    path = get_vhostuser_name(uuid)
+                    props['path'] = path
+                    props['bind_type'] = 'vhostuser'
+                else:
+                    name = uuid[0:11]
+                    bridge_name = 'br-' + name
+                    tap_name = 'tap' + name
+
+                    for tap in self.vpp.get_taps():
+                        if tap['sw_if_idx'] == iface['sw_if_idx']:
+                            dev_name = tap['dev_name']
+                            break
+
+                    if dev_name == tap_name:
+                        props['name'] = tap_name
+                        props['bind_type'] = 'maketap'
+                    else:
+                        int_tap_name = 'vpp' + name
+                        props['bind_type'] = 'plugtap'
+                        props['bridge_name'] = bridge_name
+                        props['ext_tap_name'] = tap_name
+                        props['int_tap_name'] = int_tap_name
+                        self._ensure_kernelside_plugtap(bridge_name,
+                                                        tap_name,
+                                                        int_tap_name)
+
+                props['iface_idx'] = iface['sw_if_idx']
+                props['mac'] = iface['mac']
+
+                self.interfaces[uuid] = props
+                LOG.info('new port %s found in vpp: %s', uuid, str(props))
+
+            # Physical ifaces bound by the agent do have tag
+            elif is_network_tag(iface['tag']):
+                for (physnet, phys_iface) in self.physnets.items():
+                    if iface['name'].startswith(phys_iface):
+                        # will use physnet below
+                        break
+                else:
+                    LOG.warning("Physical interface %s not registered in "
+                                "current configuration", iface['name'])
+                    break
+
+                (net_type, seg_id) = parse_network_tag(iface['tag'])
+                if_idx = iface['sw_if_idx']
+
+                if if_idx not in self.vpp.get_ifaces_in_bridge_domain(if_idx):
+                    LOG.warning("Interface does not belong to "
+                                "a bridge domain", iface['name'])
+                    if net_type == 'vlan':
+                        self.vpp.delete_vlan_subif(iface['sw_if_idx'])
+                    # TODO(cfontaine): handle vxlan...
+                    # elif net_type == 'vxlan':
+                    elif net_type != 'flat':
+                        LOG.warning('Unknown net_type: %s for interface',
+                                    net_type, iface['name'])
+                    break
+
+                for sub_iface in vpp_interfaces:
+                    if sub_iface['sw_if_idx'] == if_idx:
+                        sup_iface_idx = sub_iface['sup_sw_if_idx']
+                        break
+                else:
+                    sup_iface_idx = if_idx
+
+                for sup_iface in vpp_interfaces:
+                    if sup_iface['sw_if_idx'] == sup_iface_idx:
+                        sup_iface_name = sup_iface['name']
+                        break
+                else:
+                    sup_iface_name = iface['name']
+
+                # Read physical networks configuration
+                self.networks[(physnet, net_type, seg_id)] = {
+                    'bridge_domain_id': if_idx,  # bd_id == if_idx
+                    'if_upstream': sup_iface_name,
+                    'if_upstream_idx': iface['sw_if_idx'],
+                    'network_type': net_type,
+                    'segmentation_id': seg_id,
+                    'physnet': physnet,
+                }
+                LOG.info('New network found in vpp: %s',
+                         str(self.networks[(physnet, net_type, seg_id)]))
+
+            # Unrecognised tag, not created from this agent,
+            # maybe created manually or by a feature
+            else:
+                LOG.debug('Port without matching tag: %s %s',
+                          iface['name'],
+                          iface['tag'])
+                pass
+
+        return l3_interfaces
+
+    def delete_unknown_interfaces(self, required_interfaces, l3_interfaces):
+        """Delete all interfaces unknown from etcd.
+
+        Nova may have sent delete requests, which may not have
+        been seen by the agent (agent down, or resync), so delete
+        all interfaces with a valid uuid but unknown to the agent.
+        params:
+        - required_interfaces: list of uuid read from etcd
+        """
+        for iface in self.vpp.get_interfaces():
+            tag = iface['tag']
+            if_idx = iface['sw_if_idx']
+            if is_l2_port(tag) and (tag not in required_interfaces or
+                                    tag in l3_interfaces):
+                if self.vpp.is_vhostuser(if_idx):
+                    self.vpp.delete_vhostuser(if_idx)
+                elif self.vpp.is_tap(if_idx):
+                    self.vpp.delete_tap(if_idx)
+            # TODO(ijw): if there are now unused uplinks, they should
+            # also be cleaned up along with their bridges
+
+
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
@@ -1263,9 +1497,30 @@ class EtcdListener(object):
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
-            def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
+            def resync_start(self, etcd_results):
+                """Called at begining of resync.
+
+                params:
+                - etcd_results : list of EtcdResult, corresponding to
+                                 the whole tree read under port_key_space
+                """
+                # No interface binding is done here, we only fill
+                # the cache
+                l3_interaces = self.data.vppf.read_vpp_state()
+
+                required_interfaces = []
+                for kv in etcd_results:
+                    m = re.match(self.data.port_key_space + '/([^/]+)$',
+                                 kv.key)
+                    if m:
+                        required_interfaces.append(m.group(1))
+
+                self.data.vppf.delete_unknown_interfaces(required_interfaces,
+                                                         l3_interaces)
+                pass
+
+            def resync_end(self):
+                """End of resync phase."""
                 pass
 
             def do_work(self, action, key, value):
@@ -1367,7 +1622,10 @@ class EtcdListener(object):
             def do_tick(self):
                 pass
 
-            def resync(self):
+            def resync_start(self, etcd_results):
+                pass
+
+            def resync_end(self):
                 pass
 
             def do_work(self, action, key, value):
