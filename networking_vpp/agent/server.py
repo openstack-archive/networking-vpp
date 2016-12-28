@@ -1216,6 +1216,169 @@ class VPPForwarder(object):
         """Get a dump of macip ACLs on the node"""
         return self.vpp.get_macip_acl_dump()
 
+    def read_vpp_state(self):
+        """Read VPP interfaces and networks current config.
+
+        Called on resync_start, this method rebuilds the internal
+        cache for the interfaces and networks.
+        returns:
+        - dict of interfaces: same format as self.interfaces
+        - dict of networks: same format as self.networks
+        - list of iface tuples (uuid, if_index) with an incorrect state
+        """
+        networks = {}
+        interfaces = {}
+        bad_interfaces = []
+
+        if_list = []
+        for ifaces in self.vpp.get_ifaces_in_bridge_domains().values():
+            if_list.extend(ifaces)
+
+        def iface_belongs_to_any_bd(if_idx):
+            if if_idx in if_list:
+                return True
+            return False
+
+        # Read interfaces configuration
+        vpp_interfaces = {}
+        for i in self.vpp.get_interfaces():
+            vpp_interfaces[i['sw_if_idx']] = i
+
+        for iface in vpp_interfaces.values():
+            # all interfaces created by the agent do have a UUID
+            if decode_port_tag(iface['tag']):
+                uuid = decode_port_tag(iface['tag'])
+                if not iface_belongs_to_any_bd(iface['sw_if_idx']):
+                    bad_interfaces.append((iface['tag'], iface['sw_if_idx']))
+                    break
+
+                props = {}
+                if self.vpp.is_vhostuser(iface['sw_if_idx']):
+                    path = get_vhostuser_name(uuid)
+                    props['path'] = path
+                    props['bind_type'] = 'vhostuser'
+
+                elif self.vpp.is_tap(iface['sw_if_idx']):
+                    tap_name = get_tap_name(uuid)
+                    int_tap_name = get_vpptap_name(uuid)
+
+                    # Get tap name to differentiate between
+                    # plugtap and maketap
+                    for tap in self.vpp.get_taps():
+                        if tap['sw_if_idx'] == iface['sw_if_idx']:
+                            dev_name = tap['dev_name']
+                            break
+
+                    if dev_name == tap_name:
+                        props['name'] = tap_name
+                        props['bind_type'] = 'maketap'
+                    elif dev_name == int_tap_name:
+                        props['bind_type'] = 'plugtap'
+                        props['bridge_name'] = get_bridge_name(uuid)
+                        props['ext_tap_name'] = tap_name
+                        props['int_tap_name'] = int_tap_name
+                    else:
+                        LOG.warn('Interface %d %s has a valid UUID but '
+                                 'incorrect tap name',
+                                 iface['sw_if_idx'], dev_name)
+                        bad_interfaces.append((iface['sw_if_idx'], uuid))
+                        break
+                else:
+                    LOG.warn('Interface %d is neither vhost nor tap',
+                             iface['sw_if_idx'])
+                    bad_interfaces.append((iface['sw_if_idx'], uuid))
+                    break
+
+                props['iface_idx'] = iface['sw_if_idx']
+                props['mac'] = iface['mac']
+
+                interfaces[uuid] = props
+                LOG.debug('new port %s found in vpp: %s', uuid, str(props))
+
+            # Physical ifaces bound by the agent do have tag
+            elif decode_uplink_tag(iface['tag']):
+                for (physnet, phys_iface) in self.physnets.items():
+                    sup = self.vpp.get_interface_by_id(iface['sup_sw_if_idx'])
+                    if sup['name'] == phys_iface:
+                        # will use physnet below
+                        break
+                else:
+                    LOG.warning("Physical interface %s not registered in "
+                                "current configuration", iface['name'])
+                    self.vpp.set_interface_tag(iface['sw_if_idx'], None)
+                    break
+
+                (net_type, seg_id) = decode_uplink_tag(iface['tag'])
+                if_idx = iface['sw_if_idx']
+
+                if if_idx not in self.vpp.get_ifaces_in_bridge_domain(if_idx):
+                    LOG.warning("Interface does not belong to "
+                                "it's bridge domain", iface['name'])
+                    if net_type == 'vlan':
+                        self.vpp.delete_vlan_subif(iface['sw_if_idx'])
+                    # TODO(cfontaine): handle vxlan...
+                    # elif net_type == 'vxlan':
+                    elif net_type != 'flat':
+                        LOG.warning('Unknown net_type: %s for interface',
+                                    net_type, iface['name'])
+                    break
+
+                iface = vpp_interfaces[iface['sw_if_idx']]
+                sup_iface_idx = iface['sup_sw_if_idx']
+                sup_iface_name = vpp_interfaces[sup_iface_idx]['name']
+
+                # Read physical networks configuration
+                networks[(physnet, net_type, seg_id)] = {
+                    'bridge_domain_id': if_idx,  # bd_id == if_idx
+                    'if_upstream': sup_iface_name,
+                    'if_upstream_idx': iface['sw_if_idx'],
+                    'network_type': net_type,
+                    'segmentation_id': seg_id,
+                    'physnet': physnet,
+                }
+                LOG.debug('New network found in vpp: %s',
+                          str(networks[(physnet, net_type, seg_id)]))
+
+            # Unrecognised tag, not created from this agent,
+            # maybe created manually or by a feature
+            else:
+                LOG.debug('Port without matching tag: %s %s',
+                          iface['name'],
+                          iface['tag'])
+                pass
+
+        return interfaces, networks, bad_interfaces
+
+    def delete_interface(self, if_idx):
+        """Delete an interface, whatever the type of the interface.
+
+        Calls the appropriate delete method of the interface.
+        params:
+        - if_idx: VPP sw_if_idx of the interface to delete
+        """
+        self.vpp.ifdown(if_idx)
+        if self.vpp.is_vhostuser(if_idx):
+            self.vpp.delete_vhostuser(if_idx)
+        elif self.vpp.is_tap(if_idx):
+            self.vpp.delete_tap(if_idx)
+
+    def delete_unused_bridge_domains(self):
+        # if there are now unused uplinks, they should
+        # also be cleaned up along with their bridges
+        for bd_id, ifaces in self.vpp.get_ifaces_in_bridge_domains().items():
+            # if there is only 1 interfaces in a bd, this means we should
+            # only have the upstream interface: delete it as well as the BD
+            if len(ifaces) == 1:
+                if ifaces[0] == bd_id:
+                    self.vpp.delete_vlan_subif(bd_id)
+                else:
+                    self.LOG.error('Found bridge domain without it\'s '
+                                   'upstream interface, bd_id %d, iface %d',
+                                   bd_id, ifaces[0])
+                del ifaces[0]
+            if len(ifaces) == 0:
+                self.vpp.delete_bridge_domain(bd_id)
+
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
@@ -1582,6 +1745,7 @@ class EtcdListener(object):
         self.load_macip_acl_mapping()
 
         self.etcd_helper.clear_state(self.state_key_space)
+        self.secgroup_resynced = eventlet.event.Event()
 
         class PortWatcher(EtcdWatcher):
 
@@ -1592,9 +1756,123 @@ class EtcdListener(object):
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
-            def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
+            def _check_configuration(self,
+                                     etcd_interfaces,
+                                     vpp_interfaces,
+                                     vpp_networks):
+                """Check for any incoherent interfaces.
+
+                params:
+                - etcd_interfaces: dict of {port_uuid: json dict} containing
+                                   the desired configuration
+                - vpp_interfaces: Current configuration of VPP
+
+                returns:
+                - vpp_interfaces updated dict containing the good interfaces
+                - list of (uuid, if_idx) of interfaces with bad configuration
+                """
+                ifaces_to_remove = []
+
+                ifaces_in_bridges = \
+                    self.data.vppf.vpp.get_ifaces_in_bridge_domains()
+
+                def get_bd_id_for_iface_idx(idx):
+                    for bd_id in ifaces_in_bridges:
+                        if iface['iface_idx'] in ifaces_in_bridges[bd_id]:
+                            return bd_id
+                    else:
+                        return None
+
+                def get_network_for_bd_id(bd_id):
+                    for network in vpp_networks.values():
+                        if network['bridge_domain_id'] == bd_id:
+                            return network
+                    else:
+                        return None
+
+                for uuid, iface in vpp_interfaces.items():
+                    # check for any deleted interfaces
+                    if uuid not in etcd_interfaces:
+                        ifaces_to_remove.append((uuid, iface['iface_idx']))
+                        del vpp_interfaces[uuid]
+                    else:  # check configuration
+                        # Retreive overlay network information for this iface
+                        bd_id = get_bd_id_for_iface_idx(iface['iface_idx'])
+                        network = get_network_for_bd_id(bd_id)
+                        if network:
+                            iface_net_type = network['network_type']
+                            iface_seg_id = network['segmentation_id']
+                        else:
+                            iface_net_type = None
+                            iface_seg_id = None
+
+                        # wi -> wanted interface
+                        wi = etcd_interfaces[uuid]
+                        if (iface['bind_type'] != wi['binding_type'] or
+                           iface['mac'] != wi['mac_address'] or
+                           iface_net_type != wi['network_type'] or
+                           iface_seg_id != wi['segmentation_id']):
+                            ifaces_to_remove.append((uuid, iface['iface_idx']))
+                            del vpp_interfaces[uuid]
+
+                return (vpp_interfaces, ifaces_to_remove)
+
+            def resync_start(self, etcd_results):
+                """Called at begining of resync.
+
+                The resync is done in 3 steps:
+                1. Read VPP current configuration
+                2. Compare the vpp config with the desired (etcd) config
+                3. For each interfaces with a different configuration,
+                   unbind them and remove them from the vpp_interfaces dict.
+                4. All other interfaces will be bound in the do_work method
+
+                params:
+                - etcd_results : list of EtcdResult, corresponding to
+                                 the whole tree read under port_key_space
+                """
+                interfaces, networks, l3_ifaces = \
+                    self.data.vppf.read_vpp_state()
+
+                re_port = re.compile(self.data.port_key_space + '/([^/]+)$')
+                etcd_interfaces = {}
+                for kv in etcd_results:
+                    m = re_port.match(kv.key)
+                    if m:
+                        etcd_interfaces[m.group(1)] = json.loads(kv.value)
+
+                LOG.debug('after read_vpp_state')
+                LOG.debug('Read interfaces: %s', str(interfaces))
+                interfaces, ifaces_to_remove = \
+                    self._check_configuration(etcd_interfaces,
+                                              interfaces,
+                                              networks)
+                ifaces_to_remove += l3_ifaces
+                LOG.debug('after _check_configuration')
+                LOG.debug('required interfaces: %s', str(interfaces))
+                LOG.debug('interfaces in bad state: %s', str(ifaces_to_remove))
+                for (tag, sw_if_idx) in ifaces_to_remove:
+                    self.data.vppf.delete_interface(sw_if_idx)
+                self.data.vppf.delete_unused_bridge_domains()
+
+                # We are not yet in sync with etcd, but all active
+                # interfaces and networks are valid: cache will be filled and
+                # security groups will be enforced in do_work method
+
+                # Wait for the end of security groups resync to continue
+                # and do the binding, so all SG rules will be in cache
+                timeout = eventlet.timeout.Timeout(5)
+                try:
+                    self.data.secgroup_resynced.wait()
+                    timeout.cancel()
+                except eventlet.timeout.Timeout:
+                    LOG.warning('Still waitng resync event from Security '
+                                'Group thread, continuing anyway...')
+                    pass
+
+            def resync_end(self):
+                """End of resync phase."""
+                LOG.info('End of agent resync phase for port binding')
                 pass
 
             def do_work(self, action, key, value):
@@ -1705,7 +1983,28 @@ class EtcdListener(object):
             def do_tick(self):
                 pass
 
-            def resync(self):
+            def resync_start(self, etcd_results):
+                """Resync for Security Groups.
+
+                - For startup and resync, we read all the current etcd
+                  and update the cache in do_work method
+                - Here, we only have to clean internal cache for SG
+                  if a SG uuid is unknown. Only usefull for resync case.
+                """
+                security_groups = []
+                re_sg = re.compile(self.data.secgroup_key_space + '/([^/]+)$')
+                for kv in etcd_results:
+                    m = re_sg.match(kv.key)
+                    if m:
+                        security_groups.append(m.group(1))
+
+                for sg in secgroups.keys():
+                    if sg not in security_groups:
+                        del secgroups[sg]
+
+            def resync_end(self):
+                LOG.info('End of agent resync phase for security groups')
+                self.data.secgroup_resynced.send()
                 pass
 
             def do_work(self, action, key, value):
