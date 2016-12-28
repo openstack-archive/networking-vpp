@@ -131,7 +131,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def test_create_interface_on_host_exists(self):
         if_type = 'maketap'
         uuid = 'fakeuuid'
-        mac = 'fakemac'
+        mac = '00:00:00:00:00:00'
         fake_iface = {'bind_type': if_type,
                       'iface_idx': 1,
                       'mac': mac}
@@ -140,36 +140,42 @@ class VPPForwarderTestCase(base.BaseTestCase):
         assert (retval == fake_iface)
 
     def test_create_interface_on_host_maketap(self):
+        self.vpp.vpp.get_interface.return_value = None
         if_type = 'maketap'
         uuid = 'fakeuuid'
-        mac = 'fakemac'
+        mac = '00:00:00:00:00:00'
         retval = self.vpp.create_interface_on_host(if_type, uuid, mac)
-        self.vpp.vpp.create_tap.assert_called_once_with('tapfakeuuid', mac)
+        self.vpp.vpp.create_tap.assert_called_once_with('tapfakeuuid',
+                                                        mac, uuid)
         assert (retval == self.vpp.interfaces[uuid])
 
     @mock.patch('networking_vpp.agent.server.VPPForwarder.ensure_bridge')
     def test_create_interface_on_host_plugtap(self, m_en_br):
+        self.vpp.vpp.get_interface.return_value = None
         if_type = 'plugtap'
         uuid = 'fakeuuid'
-        mac = 'fakemac'
+        mac = '00:00:00:00:00:00'
         retval = self.vpp.create_interface_on_host(if_type, uuid, mac)
-        self.vpp.vpp.create_tap.assert_called_once_with('vppfakeuuid', mac)
+        self.vpp.vpp.create_tap.assert_called_once_with('vppfakeuuid',
+                                                        mac, uuid)
         self.vpp.ensure_bridge.assert_called_once_with('br-fakeuuid')
         assert (retval == self.vpp.interfaces[uuid])
 
     def test_create_interface_on_host_vhostuser(self):
+        self.vpp.vpp.get_interface.return_value = None
         if_type = 'vhostuser'
         uuid = 'fakeuuid'
-        mac = 'fakemac'
+        mac = '00:00:00:00:00:00'
         retval = self.vpp.create_interface_on_host(if_type, uuid, mac)
         self.vpp.vpp.create_vhostuser.assert_called_once_with('/tmp/fakeuuid',
-                                                              mac)
+                                                              mac, uuid)
         assert (retval == self.vpp.interfaces[uuid])
 
     def test_create_interface_on_host_unsupported(self):
+        self.vpp.vpp.get_interface.return_value = None
         if_type = 'unsupported'
         uuid = 'fakeuuid'
-        mac = 'fakemac'
+        mac = '00:00:00:00:00:00'
         self.assertRaises(server.UnsupportedInterfaceException,
                           self.vpp.create_interface_on_host,
                           if_type, uuid, mac)

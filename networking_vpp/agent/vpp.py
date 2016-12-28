@@ -58,12 +58,15 @@ class VPPInterface(object):
         t = self._vpp.sw_interface_dump()
 
         for interface in t:
-            yield (fix_string(interface.interface_name), interface)
+            yield (fix_string(interface.interface_name),
+                   fix_string(interface.tag),
+                   interface)
 
-    def get_interface(self, name):
-        for (ifname, f) in self.get_interfaces():
-            if ifname == name:
+    def get_interface(self, name_or_uuid):
+        for (ifname, uuid, f) in self.get_interfaces():
+            if ifname == name_or_uuid or uuid == name_or_uuid:
                 return f
+        return None
 
     def get_version(self):
         t = self._vpp.show_version()
@@ -74,13 +77,14 @@ class VPPInterface(object):
 
     ########################################
 
-    def create_tap(self, ifname, mac):
+    def create_tap(self, ifname, mac, port_uuid):
         # (we don't like unicode in VPP hence str(ifname))
         t = self._vpp.tap_connect(use_random_mac=False,
                                   tap_name=str(ifname),
                                   mac_address=mac_to_bytes(mac),
                                   renumber=False,
-                                  custom_dev_instance=0)
+                                  custom_dev_instance=0,
+                                  tag=str(port_uuid))
 
         self._check_retval(t)
 
@@ -94,7 +98,7 @@ class VPPInterface(object):
 
     #############################
 
-    def create_vhostuser(self, ifpath, mac,
+    def create_vhostuser(self, ifpath, mac, port_uuid,
                          qemu_user=None, qemu_group=None, is_server=False):
         self.LOG.info('Creating %s as a port', ifpath)
 
@@ -103,8 +107,9 @@ class VPPInterface(object):
                                            renumber=False,
                                            custom_dev_instance=0,
                                            use_custom_mac=True,
-                                           mac_address=mac_to_bytes(mac)
-                                           )
+                                           mac_address=mac_to_bytes(mac),
+                                           tag=str(port_uuid))
+
         self.LOG.debug("Created vhost user interface object: %s", str(t))
         self._check_retval(t)
 
@@ -167,6 +172,30 @@ class VPPInterface(object):
             is_add=False  # is a delete
         )
         self._check_retval(t)
+
+    def get_bridge_domains(self):
+        t = self._vpp.bridge_domain_dump(bd_id=0xffffffff)
+        # this method returns an array containing 2 types of object:
+        # - bridge_domain_details
+        # - bridge_domain_sw_if_details
+        # build a dict containing: {bridge_id--> list of interfaces}
+
+        bridges = {}
+        for bd_info in t:
+            self.LOG.info("%s %s", str(bd_info), str(dir(bd_info)))
+            try:
+                if bd_info.bd_id not in bridges:
+                    bridges[bd_info.bd_id] = []
+                bridges[bd_info.bd_id].append(bd_info.sw_if_index)
+            except AttributeError:
+                pass
+        return bridges
+
+    def get_bridge_domain(self, bd_id):
+        for (bridge_domain, sw_if_indices) in self.get_bridge_domains():
+            if bridge_domain.bd_id == bd_id:
+                return bridge_domain
+        return None
 
     def create_vlan_subif(self, if_id, vlan_tag):
         self.LOG.debug("Creat0ng vlan subinterface with ID:%s and vlan_tag:%s"

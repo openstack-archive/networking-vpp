@@ -92,19 +92,27 @@ class VPPForwarder(object):
         self.vxlan_bcast_addr = vxlan_bcast_addr
         self.vxlan_src_addr = vxlan_src_addr
         self.vxlan_vrf = vxlan_vrf
+
         # Used as a unique number for bridge IDs
-        self.next_bridge_id = 5678
+        # if the agent had to be restarted, VPP may already have
+        # many different BD created. Avoid moving new interfaces
+        # to an existing bridge domain
+        if len(self.vpp.get_bridge_domains().keys()) > 0:
+            self.next_bridge_id = max(self.vpp.get_bridge_domains().keys()) + 1
+        else:
+            self.next_bridge_id = 5678
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
 
-    def get_vpp_ifidx(self, if_name):
+    def get_vpp_ifidx(self, if_name_or_uuid):
         """Return VPP's interface index value for the network interface"""
-        if self.vpp.get_interface(if_name):
-            return self.vpp.get_interface(if_name).sw_if_index
+        iface = self.vpp.get_interface(if_name_or_uuid)
+        if iface:
+            return iface.sw_if_index
         else:
             LOG.error("Error obtaining interface data from vpp "
-                      "for interface:%s", if_name)
+                      "for interface:%s", if_name_or_uuid)
             return None
 
     def get_interface(self, physnet):
@@ -165,9 +173,17 @@ class VPPForwarder(object):
 
         self.vpp.ifup(if_upstream)
 
-        id = self.new_bridge_domain()
+        # Check if if_upstream is already part of bd.
+        # if this is case, use this bd_id
+        for (bd_id, sw_if_indices) in self.vpp.get_bridge_domains().items():
+            if if_upstream in sw_if_indices:
+                id = bd_id
+                break
+        else:
+            id = self.new_bridge_domain()
 
         self.vpp.add_to_bridge(id, if_upstream)
+
         self.networks[(physnet, net_type, seg_id)] = {
             'bridge_domain_id': id,
             'if_upstream': intf,
@@ -268,21 +284,41 @@ class VPPForwarder(object):
                       device_name)
 
     def create_interface_on_host(self, if_type, uuid, mac):
+        # TODO(ijw): naming not obviously consistent with
+        # Neutron's naming
+        name = uuid[0:11]
+        bridge_name = 'br-' + name
+        tap_name = 'tap' + name
+
         if uuid in self.interfaces:
             LOG.debug('port %s repeat binding request - ignored', uuid)
+
+        elif self.vpp.get_interface(uuid):
+            iface = self.vpp.get_interface(uuid)
+            if if_type == 'maketap':
+                props = {'name': tap_name}
+            elif if_type == 'plugtap':
+                int_tap_name = 'vpp' + name
+                props = {'bridge_name': bridge_name,
+                         'ext_tap_name': tap_name,
+                         'int_tap_name': int_tap_name}
+            else:
+                path = get_vhostuser_name(uuid)
+                props = {'path': path}
+            props['bind_type'] = if_type
+            props['iface_idx'] = iface.sw_if_index
+            props['mac'] = mac
+            self.interfaces[uuid] = props
+            LOG.debug('port %s not in cache, reading info from vpp: %s',
+                      uuid, str(props))
+
         else:
             LOG.debug('binding port %s as type %s' %
                       (uuid, if_type))
 
-            # TODO(ijw): naming not obviously consistent with
-            # Neutron's naming
-            name = uuid[0:11]
-            bridge_name = 'br-' + name
-            tap_name = 'tap' + name
-
             if if_type == 'maketap' or if_type == 'plugtap':
                 if if_type == 'maketap':
-                    iface_idx = self.vpp.create_tap(tap_name, mac)
+                    iface_idx = self.vpp.create_tap(tap_name, mac, uuid)
                     props = {'name': tap_name}
                 else:
                     int_tap_name = 'vpp' + name
@@ -293,7 +329,7 @@ class VPPForwarder(object):
 
                     LOG.debug('Creating tap interface %s with mac %s'
                               % (int_tap_name, mac))
-                    iface_idx = self.vpp.create_tap(int_tap_name, mac)
+                    iface_idx = self.vpp.create_tap(int_tap_name, mac, uuid)
                     # TODO(ijw): someone somewhere ought to be sorting
                     # the MTUs out
                     br = self.ensure_bridge(bridge_name)
@@ -308,7 +344,7 @@ class VPPForwarder(object):
                         br.addif(int_tap_name)
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
-                iface_idx = self.vpp.create_vhostuser(path, mac)
+                iface_idx = self.vpp.create_vhostuser(path, mac, uuid)
                 props = {'path': path}
             else:
                 raise UnsupportedInterfaceException(
