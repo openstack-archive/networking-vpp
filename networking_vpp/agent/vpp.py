@@ -68,15 +68,23 @@ class VPPInterface(object):
         for interface in t:
             yield (fix_string(interface.interface_name), interface)
 
-    def get_interfaces(self):
+    def _get_interfaces(self):
         t = self._vpp.sw_interface_dump()
 
         for interface in t:
-            yield (fix_string(interface.interface_name), interface)
+            yield (fix_string(interface.interface_name),
+                   fix_string(interface.tag),
+                   interface)
 
     def get_ifidx_by_name(self, name):
-        for (ifname, f) in self.get_interfaces():
+        for (ifname, iftag, f) in self._get_interfaces():
             if ifname == name:
+                return f.sw_if_idx
+        return None
+
+    def get_ifidx_by_tag(self, tag):
+        for (ifname, iftag, f) in self._get_interfaces():
+            if iftag == tag:
                 return f.sw_if_idx
         return None
 
@@ -89,13 +97,14 @@ class VPPInterface(object):
 
     ########################################
 
-    def create_tap(self, ifname, mac):
+    def create_tap(self, ifname, mac, port_uuid):
         # (we don't like unicode in VPP hence str(ifname))
         t = self._vpp.tap_connect(use_random_mac=False,
                                   tap_name=str(ifname),
                                   mac_address=mac_to_bytes(mac),
                                   renumber=False,
-                                  custom_dev_instance=0)
+                                  custom_dev_instance=0,
+                                  tag=str(port_uuid))
 
         self._check_retval(t)
 
@@ -109,7 +118,7 @@ class VPPInterface(object):
 
     #############################
 
-    def create_vhostuser(self, ifpath, mac,
+    def create_vhostuser(self, ifpath, mac, port_uuid,
                          qemu_user=None, qemu_group=None, is_server=False):
         self.LOG.info('Creating %s as a port', ifpath)
 
@@ -118,8 +127,9 @@ class VPPInterface(object):
                                            renumber=False,
                                            custom_dev_instance=0,
                                            use_custom_mac=True,
-                                           mac_address=mac_to_bytes(mac)
-                                           )
+                                           mac_address=mac_to_bytes(mac),
+                                           tag=str(port_uuid))
+
         self.LOG.debug("Created vhost user interface object: %s", str(t))
         self._check_retval(t)
 
@@ -263,6 +273,30 @@ class VPPInterface(object):
             is_add=False  # is a delete
         )
         self._check_retval(t)
+
+    def get_bridge_domains(self):
+        t = self._vpp.bridge_domain_dump(bd_id=0xffffffff)
+        # this method returns an array containing 2 types of object:
+        # - bridge_domain_details
+        # - bridge_domain_sw_if_details
+        # build a dict containing: {bridge_id--> list of interfaces}
+
+        # TODO(ijw): this will not reveal a bridge domain that exists
+        # but is empty, which is a problem because we do need to know
+        # whether to create a bridge domain
+        bridges = {}
+        for bd_info in t:
+            self.LOG.info("%s %s", str(bd_info), str(dir(bd_info)))
+            try:
+                if bd_info.bd_id not in bridges:
+                    bridges[bd_info.bd_id] = []
+                bridges[bd_info.bd_id].append(bd_info.sw_if_index)
+            except AttributeError:
+                pass
+        return bridges
+
+    def get_bridge_domain(self, bd_id):
+        return self.get_bridge_domains().get(bd_id, None)
 
     def create_vlan_subif(self, if_id, vlan_tag):
         self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"

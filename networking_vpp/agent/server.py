@@ -95,7 +95,6 @@ class VPPForwarder(object):
         self.vxlan_bcast_addr = vxlan_bcast_addr
         self.vxlan_src_addr = vxlan_src_addr
         self.vxlan_vrf = vxlan_vrf
-        # Used as a unique number for bridge IDs
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
@@ -204,11 +203,16 @@ class VPPForwarder(object):
 
         self.vpp.ifup(if_upstream)
 
-        # Out bridge IDs have one upstream interface in so we simply use
+        # Our bridge IDs have one upstream interface in so we simply use
         # that ID as their domain ID
-        self.vpp.create_bridge_domain(if_upstream)
 
-        self.vpp.add_to_bridge(if_upstream, if_upstream)
+        bridge_domains = self.vpp.get_bridge_domains()
+        if if_upstream not in bridge_domains:
+            self.vpp.create_bridge_domain(if_upstream)
+
+        if if_upstream not in bridge_domains.get(if_upstream, []):
+            self.vpp.add_to_bridge(if_upstream, if_upstream)
+
         self.networks[(physnet, net_type, seg_id)] = {
             'bridge_domain_id': if_upstream,
             'if_upstream': intf,
@@ -311,52 +315,88 @@ class VPPForwarder(object):
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
             LOG.debug('port %s repeat binding request - ignored', uuid)
-        else:
-            LOG.debug('binding port %s as type %s' %
-                      (uuid, if_type))
 
+        else:
             # TODO(ijw): naming not obviously consistent with
             # Neutron's naming
             name = uuid[0:11]
-            bridge_name = 'br-' + name
             tap_name = 'tap' + name
 
-            if if_type == 'maketap' or if_type == 'plugtap':
-                if if_type == 'maketap':
-                    iface_idx = self.vpp.create_tap(tap_name, mac)
-                    props = {'name': tap_name}
-                else:
-                    int_tap_name = 'vpp' + name
-
-                    props = {'bridge_name': bridge_name,
-                             'ext_tap_name': tap_name,
-                             'int_tap_name': int_tap_name}
-
-                    LOG.debug('Creating tap interface %s with mac %s',
-                              int_tap_name, mac)
-                    iface_idx = self.vpp.create_tap(int_tap_name, mac)
-                    # TODO(ijw): someone somewhere ought to be sorting
-                    # the MTUs out
-                    br = self.ensure_bridge(bridge_name)
-                    # This is the external TAP device that will be
-                    # created by an agent, say the DHCP agent later in
-                    # time
-                    t = threading.Thread(target=self.add_external_tap,
-                                         args=(tap_name, br, bridge_name,))
-                    t.start()
-                    # This is the device that we just created with VPP
-                    if not br.owns_interface(int_tap_name):
-                        br.addif(int_tap_name)
-            elif if_type == 'vhostuser':
-                path = get_vhostuser_name(uuid)
-                iface_idx = self.vpp.create_vhostuser(path, mac)
-                props = {'path': path}
-            else:
+            if if_type not in ('maketap', 'plugtap', 'vhostuser'):
                 raise UnsupportedInterfaceException(
                     'unsupported interface type')
+
+            if if_type == 'maketap':
+                props = {'name': tap_name}
+            elif if_type == 'plugtap':
+                bridge_name = 'br-' + name
+                int_tap_name = 'vpp' + name
+
+                props = {'bridge_name': bridge_name,
+                         'ext_tap_name': tap_name,
+                         'int_tap_name': int_tap_name}
+            else:
+                path = get_vhostuser_name(uuid)
+                props = {'path': path}
+
             props['bind_type'] = if_type
-            props['iface_idx'] = iface_idx
             props['mac'] = mac
+
+            def ensure_kernelside_plugtap():
+
+                # This is the kernel-side config (and we should not assume
+                # that, just because the interface exists in VPP, it has
+                # been done previously - the crash could occur in the
+                # middle of the process)
+                # Running it twice is harmless.  Never running it is
+                # problematic.
+
+                # TODO(ijw): someone somewhere ought to be sorting
+                # the MTUs out
+                br = self.ensure_bridge(bridge_name)
+                # This is the external TAP device that will be
+                # created by an agent, say the DHCP agent later in
+                # time
+                t = threading.Thread(target=self.add_external_tap,
+                                     args=(tap_name, br, bridge_name,))
+                t.start()
+                # This is the device that we just created with VPP
+                if not br.owns_interface(int_tap_name):
+                    br.addif(int_tap_name)
+
+            iface_idx = self.vpp.get_ifidx_by_tag(uuid)
+            if iface_idx is not None:
+                # The agent has at some point reset, but before the reset
+                # this interface was at least created
+
+                # TODO(ijw): we should resync by populating
+                # self.interfaces() at startup from VPP, which means
+                # this code would never be needed.
+                # TODO(ijw): this also has the issue that - while the interface
+                # now definitely exists - we don't check its type is correct.
+
+                LOG.debug('port %s not in cache, reading info from vpp: %s',
+                          uuid, str(props))
+
+                if if_type == 'plugtap':
+                    ensure_kernelside_plugtap()
+
+                props['iface_idx'] = iface_idx
+
+            else:
+                LOG.debug('binding port %s as type %s' %
+                          (uuid, if_type))
+
+                if if_type == 'maketap':
+                    iface_idx = self.vpp.create_tap(tap_name, mac, uuid)
+                elif if_type == 'plugtap':
+                    iface_idx = self.vpp.create_tap(int_tap_name, mac, uuid)
+                    ensure_kernelside_plugtap()
+                elif if_type == 'vhostuser':
+                    iface_idx = self.vpp.create_vhostuser(path, mac, uuid)
+
+                props['iface_idx'] = iface_idx
+
             self.interfaces[uuid] = props
         return self.interfaces[uuid]
 
@@ -382,6 +422,9 @@ class VPPForwarder(object):
         if uuid not in self.interfaces:
             LOG.debug('unknown port %s unbinding request - ignored'
                       % uuid)
+
+            # TODO(ijw): if we're out of sync we still need to check
+            # VPP for cleanups
         else:
             props = self.interfaces[uuid]
             iface_idx = props['iface_idx']
