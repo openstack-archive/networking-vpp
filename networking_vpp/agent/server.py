@@ -96,7 +96,6 @@ class VPPForwarder(object):
         self.vxlan_src_addr = vxlan_src_addr
         self.vxlan_vrf = vxlan_vrf
         # Used as a unique number for bridge IDs
-        self.next_bridge_id = 5678
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
@@ -161,12 +160,6 @@ class VPPForwarder(object):
             return None, None
         return ifname, ifidx
 
-    def new_bridge_domain(self):
-        x = self.next_bridge_id
-        self.vpp.create_bridge_domain(x)
-        self.next_bridge_id += 1
-        return x
-
     def network_on_host(self, physnet, net_type, seg_id=None):
         """Find or create a network of the type required"""
 
@@ -211,11 +204,13 @@ class VPPForwarder(object):
 
         self.vpp.ifup(if_upstream)
 
-        id = self.new_bridge_domain()
+        # Out bridge IDs have one upstream interface in so we simply use
+        # that ID as their domain ID
+        self.vpp.create_bridge_domain(if_upstream)
 
-        self.vpp.add_to_bridge(id, if_upstream)
+        self.vpp.add_to_bridge(if_upstream, if_upstream)
         self.networks[(physnet, net_type, seg_id)] = {
-            'bridge_domain_id': id,
+            'bridge_domain_id': if_upstream,
             'if_upstream': intf,
             'if_upstream_idx': if_upstream,
             'network_type': net_type,

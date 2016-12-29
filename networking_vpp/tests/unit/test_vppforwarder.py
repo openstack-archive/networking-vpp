@@ -45,13 +45,6 @@ class VPPForwarderTestCase(base.BaseTestCase):
         assert (ifname == 'test_iface'), 'test_net is on test_iface'
         assert (ifidx == 720), 'test_iface has idx 720'
 
-    def test_new_bridge_domain(self):
-        bridge_id = 5678
-        self.vpp.new_bridge_domain()
-        self.vpp.vpp.create_bridge_domain.assert_called_once_with(bridge_id)
-        assert (self.vpp.next_bridge_id == 5679),\
-            "Bridge ID should now be 5679"
-
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.create_network_on_host')
     def test_no_network_on_host(self, m_create_network_on_host):
@@ -83,7 +76,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.create_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
-        self.vpp.vpp.add_to_bridge.assert_called_once_with(5678, 740)
+        self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
 
