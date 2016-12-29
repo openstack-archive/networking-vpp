@@ -190,13 +190,13 @@ class VPPForwarder(object):
             if_upstream = ifidx
 
             LOG.debug('Adding upstream interface-idx:%s-%s to bridge '
-                      'for flat networking' % (intf, if_upstream))
+                      'for flat networking', intf, if_upstream)
 
         elif net_type == 'vlan':
             self.vpp.ifup(ifidx)
 
             LOG.debug('Adding upstream VLAN interface %s.%s '
-                      'to bridge for vlan networking' % (intf, seg_id))
+                      'to bridge for vlan networking', intf, seg_id)
             if not self.vpp.get_interface('%s.%s' % (intf, seg_id)):
                 if_upstream = self.vpp.create_vlan_subif(ifidx,
                                                          seg_id)
@@ -300,8 +300,8 @@ class VPPForwarder(object):
             if ip_lib.device_exists(device_name):
                 LOG.debug('External tap device %s found!'
                           % device_name)
-                LOG.debug('Bridging tap interface %s on %s'
-                          % (device_name, bridge_name))
+                LOG.debug('Bridging tap interface %s on %s',
+                          device_name, bridge_name)
                 if not bridge.owns_interface(device_name):
                     bridge.addif(device_name)
                 else:
@@ -341,8 +341,8 @@ class VPPForwarder(object):
                              'ext_tap_name': tap_name,
                              'int_tap_name': int_tap_name}
 
-                    LOG.debug('Creating tap interface %s with mac %s'
-                              % (int_tap_name, mac))
+                    LOG.debug('Creating tap interface %s with mac %s',
+                              int_tap_name, mac)
                     iface_idx = self.vpp.create_tap(int_tap_name, mac)
                     # TODO(ijw): someone somewhere ought to be sorting
                     # the MTUs out
@@ -383,8 +383,8 @@ class VPPForwarder(object):
         self.vpp.add_to_bridge(net_br_idx, iface_idx)
         props['net_data'] = net_data
         LOG.debug('Bound vpp interface with sw_idx:%s on '
-                  'bridge domain:%s'
-                  % (iface_idx, net_br_idx))
+                  'bridge domain:%s',
+                  iface_idx, net_br_idx)
         return props
 
     def unbind_interface_on_host(self, uuid):
@@ -395,8 +395,8 @@ class VPPForwarder(object):
             props = self.interfaces[uuid]
             iface_idx = props['iface_idx']
 
-            LOG.debug('unbinding port %s, recorded as type %s'
-                      % (uuid, props['bind_type']))
+            LOG.debug('unbinding port %s, recorded as type %s',
+                      uuid, props['bind_type'])
 
             # We no longer need this interface.  Specifically if it's
             # a vhostuser interface it's annoying to have it around
