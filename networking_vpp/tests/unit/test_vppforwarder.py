@@ -24,22 +24,26 @@ from neutron.tests import base
 class VPPForwarderTestCase(base.BaseTestCase):
     _mechanism_drivers = ['vpp']
 
-    @mock.patch('networking_vpp.agent.server.vpp.VPPInterface.get_interface')
+    @mock.patch('networking_vpp.agent.server.vpp.VPPInterface.'
+                'get_ifidx_by_name')
     @mock.patch('networking_vpp.agent.server.vpp')
     def setUp(self, m_vpp, m_vppif):
         super(VPPForwarderTestCase, self).setUp()
         self.vpp = server.VPPForwarder({"test_net": "test_iface"})
 
-    def test_get_vpp_ifidx(self):
-        type(self.vpp.vpp.get_interface.return_value).sw_if_index = 1
-        sw_if_return = self.vpp.get_vpp_ifidx('test')
-        self.vpp.vpp.get_interface.assert_called_with('test')
-        assert (sw_if_return == 1), "Return value should have been 1"
+        def idxes(iface):
+            vals = {
+                'test_iface': 720,
+                'test_iface.1': 740
+            }
+            return vals[iface]
+        self.vpp.vpp.get_ifidx_by_name.side_effect = idxes
 
-    def test_get_interface(self):
-        retval = self.vpp.get_interface('test_net')
-        assert (retval == 'test_iface'), \
-            "Return value should have been test_iface"
+    def test_get_if_for_physnet(self):
+        (ifname, ifidx) = self.vpp.get_if_for_physnet('test_net')
+        self.vpp.vpp.get_ifidx_by_name.assert_called_once_with('test_iface')
+        assert (ifname == 'test_iface'), 'test_net is on test_iface'
+        assert (ifidx == 720), 'test_iface has idx 720'
 
     def test_new_bridge_domain(self):
         bridge_id = 5678
@@ -69,21 +73,18 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     def test_flat_create_network_on_host(self):
         net_length = len(self.vpp.networks)
-        type(self.vpp.vpp.get_interface.return_value).sw_if_index = 1
         self.vpp.create_network_on_host('test_net', 'flat', '1')
-        self.vpp.vpp.ifup.assert_called_once_with(1)
-        self.vpp.vpp.add_to_bridge.called_once_with(5679, 1)
-        assert (len(self.vpp.networks) > net_length), \
+        self.vpp.vpp.ifup.assert_called_once_with(720)
+        self.vpp.vpp.add_to_bridge.called_once_with(5679, 720)
+        assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
 
     def test_vlan_create_network_on_host(self):
         net_length = len(self.vpp.networks)
-        type(self.vpp.vpp.get_interface.return_value).sw_if_index = 1
-        self.vpp.vpp.get_interface('test_iface.1').return_value = 1
         self.vpp.create_network_on_host('test_net', 'vlan', '1')
-        self.vpp.vpp.ifup.assert_called_with(1)
-        self.vpp.vpp.add_to_bridge.assert_called_once_with(5678, 1)
-        assert (len(self.vpp.networks) > net_length), \
+        self.vpp.vpp.ifup.assert_called_with(740)
+        self.vpp.vpp.add_to_bridge.assert_called_once_with(5678, 740)
+        assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
 
     def test_delete_network_on_host(self):
