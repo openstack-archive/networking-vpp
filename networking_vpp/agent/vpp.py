@@ -74,10 +74,11 @@ class VPPInterface(object):
         for interface in t:
             yield (fix_string(interface.interface_name), interface)
 
-    def get_interface(self, name):
+    def get_ifidx_by_name(self, name):
         for (ifname, f) in self.get_interfaces():
             if ifname == name:
-                return f
+                return f.sw_if_idx
+        return None
 
     def get_version(self):
         t = self._vpp.show_version()
@@ -264,7 +265,7 @@ class VPPInterface(object):
         self._check_retval(t)
 
     def create_vlan_subif(self, if_id, vlan_tag):
-        self.LOG.debug("Creat0ng vlan subinterface with ID:%s and vlan_tag:%s"
+        self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
                        % (if_id, vlan_tag))
         t = self._vpp.create_vlan_subif(
             sw_if_index=if_id,
