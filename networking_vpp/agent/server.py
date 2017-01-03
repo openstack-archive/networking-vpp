@@ -148,17 +148,18 @@ class VPPForwarder(object):
 
     ########################################
 
-    def get_vpp_ifidx(self, if_name):
-        """Return VPP's interface index value for the network interface"""
-        if self.vpp.get_interface(if_name):
-            return self.vpp.get_interface(if_name).sw_if_index
-        else:
-            LOG.error("Error obtaining interface data from vpp "
-                      "for interface:%s", if_name)
-            return None
-
-    def get_interface(self, physnet):
-        return self.physnets.get(physnet, None)
+    def get_if_for_physnet(self, physnet):
+        ifname = self.physnets.get(physnet, None)
+        if ifname is None:
+            LOG.error('Physnet %s requested but not in config',
+                      physnet)
+            return None, None
+        ifidx = self.vpp.get_ifidx_by_name(ifname)
+        if ifname is None:
+            LOG.error('Physnet %s interface %s does not '
+                      'exist in VPP', ifname)
+            return None, None
+        return ifname, ifidx
 
     def new_bridge_domain(self):
         x = self.next_bridge_id
@@ -174,12 +175,9 @@ class VPPForwarder(object):
         return self.networks.get((physnet, net_type, seg_id), None)
 
     def create_network_on_host(self, physnet, net_type, seg_id):
-        intf = self.get_interface(physnet)
+        intf, ifidx = self.get_if_for_physnet(physnet)
         if intf is None:
-            LOG.error("Error: no physnet found")
             return None
-
-        ifidx = self.get_vpp_ifidx(intf)
 
         # TODO(ijw): bridge domains have no distinguishing marks.
         # VPP needs to allow us to name or label them so that we
@@ -197,12 +195,10 @@ class VPPForwarder(object):
 
             LOG.debug('Adding upstream VLAN interface %s.%s '
                       'to bridge for vlan networking', intf, seg_id)
-            if not self.vpp.get_interface('%s.%s' % (intf, seg_id)):
+            if_upstream = self.vpp.get_ifidx_by_name('%s.%s' % (intf, seg_id))
+            if if_upstream is None:
                 if_upstream = self.vpp.create_vlan_subif(ifidx,
                                                          seg_id)
-            else:
-                if_upstream = self.get_vpp_ifidx('%s.%s' % (intf, seg_id))
-                self.vpp.set_vlan_remove(if_upstream)
         # elif net_type == 'vxlan':
         #     # NB physnet not really used here
         #     if_upstream = \
@@ -233,9 +229,9 @@ class VPPForwarder(object):
 
             self.vpp.delete_bridge_domain(net['bridge_domain_id'])
             if net['network_type'] == 'vlan':
-                iface = self.vpp.get_interface(net['if_upstream']
-                                               + '.' + str(seg_id))
-                self.vpp.delete_vlan_subif(iface.sw_if_index)
+                ifidx = self.vpp.get_ifidx_by_name(net['if_upstream']
+                                                   + '.' + str(seg_id))
+                self.vpp.delete_vlan_subif(ifidx)
 
             self.networks.pop((physnet, net_type, seg_id))
         else:
