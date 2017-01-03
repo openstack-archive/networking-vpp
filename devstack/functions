@@ -8,12 +8,12 @@ function install_vpp {
       sudo tee /etc/yum.repos.d/fdio.repo <<EOF
 [fdio-master]
 name=fd.io master branch latest merge
-baseurl=https://nexus.fd.io/content/repositories/fd.io.master.centos7/
+baseurl=https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.centos7/
 enabled=1
 gpgcheck=0
 EOF
   elif is_ubuntu; then
-      echo "deb [trusted=yes] https://nexus.fd.io/content/repositories/fd.io.master.ubuntu.$os_CODENAME.main/ ./" | sudo tee  /etc/apt/sources.list.d/99fd.io.list
+      echo "deb [trusted=yes] https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.ubuntu.$os_CODENAME.main/ ./" | sudo tee  /etc/apt/sources.list.d/99fd.io.list
   else
       die $LINENO "Can't install VPP on unsupported os: $os_VENDOR"
   fi
