@@ -1,0 +1,9 @@
+Code-Review+1: Christophe Fontaine <christophefontaine@mac.com>
+Code-Review+2: ijw-ubuntu <iawells@cisco.com>
+Workflow+1: ijw-ubuntu <iawells@cisco.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Tue, 03 Jan 2017 23:59:10 +0000
+Reviewed-on: https://review.openstack.org/415763
+Project: openstack/networking-vpp
+Branch: refs/heads/master
