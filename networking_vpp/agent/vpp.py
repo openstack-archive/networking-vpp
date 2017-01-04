@@ -240,7 +240,7 @@ class VPPInterface(object):
     def disconnect(self):
         self._vpp.disconnect()
 
-    def create_bridge_domain(self, id):
+    def create_bridge_domain(self, id, mac_age):
         t = self._vpp.bridge_domain_add_del(
             bd_id=id,  # the numeric ID of this domain
             flood=True,  # enable bcast and mcast flooding
@@ -248,6 +248,7 @@ class VPPInterface(object):
             forward=True,  # enable forwarding on all interfaces
             learn=True,  # enable learning on all interfaces
             arp_term=False,  # enable ARP termination in the BD
+            mac_age=mac_age,  # set bridge domain MAC aging TTL
             is_add=True  # is an add
         )
         self._check_retval(t)
