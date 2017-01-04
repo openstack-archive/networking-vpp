@@ -56,5 +56,5 @@ function setup_host_env {
     restart_service etcd
     set_hugepages
     systemctl is-active vpp || start_vpp
-    is_package_installed vpp-python-api || install_package vpp-python-api
+    is_package_installed vpp-api-python || install_package vpp-api-python
 }
