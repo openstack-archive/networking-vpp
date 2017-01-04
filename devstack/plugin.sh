@@ -22,6 +22,11 @@ function install_networking_vpp {
     cd "$MECH_VPP_DIR"
     echo "Installing networking-vpp"
     setup_develop "$MECH_VPP_DIR"
+    if is_fedora && [[ $DISTRO == "rhel7" ]]; then
+        install_package centos-release-qemu-ev
+        install_package qemu-kvm-ev
+        is_package_installed qemu-system-x86 && uninstall_package qemu-system-x86
+    fi
 }
 
 function init_networking_vpp {
