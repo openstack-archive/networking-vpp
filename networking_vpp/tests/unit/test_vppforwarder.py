@@ -29,7 +29,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch('networking_vpp.agent.server.vpp')
     def setUp(self, m_vpp, m_vppif):
         super(VPPForwarderTestCase, self).setUp()
-        self.vpp = server.VPPForwarder({"test_net": "test_iface"})
+        self.vpp = server.VPPForwarder({"test_net": "test_iface"}, 180)
 
         def idxes(iface):
             vals = {

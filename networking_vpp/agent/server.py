@@ -104,12 +104,15 @@ class VPPForwarder(object):
 
     def __init__(self,
                  physnets,  # physnet_name: interface-name
+                 mac_age,
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
                  vxlan_vrf=None):
         self.vpp = vpp.VPPInterface(LOG)
 
         self.physnets = physnets
+
+        self.mac_age = mac_age
 
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
@@ -232,7 +235,7 @@ class VPPForwarder(object):
 
         # Out bridge IDs have one upstream interface in so we simply use
         # that ID as their domain ID
-        self.vpp.create_bridge_domain(if_upstream)
+        self.vpp.create_bridge_domain(if_upstream, self.mac_age)
 
         self.vpp.add_to_bridge(if_upstream, if_upstream)
         self.networks[(physnet, net_type, seg_id)] = {
@@ -1429,6 +1432,7 @@ def main():
                           )
                 sys.exit(1)
     vppf = VPPForwarder(physnets,
+                        mac_age=cfg.CONF.ml2_vpp.mac_age,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
                         vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)

@@ -42,7 +42,9 @@ vpp_opts = [
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
     cfg.StrOpt('vhost_user_dir', default='/tmp',
-               help=_("vhostuser socket directory"))
+               help=_("vhostuser socket directory")),
+    cfg.IntOpt('mac_age', default=180,
+               help=_("bridge domain MAC aging TTL (in seconds)"))
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
