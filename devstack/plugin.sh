@@ -22,6 +22,7 @@ function install_networking_vpp {
     cd "$MECH_VPP_DIR"
     echo "Installing networking-vpp"
     setup_develop "$MECH_VPP_DIR"
+    is_package_installed qemu-system-x86 && uninstall_package qemu-system-x86
 }
 
 function init_networking_vpp {
