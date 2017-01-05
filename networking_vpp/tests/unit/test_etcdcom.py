@@ -31,6 +31,8 @@ FAKE_PORT = {'status': 'DOWN',
              'fixed_ips': [],
              'id': '1',
              'security_groups': [],
+             'allowed_address_pairs': [],
+             'fixed_ips': [],
              'device_id': 'fake_device',
              'name': '',
              'admin_state_up': True,
@@ -130,6 +132,9 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         host = port_context.host
         segment = port_context.segments_to_bind[0]
         mac_address = port_context.current['mac_address']
+        security_groups = port_context.current['security_groups']
+        allowed_address_pairs = port_context.current['allowed_address_pairs']
+        fixed_ips = port_context.current['fixed_ips']
         mtu = 1500
         physnet = segment[api.PHYSICAL_NETWORK]
         network_type = segment[api.NETWORK_TYPE]
@@ -141,7 +146,10 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
             'physnet': physnet,
             'network_type': network_type,
             'segmentation_id': segmentation_id,
-            'binding_type': binding_type
+            'binding_type': binding_type,
+            'security_groups': security_groups,
+            'allowed_address_pairs': allowed_address_pairs,
+            'fixed_ips': fixed_ips
         }
         self.etcd_client.bind(
             session,
