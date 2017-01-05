@@ -77,7 +77,7 @@ class VPPInterface(object):
     def get_ifidx_by_name(self, name):
         for (ifname, f) in self.get_interfaces():
             if ifname == name:
-                return f.sw_if_idx
+                return f.sw_if_index
         return None
 
     def get_version(self):
