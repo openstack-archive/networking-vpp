@@ -970,10 +970,12 @@ class EtcdListener(object):
 
         iface_idx = props['iface_idx']
         self.iface_state[iface_idx] = (id, props)
-        if self.vppf.vhostuser_linked_up(iface_idx):
+        if (binding_type != 'vhostuser' or
+           self.vppf.vhostuser_linked_up(iface_idx)):
             # Handle the case were the interface has already been
             # notified as up, as we need both the up-notification
             # and bind information ito be ready before we tell Nova
+            # For tap devices, assume the interface is up
             self._mark_up(iface_idx)
 
         return props
