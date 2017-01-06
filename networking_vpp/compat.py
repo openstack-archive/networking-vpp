@@ -29,9 +29,9 @@ try:
 
 except ImportError:
     import neutron.common.exceptions
-    import neutron.constants
+    import neutron.common.constants
 
-    n_const = neutron.constants
+    n_const = neutron.common.constants
     n_exec = neutron.common.exceptions
 
 try:
