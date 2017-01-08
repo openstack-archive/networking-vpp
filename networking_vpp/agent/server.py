@@ -36,6 +36,7 @@ import vpp
 from collections import defaultdict
 from collections import namedtuple
 from ipaddress import ip_address
+from networking_vpp._i18n import _
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
 from networking_vpp.compat import n_const

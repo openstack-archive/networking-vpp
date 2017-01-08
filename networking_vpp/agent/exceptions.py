@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from networking_vpp._i18n import _
 from networking_vpp.compat import n_exec
 
 
