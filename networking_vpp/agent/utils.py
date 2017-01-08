@@ -46,12 +46,19 @@ def parse_host_config(etc_host):
         etc_hosts = ()
         for host in hosts:
             try:
-                host, port = host.split(ETC_PORT_HOST_DELIMITER)
-                etc_hosts = etc_hosts + ((host, int(port)),)
+                if host:
+                    host, port = host.split(ETC_PORT_HOST_DELIMITER)
+                    etc_hosts = etc_hosts + ((host, int(port)),)
             except ValueError:
                 raise vpp_agent_exec.InvalidEtcHostsConfig()
         return etc_hosts
     else:
         if not etc_host:
             raise vpp_agent_exec.InvalidEtcHostConfig()
+
+        if ETC_PORT_HOST_DELIMITER in etc_host:
+            host, port = etc_host.split(ETC_PORT_HOST_DELIMITER)
+            etc_host = ((host, int(port)),)
+            return etc_host
+
         return etc_host
