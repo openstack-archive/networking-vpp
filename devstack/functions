@@ -3,7 +3,6 @@
 # functions - networking-vpp driver devstack utility functions
 
 function install_vpp {
-  # TODO: Make VPP branch configurable
   if is_fedora; then
       sudo tee /etc/yum.repos.d/fdio.repo <<EOF
 [fdio-master]
@@ -12,12 +11,17 @@ baseurl=https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.centos7/
 enabled=1
 gpgcheck=0
 EOF
+  sudo yum --enablerepo=fdio-master clean metadata
   elif is_ubuntu; then
       echo "deb [trusted=yes] https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.ubuntu.$os_CODENAME.main/ ./" | sudo tee  /etc/apt/sources.list.d/99fd.io.list
   else
       die $LINENO "Can't install VPP on unsupported os: $os_VENDOR"
   fi
   install_package vpp
+  # python api package name was renamed in 17.04, try to install both
+  install_package vpp-python-api || install_package vpp-api-python
+  # plugins are required to support security groups
+  install_package vpp-plugins
   if is_set VPP_STARTUP_CONFIG; then
       if [[ -f "$VPP_STARTUP_CONFIG" && -r "$VPP_STARTUP_CONFIG" ]]; then
           sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak
@@ -56,5 +60,4 @@ function setup_host_env {
     restart_service etcd
     set_hugepages
     systemctl is-active vpp || start_vpp
-    is_package_installed vpp-python-api || install_package vpp-python-api
 }
