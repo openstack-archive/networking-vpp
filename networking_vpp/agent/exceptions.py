@@ -14,7 +14,6 @@
 #    under the License.
 
 from networking_vpp.compat import n_exec
-from neutron._i18n import _
 
 
 class InvalidEtcHostsConfig(n_exec.NeutronException):
