@@ -26,13 +26,50 @@ class TestAgentUtils(base.BaseTestCase):
         with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
             utils.parse_host_config('')
 
+    def test_parse_fishy_host_config(self):
+        """Test parse_host_config with non-string value """
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config(1)
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config(None)
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config(',')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1,')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config(',host2')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1,,host2')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1:')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1::123')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1:123:123')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1:123:')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1:,host2')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1::123,host2')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1:123:123,host2')
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+            utils.parse_host_config('host1:123:,host2')
+
     def test_parse_single_host_config(self):
         """Test parse_host_config with an IP or Host value """
         ret = utils.parse_host_config('192.168.1.10')
-        self.assertThat(ret, matchers.Equals('192.168.1.10'))
+        self.assertThat(ret, matchers.Equals(('192.168.1.10',)))
 
         ret = utils.parse_host_config('host1.lab1.mc')
-        self.assertThat(ret, matchers.Equals('host1.lab1.mc'))
+        self.assertThat(ret, matchers.Equals(('host1.lab1.mc',)))
+
+        ret = utils.parse_host_config('192.168.1.10:123')
+        self.assertThat(ret, matchers.Equals(('192.168.1.10', 123)))
+
+        ret = utils.parse_host_config('host1.lab1.mc:123')
+        self.assertThat(ret, matchers.Equals(('host1.lab1.mc', 123)))
 
     def test_parse_multi_host_config(self):
         """Test parse_host_config with multiple host-port values """
@@ -45,8 +82,39 @@ class TestAgentUtils(base.BaseTestCase):
              ('192.168.1.12', 1236))
         ))
 
-    def test_parse_multi_host_invalid_config(self):
-        """Test parse_host_config with invalid host-port value """
         hosts = '192.168.1.10:1234,192.168.1.11,192.168.1.12:1236'
+        ret = utils.parse_host_config(hosts)
+        self.assertTrue(isinstance(ret, tuple))
+        self.assertThat(ret, matchers.Equals(
+            (('192.168.1.10', 1234),
+             '192.168.1.11',
+             ('192.168.1.12', 1236))
+        ))
+
+    def test_parse_single_host_invalid_config(self):
+        """Test parse_host_config with invalid host-port value """
+        hosts = '192.168.1.10:fred,192.168.1.11,192.168.1.12:1236'
         with ExpectedException(vpp_agent_exec.InvalidEtcHostsConfig):
             utils.parse_host_config(hosts)
+
+    def test_parse_multi_host_invalid_config(self):
+        """Test parse_host_config with invalid host-port value """
+        hosts = '192.168.1.10:fred,192.168.1.11,192.168.1.12:1236'
+        with ExpectedException(vpp_agent_exec.InvalidEtcHostsConfig):
+            utils.parse_host_config(hosts)
+
+    def test_parse_single_host_new_format(self):
+        """Test parse_host_config with single host new format """
+        hosts = '192.168.1.10:1234,'
+        ret = utils.parse_host_config(hosts)
+        self.assertTrue(isinstance(ret, tuple))
+        self.assertThat(ret, matchers.Equals(
+            (('192.168.1.10', 1234),)
+        ))
+
+        hosts = '192.168.1.10:1234'
+        ret = utils.parse_host_config(hosts)
+        self.assertTrue(isinstance(ret, tuple))
+        self.assertThat(ret, matchers.Equals(
+            (('192.168.1.10', 1234),)
+        ))
