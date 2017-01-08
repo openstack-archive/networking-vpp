@@ -662,17 +662,22 @@ class VPPForwarder(object):
                 # only the first 38 chars of the tag are of interest to us
                 # if spoofing-acl only the first 6 chars of the tags are
                 # of interest
-                if acl.tag[:5] in 'FFFF:':
-                    acl_map[acl.tag[:6]] = acl.acl_index
-                else:
-                    acl_map[acl.tag[:38]] = acl.acl_index
+                try:
+                    if acl.tag[:5] in 'FFFF:':
+                        acl_map[acl.tag[:6]] = acl.acl_index
+                    else:
+                        acl_map[acl.tag[:38]] = acl.acl_index
+                except (KeyError, AttributeError):
+                    # Not all ACLs have tags, but ACLs we own will have them
+                    # Ignore any system-configured ACLs
+                    pass
+
             LOG.debug("secgroup_watcher: created acl_map %s from "
                       "vpp acl tags" % acl_map)
-            return acl_map
-        except (KeyError, AttributeError):  # Not all ACLs have tags, so pass
-            pass
         except Exception as e:
             LOG.error("Exception getting acl_map from vpp acl tags %s" % e)
+            raise
+        return acl_map
 
     def set_acls_on_vpp_port(self, vpp_acls, sw_if_index):
         """Build a vector of VPP ACLs and set it on the port
