@@ -668,11 +668,11 @@ class VPPForwarder(object):
                     acl_map[acl.tag[:38]] = acl.acl_index
             LOG.debug("secgroup_watcher: created acl_map %s from "
                       "vpp acl tags" % acl_map)
-            return acl_map
         except (KeyError, AttributeError):  # Not all ACLs have tags, so pass
             pass
         except Exception as e:
             LOG.error("Exception getting acl_map from vpp acl tags %s" % e)
+        return acl_map
 
     def set_acls_on_vpp_port(self, vpp_acls, sw_if_index):
         """Build a vector of VPP ACLs and set it on the port
