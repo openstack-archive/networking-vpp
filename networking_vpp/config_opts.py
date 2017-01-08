@@ -30,11 +30,12 @@ vpp_opts = [
                help=_("Etcd host IP address(es) to connect etcd client."
                       "It takes two formats: single IP/host or a multiple "
                       "hosts list with this format: 'IP:Port,IP:Port'. "
-                      "e.g: 192.168.1.1:2379,192.168.1.2:2379")),
+                      "e.g: 192.168.1.1:2379,192.168.1.2:2379.  If port "
+                      "is absent, etcd_port is used.")),
     cfg.IntOpt('etcd_port', default=4001,
-               help=_("Etcd port to connect the etcd client. If etcd_host"
-                      "is specified as multiple host option, this option"
-                      "will be ignored.")),
+               help=_("Etcd port to connect the etcd client.  This can "
+                      "be overridden on a per-host basis if the multiple "
+                      "host form of etcd_host is used.")),
     cfg.StrOpt('etcd_user', default=None,
                help=_("Username for etcd authentication")),
     cfg.StrOpt('etcd_pass', default=None,

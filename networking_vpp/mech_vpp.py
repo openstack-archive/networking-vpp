@@ -401,9 +401,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                    cfg.CONF.ml2_vpp.etcd_port,
                    cfg.CONF.ml2_vpp.etcd_user,))
 
-        host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host)
+        host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
+                                             cfg.CONF.ml2_vpp.etcd_port)
         self.etcd_client = etcd.Client(host=host,
-                                       port=cfg.CONF.ml2_vpp.etcd_port,
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)

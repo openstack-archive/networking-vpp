@@ -18,8 +18,10 @@ from networking_vpp.compat import n_exec
 
 
 class InvalidEtcHostsConfig(n_exec.NeutronException):
-    message = _("Invalid etc host config. Expect <Host:Port> format")
+    message = _("Invalid etc host config. Expect comma-separated list of "
+                "<Host> or <Host:Port> format")
 
 
 class InvalidEtcHostConfig(n_exec.NeutronException):
-    message = _("Invalid etc host config. Expect an IP or a host name")
+    message = _("Invalid etc host config. Expect an IP or host name in "
+                "the form <Host> or <Host:Port>")
