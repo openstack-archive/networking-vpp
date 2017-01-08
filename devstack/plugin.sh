@@ -22,6 +22,15 @@ function install_networking_vpp {
     cd "$MECH_VPP_DIR"
     echo "Installing networking-vpp"
     setup_develop "$MECH_VPP_DIR"
+    if is_fedora && [[ $DISTRO == "rhel7" ]]; then
+        # This enables repositories with a newer QEMU version in
+        # VPP only works with relatively recent QEMU versions (>2.0 at least)
+        install_package centos-release-qemu-ev
+        install_package qemu-kvm-ev
+        # This ensures that any previously installed older QEMU doesn't get
+        # preferentially used even when the new one is in place
+        is_package_installed qemu-system-x86 && uninstall_package qemu-system-x86
+    fi
 }
 
 function init_networking_vpp {
