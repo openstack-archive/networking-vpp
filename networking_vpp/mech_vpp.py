@@ -450,21 +450,31 @@ class EtcdAgentCommunicator(AgentCommunicator):
         return physical_networks
 
     def register_secgroup_event_handler(self):
-        """Subscribe a handler to process secgroup change notifications"""
-        # A mapping for looking up the security_group_id of the
-        # deleted_rule. This is needed as neutron does not send the
-        # security_group_id of the rule in the callback notification
+        """Subscribe a handler to process secgroup change notifications
+
+        We're interested in PRECOMMIT_xxx (where we store the changes
+        to etcd in the journal table) and AFTER_xxx (where we
+        remind the worker thread it may have work to do).
+        """
+
         LOG.info("ML2_VPP: Security groups feature is enabled")
-        self.deleted_rules = {}
+        registry.subscribe(self.process_secgroup_events,
+                           resources.SECURITY_GROUP,
+                           events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_events,
                            resources.SECURITY_GROUP,
                            events.AFTER_DELETE)
+        # NB security group rules can only be created or deleted
+        # We don't trap update, therefore
+        registry.subscribe(self.process_secgroup_events,
+                           resources.SECURITY_GROUP_RULE,
+                           events.PRECOMMIT_CREATE)
         registry.subscribe(self.process_secgroup_events,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_CREATE)
         registry.subscribe(self.process_secgroup_events,
                            resources.SECURITY_GROUP_RULE,
-                           events.BEFORE_DELETE)
+                           events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_events,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_DELETE)
@@ -476,29 +486,41 @@ class EtcdAgentCommunicator(AgentCommunicator):
         LOG.debug("ML2_VPP: Received event %s notification for resource"
                   " %s with kwargs %s" % (event, resource, kwargs))
         context = kwargs['context']
-        if resource == resources.SECURITY_GROUP:
+        if event in (
+                events.AFTER_CREATE,
+                events.AFTER_DELETE,
+                events.AFTER_UPDATE):
+            # Whatever the object that caused this, we've put something
+            # in the journal and now need to nudge the communicator
+            self.kick()
+
+        elif resource == resources.SECURITY_GROUP:
+            # We only subscribe to deletes
             self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+
         elif resource == resources.SECURITY_GROUP_RULE:
-            if event == events.BEFORE_DELETE:
+            # We store security groups with a composite of all their
+            # rules.  So in this case we track down the affected
+            # rule and update its entire data.
+
+            if event == events.PRECOMMIT_DELETE:
                 rule_id = kwargs['security_group_rule_id']
                 rule = self.get_secgroup_rule(rule_id, context)
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
                           (rule, rule_id))
                 security_group_id = rule['security_group_id']
-                self.deleted_rules[rule_id] = security_group_id
-            elif event == events.AFTER_DELETE:
-                rule_id = kwargs['security_group_rule_id']
-                security_group_id = self.deleted_rules.get(rule_id)
-                LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
-                          "rule-id %s" % (security_group_id, rule_id))
                 if not security_group_id:
                     LOG.error("ML2_VPP: Could not lookup a security group "
                               "for rule_id %s" % rule_id)
                 else:
-                    del self.deleted_rules[rule_id]
-            elif event == events.AFTER_CREATE:
+                    LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
+                              "rule-id %s" % (security_group_id, rule_id))
+            elif event == events.PRECOMMIT_CREATE:
                 rule = kwargs['security_group_rule']
                 security_group_id = rule['security_group_id']
+            else:
+                security_group_id = None
+
             if security_group_id:
                 self.send_sg_updates([security_group_id], context)
 
@@ -515,33 +537,34 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
                   "updates for groups %s to etcd" % sgids)
-        db = directory.get_plugin()
+        plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
-            rules = db.get_security_group_rules(
-                context, filters={'security_group_id': sgids}
-                )
-            LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s" % rules)
-            # Build a generator of security group model objects from DB rules
-            secgroups = (
-                self.get_secgroup_from_rules(sgid, rules) for sgid in sgids
-                )
-            # Write security group data to etcd
-            for secgroup in secgroups:
-                self.write_secgroup_to_etcd(secgroup)
+            for sgid in sgids:
+                rules = plugin.get_security_group_rules(
+                    context, filters={'security_group_id': [sgid]}
+                    )
+                LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s", rules)
+                # Get the full details of the secgroup in exchange format
+                secgroup = self.get_secgroup_from_rules(sgid, rules)
+                # Write security group data to etcd
+                self.send_secgroup_to_agents(context.session, secgroup)
 
     def get_secgroup_rule(self, rule_id, context):
         """Fetch and return a security group rule from Neutron DB"""
         LOG.debug("ML2_VPP: fetching security group rule: %s" % rule_id)
-        db = directory.get_plugin()
+        plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
-            return db.get_security_group_rule(context, rule_id)
+            return plugin.get_security_group_rule(context, rule_id)
 
     def get_secgroup_from_rules(self, sgid, rules):
         """Build and return a security group namedtuple object.
 
+        This object is the format with which we exchange data with
+        the agents, and can be written in this form to etcd.
+
         Arguments:
         sgid - ID of the security group
-        rules - A list of security group rules
+        rules - A list of security group rules as returned from the DB
 
         1. Filter rules using the input param: sgid to ensure that rules
         belong to that group
@@ -625,10 +648,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
                    sg_rule.port_min, sg_rule.port_max))
         return sg_rule
 
-    def write_secgroup_to_etcd(self, secgroup):
+    def send_secgroup_to_agents(self, session, secgroup):
         """Writes a secgroup to the etcd secgroup space
 
+        Does this via the journal as part of the commit, so
+        that the write is atomic with the DB commit to the
+        Neutron tables.
+
         Arguments:
+        session  -- the DB session with an open transaction
         secgroup -- Named tuple representing a SecurityGroup
         """
         secgroup_path = self._secgroup_path(secgroup.id)
@@ -644,7 +672,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         sg['egress_rules'] = egress_rules
         LOG.debug('ML2_VPP: Writing secgroup key-val: %s-%s to etcd' %
                   (secgroup_path, sg))
-        self.etcd_client.write(secgroup_path, json.dumps(sg))
+        db.journal_write(session, secgroup_path, sg)
 
     def delete_secgroup_from_etcd(self, secgroup_id):
         """Deletes the secgroup key from etcd
