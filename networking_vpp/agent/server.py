@@ -184,9 +184,9 @@ class VPPForwarder(object):
                       physnet)
             return None, None
         ifidx = self.vpp.get_ifidx_by_name(ifname)
-        if ifname is None:
+        if ifidx is None:
             LOG.error('Physnet %s interface %s does not '
-                      'exist in VPP', ifname)
+                      'exist in VPP', physnet, ifname)
             return None, None
         return ifname, ifidx
 
@@ -200,6 +200,8 @@ class VPPForwarder(object):
     def create_network_on_host(self, physnet, net_type, seg_id):
         intf, ifidx = self.get_if_for_physnet(physnet)
         if intf is None:
+            LOG.error('Cannot create network because physnet'
+                      '%s config is broken', physnet)
             return None
 
         # TODO(ijw): bridge domains have no distinguishing marks.
@@ -397,6 +399,10 @@ class VPPForwarder(object):
         # network_on_host returns None)
 
         net_data = self.network_on_host(physnet, net_type, seg_id)
+        if net_data is None:
+            LOG.error('port bind is not possible as physnet '
+                      'could not be configured')
+            return None
         net_br_idx = net_data['bridge_domain_id']
         props = self.create_interface_on_host(if_type, uuid, mac)
         iface_idx = props['iface_idx']
@@ -973,6 +979,9 @@ class EtcdListener(object):
                                                  physnet,
                                                  network_type,
                                                  segmentation_id)
+        if props is None:
+            # Problems with the binding
+            return None
 
         iface_idx = props['iface_idx']
         self.iface_state[iface_idx] = (id, props)
@@ -1288,6 +1297,16 @@ class EtcdListener(object):
                                                data['physnet'],
                                                data['network_type'],
                                                data['segmentation_id'])
+                        if props is None:
+                            # The binding failed for some reason (typically
+                            # a problem with physnet config); we don't quit,
+                            # in case the rest of what we're doing is working,
+                            # but we don't proceed any further.
+                            # Nova will time out on the bind completion.
+                            # An admin can also fix the config and this will
+                            # cause binds to retry on startup resync.
+                            # Until then, this etcd key will be ignored.
+                            return
 
                         # If security-groups is enabled, set L3/L2 ACLs
                         # TODO(najoy): Set ACLs on the interface before
