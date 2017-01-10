@@ -406,7 +406,6 @@ class VPPForwarder(object):
         net_br_idx = net_data['bridge_domain_id']
         props = self.create_interface_on_host(if_type, uuid, mac)
         iface_idx = props['iface_idx']
-        self.vpp.ifup(iface_idx)
         self.vpp.add_to_bridge(net_br_idx, iface_idx)
         props['net_data'] = net_data
         LOG.debug('Bound vpp interface with sw_idx:%s on '
@@ -1351,6 +1350,7 @@ class EtcdListener(object):
                                        props['iface_idx'],
                                        port,
                                        result))
+                        self.data.vppf.vpp.ifup(props['iface_idx'])
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
