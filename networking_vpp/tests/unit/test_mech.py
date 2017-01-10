@@ -222,28 +222,40 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
 
 class EtcdAgentCommunicatorTestCases(base.BaseTestCase):
     @mock.patch('etcd.Client')
-    def test_etcd_single_host_config(self, mock_client):
-        cfg.CONF.set_override("etcd_host", '127.0.0.1', 'ml2_vpp')
+    def test_etcd_no_config(self, mock_client):
+        # etcd_port should default to 127.0.0.1
+        # etcd_port is left at the default: 4001
 
         mech_vpp.EtcdAgentCommunicator()
         mock_client.assert_called_once_with(
             allow_reconnect=True,
-            host='127.0.0.1',
+            host=(('127.0.0.1', 4001,),),
             password=None,
-            port=4001,
             username=None)
 
     @mock.patch('etcd.Client')
-    def test_etcd_multi_hosts_config(self, mock_client):
-        hosts = '192.168.1.10:1234,192.168.1.11:1235,192.168.1.12:1236'
-        cfg.CONF.set_override("etcd_host", hosts, 'ml2_vpp')
+    def test_etcd_single_host_config(self, mock_client):
+        cfg.CONF.set_override("etcd_host", '127.0.0.1', 'ml2_vpp')
+        # etcd_port is left at the default: 4001
 
         mech_vpp.EtcdAgentCommunicator()
         mock_client.assert_called_once_with(
             allow_reconnect=True,
-            host=(('192.168.1.10', 1234),
-                  ('192.168.1.11', 1235),
-                  ('192.168.1.12', 1236)),
+            host=(('127.0.0.1', 4001,),),
             password=None,
-            port=4001,
+            username=None)
+
+    @mock.patch('etcd.Client')
+    def test_etcd_multi_hosts_config_port_override(self, mock_client):
+        hosts = '192.168.1.10:1234,192.168.1.11,192.168.1.12:1236'
+        cfg.CONF.set_override("etcd_host", hosts, 'ml2_vpp')
+        cfg.CONF.set_override("etcd_port", 9889, 'ml2_vpp')
+
+        mech_vpp.EtcdAgentCommunicator()
+        mock_client.assert_called_once_with(
+            allow_reconnect=True,
+            host=(('192.168.1.10', 1234,),
+                  ('192.168.1.11', 9889,),
+                  ('192.168.1.12', 1236,)),
+            password=None,
             username=None)
