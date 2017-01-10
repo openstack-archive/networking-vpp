@@ -39,6 +39,13 @@ class EtcdHelper(object):
             # Can't delete directories - they're harmless anyway
             pass
 
+    def ensure_dir(self, path):
+        try:
+            self.etcd_client.write(path, None, dir=True)
+        except etcd.EtcdNotFile:
+            # Thrown when the directory already exists, which is fine
+            pass
+
 
 def parse_host_config(etc_host, default_port):
     """Parse etcd host config (host, host/port, or list of host/port)

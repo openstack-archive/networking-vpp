@@ -46,7 +46,19 @@ class EtcdWatcher(object):
         pass
 
     @abstractmethod
-    def resync(self):
+    def resync(self, etcd_results):
+        """A resync phase.
+
+        Gets the resync results for a recursive sweep of the keyspace;
+        should process them into the current
+        state assuming that something has been lost in the history.
+
+        Will also run on a restart.
+
+        params:
+        - etcd_results : generator of EtcdResult, corresponding to
+                         the whole tree read under self.watch_path
+        """
         pass
 
     @abstractmethod
@@ -81,7 +93,7 @@ class EtcdWatcher(object):
 
         This will conduct one watch or one read.
         """
-
+        did_resync = False
         try:
             LOG.debug("%s: pausing", self.name)
 
@@ -105,6 +117,19 @@ class EtcdWatcher(object):
 
                 next_tick = rv.modifiedIndex + 1
 
+                for kv in vals:
+
+                    LOG.debug("%s: active, key %s", self.name, kv.key)
+
+                    try:
+                        self.do_work(kv.action, kv.key, kv.value)
+                    except Exception:
+                        LOG.exception('%s key %s value %s could not be processed'
+                                      % (kv.action, kv.key, kv.value))
+                        # TODO(ijw) raise or not raise?  This is probably
+                        # fatal and incurable.
+                        raise
+
             except etcd.EtcdEventIndexCleared:
                 # We can't follow etcd history in teaspoons, so
                 # grab the current state and implement it.
@@ -115,27 +140,14 @@ class EtcdWatcher(object):
 
                 # This appears as if all the keys have been updated -
                 # because we can't tell which have been and which haven't.
-                vals = rv.children
-
-                self.resync()
+                # create a list as rv.children is a generator
+                self.resync(rv.children)
+                did_resync = True
 
                 next_tick = rv.etcd_index + 1
 
                 LOG.debug("%s watch index recovered: %s",
                           self.name, str(next_tick))
-
-            for kv in vals:
-
-                LOG.debug("%s: active, key %s", self.name, kv.key)
-
-                try:
-                    self.do_work(kv.action, kv.key, kv.value)
-                except Exception:
-                    LOG.exception('%s key %s value %s could not be processed'
-                                  % (kv.action, kv.key, kv.value))
-                    # TODO(ijw) raise or not raise?  This is probably
-                    # fatal and incurable.
-                    raise
 
             # Update the tick only when all the above completes so that
             # exceptions don't cause the count to skip before the data

@@ -31,6 +31,7 @@ import re
 import sys
 import threading
 import time
+from uuid import UUID
 import vpp
 
 from collections import defaultdict
@@ -94,6 +95,39 @@ def get_vhostuser_name(uuid):
     return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
 
 
+def is_uuid(uuid):
+    try:
+        return UUID(uuid) == uuid
+    except ValueError:
+        return False
+
+def uplink_tag(net_type, seg_id):
+    return 'openstack.%s.%s' % (net_type, seg_id))
+
+def decode_uplink_tag(tag):
+    """Spot an uplink interface tag
+
+    Return (net_type, seg_id) or None if not an uplink tag
+    if tag is None:
+        return None # not tagged
+    m = re.match('openstack\.([^.]+)\.([^.]+)')
+    if m is None:
+        return None # not our tag
+    return m.group(1), m.group(2)
+
+def port_tag(port_uuid):
+    return port_uuid
+
+def decode_port_tag(tag):
+    """Spot a port interface tag
+
+    Return uuid or None if not a port interface tag.
+    """
+    if is_uuid(tag)
+        return tag
+    else:
+        return None
+
 ######################################################################
 
 
@@ -120,7 +154,6 @@ class VPPForwarder(object):
         self.vxlan_bcast_addr = vxlan_bcast_addr
         self.vxlan_src_addr = vxlan_src_addr
         self.vxlan_vrf = vxlan_vrf
-        # Used as a unique number for bridge IDs
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
@@ -235,12 +268,21 @@ class VPPForwarder(object):
             raise Exception('network type %s not supported', net_type)
 
         self.vpp.ifup(if_upstream)
+        self.vpp.set_port_tag(if_upstream,
+                                   uplink_tag(net_type, seg_id))
 
-        # Out bridge IDs have one upstream interface in so we simply use
+        # Our bridge IDs have one upstream interface in so we simply use
         # that ID as their domain ID
-        self.vpp.create_bridge_domain(if_upstream, self.mac_age)
 
-        self.vpp.add_to_bridge(if_upstream, if_upstream)
+        bridge_domains = self.vpp.get_ifaces_in_bridge_domains()
+        if if_upstream not in bridge_domains:
+            self.vpp.create_bridge_domain(if_upstream, self.mac_age)
+
+        if if_upstream not in bridge_domains.get(if_upstream, []):
+            # Out bridge IDs have one upstream interface in so we simply use
+            # that ID as their domain ID
+            self.vpp.add_to_bridge(if_upstream, if_upstream)
+
         self.networks[(physnet, net_type, seg_id)] = {
             'bridge_domain_id': if_upstream,
             'if_upstream': intf,
@@ -340,81 +382,154 @@ class VPPForwarder(object):
             LOG.error('Failed waiting for external tap device:%s',
                       device_name)
 
-    def create_interface_on_host(self, if_type, uuid, mac):
+    def _ensure_kernelside_plugtap(self, bridge_name, tap_name, int_tap_name):
+        # This is the kernel-side config (and we should not assume
+        # that, just because the interface exists in VPP, it has
+        # been done previously - the crash could occur in the
+        # middle of the process)
+        # Running it twice is harmless.  Never running it is
+        # problematic.
+
+        # TODO(ijw): someone somewhere ought to be sorting
+        # the MTUs out
+        br = self.ensure_bridge(bridge_name)
+        # This is the external TAP device that will be
+        # created by an agent, say the DHCP agent later in
+        # time
+        t = threading.Thread(target=self.add_external_tap,
+                             args=(tap_name, br, bridge_name,))
+        t.start()
+        # This is the device that we just created with VPP
+        if not br.owns_interface(int_tap_name):
+            br.addif(int_tap_name)
+
+    def ensure_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
-            LOG.debug('port %s repeat binding request - ignored', uuid)
+            # It's definitely there, we made it ourselves
+            pass
         else:
-            LOG.debug('binding port %s as type %s',
+            LOG.debug('creating port %s as type %s',
                       uuid, if_type)
+
+            # Deal with the naming conventions of interfaces
 
             # TODO(ijw): naming not obviously consistent with
             # Neutron's naming
             name = uuid[0:11]
-            bridge_name = 'br-' + name
             tap_name = 'tap' + name
 
-            if if_type == 'maketap' or if_type == 'plugtap':
-                if if_type == 'maketap':
-                    iface_idx = self.vpp.create_tap(tap_name, mac)
-                    props = {'name': tap_name}
-                else:
-                    int_tap_name = 'vpp' + name
+            if if_type == 'maketap':
+                props = {'name': tap_name}
+            elif if_type == 'plugtap':
+                bridge_name = 'br-' + name
+                int_tap_name = 'vpp' + name
 
-                    props = {'bridge_name': bridge_name,
-                             'ext_tap_name': tap_name,
-                             'int_tap_name': int_tap_name}
-
-                    LOG.debug('Creating tap interface %s with mac %s',
-                              int_tap_name, mac)
-                    iface_idx = self.vpp.create_tap(int_tap_name, mac)
-                    # TODO(ijw): someone somewhere ought to be sorting
-                    # the MTUs out
-                    br = self.ensure_bridge(bridge_name)
-                    # This is the external TAP device that will be
-                    # created by an agent, say the DHCP agent later in
-                    # time
-                    t = threading.Thread(target=self.add_external_tap,
-                                         args=(tap_name, br, bridge_name,))
-                    t.start()
-                    # This is the device that we just created with VPP
-                    if not br.owns_interface(int_tap_name):
-                        br.addif(int_tap_name)
+                props = {'bridge_name': bridge_name,
+                         'ext_tap_name': tap_name,
+                         'int_tap_name': int_tap_name}
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
-                iface_idx = self.vpp.create_vhostuser(path, mac)
                 props = {'path': path}
             else:
                 raise UnsupportedInterfaceException(
                     'unsupported interface type')
+
+            tag = port_tag(uuid)
+
             props['bind_type'] = if_type
-            props['iface_idx'] = iface_idx
             props['mac'] = mac
+
+            # Make the interface within VPP
+
+            iface_idx = self.vpp.get_ifidx_by_tag(tag)
+            if iface_idx is not None:
+                # The agent has at some point reset, but before the reset
+                # this interface was at least created.  A previous sweep
+                # will have ensured it's the right sort of interface.
+
+                LOG.debug('port %s recovering existing port in VPP',
+                          uuid)
+
+            else:
+                LOG.debug('binding port %s as type %s' %
+                          (uuid, if_type))
+
+                if if_type == 'maketap':
+                    iface_idx = self.vpp.create_tap(tap_name, mac, tag)
+                elif if_type == 'plugtap':
+                    iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
+                elif if_type == 'vhostuser':
+                    iface_idx = self.vpp.create_vhostuser(path, mac, tag)
+
+            if if_type == 'plugtap':
+                self._ensure_kernelside_plugtap(bridge_name,
+                                                tap_name,
+                                                int_tap_name)
+
+            props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
+
         return self.interfaces[uuid]
 
     def bind_interface_on_host(self, if_type, uuid, mac, physnet,
                                net_type, seg_id):
-        # TODO(najoy): Need to send a return value so the ML2 driver
-        # can raise an exception and prevent network creation (when
-        # network_on_host returns None)
+        """Configure the interface in VPP per the binding request.
 
-        net_data = self.network_on_host(physnet, net_type, seg_id)
+        Because we may be restarting the agent on a VPP that is already
+        running, do this defensively: interfaces that we do not know
+        about may have had some or all of their binding done, and that
+        binding information may now be out of date.  Acting in this
+        way, we can be sure that the interface is now correctly
+        bound regardless of what may have transpired previously.
+
+        Track what we have done to VPP.
+
+	This may be called at any time because of a request from
+	the mechanism driver, or it may be called during resync
+	when state already exists in VPP but in either case we fix
+	what we find and draw out from that a picture of the current
+	state, including whether (in the case of vhostuser interfaces)
+	the far end of the socket has attached to VPP.
+        """
+
+        # In order, we create the network bridge, the interface for
+        # the far end, and we add it to the bridge.  Any of these
+        # may have been done before; the functions we call correct
+        # any previous state they find.
+
+        net_data = self.ensure_network_on_host(physnet, net_type, seg_id)
         if net_data is None:
             LOG.error('port bind is not possible as physnet '
                       'could not be configured')
+            # Returning None allows us to deal with the uplink
+            # side of a failed binding in the caller.
             return None
         net_br_idx = net_data['bridge_domain_id']
-        props = self.create_interface_on_host(if_type, uuid, mac)
+
+        props = self.ensure_interface_on_host(if_type, uuid, mac)
         iface_idx = props['iface_idx']
-        self.vpp.ifup(iface_idx)
-        self.vpp.add_to_bridge(net_br_idx, iface_idx)
+
+        self.ensure_in_bridge(net_br_idx, iface_idx)
+
         props['net_data'] = net_data
+
         LOG.debug('Bound vpp interface with sw_idx:%s on '
                   'bridge domain:%s',
                   iface_idx, net_br_idx)
         return props
 
+    def ensure_in_bridge(net_br_idx, iface_idx):
+        self.vpp.add_to_bridge(net_br_idx, iface_idx)
+
     def unbind_interface_on_host(self, uuid):
+        """Detach an interface, clean up structures
+
+        This removes and destroys the interface and the network
+        if it is no longer used.
+
+        This is *not* used in rebinding, as this requires the data
+        we stored about an interface when it was bound.
+        """
         if uuid not in self.interfaces:
             LOG.debug('unknown port %s unbinding request - ignored',
                       uuid)
@@ -439,6 +554,8 @@ class VPPForwarder(object):
                     del self.port_vpp_acls[iface_idx]
                     LOG.debug("secgroup_watcher: Current port acl_vector "
                               "mappings %s" % str(self.port_vpp_acls))
+                # This interface is no longer connected if it's deleted
+                self.iface_connected.remove(iface_idx)
             elif props['bind_type'] in ['maketap', 'plugtap']:
                 # remove port from bridge (sets to l3 mode) prior to deletion
                 self.vpp.delete_from_bridge(iface_idx)
@@ -462,9 +579,6 @@ class VPPForwarder(object):
                 LOG.error('Unknown port type %s during unbind',
                           props['bind_type'])
             self.interfaces.pop(uuid)
-
-            # This interface is no longer connected if it's deleted
-            self.iface_connected.remove(iface_idx)
 
             # Check if this is the last interface on host
             for interface in self.interfaces.values():
@@ -932,6 +1046,143 @@ class VPPForwarder(object):
         """Get a dump of macip ACLs on the node"""
         return self.vpp.get_macip_acl_dump()
 
+    def read_vpp_state(self):
+        """Read VPP interfaces and networks current config.
+
+        Called on resync, this method rebuilds the internal
+        cache for the interfaces and networks.
+        """
+        self.networks = {}
+        self.interfaces = {}
+
+        # Read interfaces configuration
+        vpp_interfaces = list(self.vpp.get_interfaces())
+        for iface in vpp_interfaces:
+            LOG.debug('Processing port %s', str(iface))
+            # all interfaces created by the agent do have a UUID
+            if port_tag(iface['tag']):
+                uuid = iface['tag']
+                props = {}
+                if self.vpp.is_vhostuser(iface['sw_if_idx']):
+                    path = get_vhostuser_name(uuid)
+                    props['path'] = path
+                    props['bind_type'] = 'vhostuser'
+                else:
+                    name = uuid[0:11]
+                    bridge_name = 'br-' + name
+                    tap_name = 'tap' + name
+
+                    for tap in self.vpp.get_taps():
+                        if tap['sw_if_idx'] == iface['sw_if_idx']:
+                            dev_name = tap['dev_name']
+                            break
+
+                    if dev_name == tap_name:
+                        props['name'] = tap_name
+                        props['bind_type'] = 'maketap'
+                    else:
+                        int_tap_name = 'vpp' + name
+                        props['bind_type'] = 'plugtap'
+                        props['bridge_name'] = bridge_name
+                        props['ext_tap_name'] = tap_name
+                        props['int_tap_name'] = int_tap_name
+                        self._ensure_kernelside_plugtap(bridge_name,
+                                                        tap_name,
+                                                        int_tap_name)
+
+                props['iface_idx'] = iface['sw_if_idx']
+                props['mac'] = iface['mac']
+
+                self.interfaces[uuid] = props
+                LOG.info('new port %s found in vpp: %s', uuid, str(props))
+
+            # Physical ifaces bound by the agent do have tag
+            elif iface['tag'].startswith('openstack'):
+                m = re.match('openstack.([a-z]*).([0-9]*)', iface['tag'])
+                for (physnet, phys_iface) in self.physnets.items():
+                    if iface['name'].startswith(phys_iface):
+                        # will use physnet below
+                        break
+                else:
+                    LOG.warning("Physical interface %s not registered in "
+                                "current configuration", iface['name'])
+                    break
+
+                if_idx = iface['sw_if_idx']
+                net_type = m.group(1)
+                try:
+                    seg_id = int(m.group(2))
+                except ValueError:
+                    seg_id = None
+
+                if if_idx not in self.vpp.get_ifaces_in_bridge_domain(if_idx):
+                    LOG.warning("Interface does not belong to "
+                                "a bridge domain", iface['name'])
+                    if net_type == 'vlan':
+                        self.vpp.delete_vlan_subif(iface['sw_if_idx'])
+                    # TODO(cfontaine): handle vxlan...
+                    # elif net_type == 'vxlan':
+                    elif net_type != 'flat':
+                        LOG.warning('Unknown net_type: %s for interface',
+                                    net_type, iface['name'])
+                    break
+
+                for sub_iface in vpp_interfaces:
+                    if sub_iface['sw_if_idx'] == if_idx:
+                        sup_iface_idx = sub_iface['sup_sw_if_idx']
+                        break
+                else:
+                    sup_iface_idx = if_idx
+
+                for sup_iface in vpp_interfaces:
+                    if sup_iface['sw_if_idx'] == sup_iface_idx:
+                        sup_iface_name = sup_iface['name']
+                        break
+                else:
+                    sup_iface_name = iface['name']
+
+                # Read physical networks configuration
+                self.networks[(physnet, net_type, seg_id)] = {
+                    'bridge_domain_id': if_idx,  # bd_id == if_idx
+                    'if_upstream': sup_iface_name,
+                    'if_upstream_idx': iface['sw_if_idx'],
+                    'network_type': net_type,
+                    'segmentation_id': seg_id,
+                    'physnet': physnet,
+                }
+                LOG.info('New network found in vpp: %s',
+                         str(self.networks[(physnet, net_type, seg_id)]))
+
+            # Unrecognised tag, not created from this agent,
+            # maybe created manually or by a feature
+            else:
+                LOG.debug('Port without matching tag: %s %s',
+                          iface['name'],
+                          iface['tag'])
+                pass
+
+    def delete_unknown_interfaces(self, required_interfaces):
+        """Delete all interfaces unknown from etcd.
+
+        Nova may have sent delete requests, which may not have
+        been seen by the agent (agent down, or resync), so delete
+        all interfaces with a valid uuid but unknown to the agent.
+        params:
+        - required_interfaces: list of uuid read from etcd
+        """
+        for iface in self.vpp.get_interfaces():
+            tag = iface['tag']
+            if_idx = iface['sw_if_idx']
+            uuid = decode_port_tag(tag)
+            if uuid is not None and uuid not in required_interfaces:
+                if self.vpp.is_vhostuser(if_idx):
+                    self.vpp.delete_vhostuser(if_idx)
+                elif self.vpp.is_tap(if_idx):
+                    self.vpp.delete_tap(if_idx)
+            # TODO(ijw): if there are now unused uplinks, they should
+            # also be cleaned up along with their bridges
+
+
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
@@ -945,8 +1196,8 @@ class EtcdListener(object):
         self.physnets = physnets
         self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
         # We need certain directories to exist
-        self.mkdir(LEADIN + '/state/%s/ports' % self.host)
-        self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.etcd_helper.ensure_dir(LEADIN + '/state/%s/ports' % self.host)
+        self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/ports' % self.host)
         self.pool = eventlet.GreenPool()
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
 
@@ -955,16 +1206,6 @@ class EtcdListener(object):
 
         self.vppf.vhost_ready_callback = self._vhost_ready
 
-    def mkdir(self, path):
-        try:
-            self.etcd_client.write(path, None, dir=True)
-        except etcd.EtcdNotFile:
-            # Thrown when the directory already exists, which is fine
-            pass
-
-    def repop_interfaces(self):
-        pass
-
     # The vppf bits
 
     def unbind(self, id):
@@ -972,32 +1213,107 @@ class EtcdListener(object):
 
     def bind(self, id, binding_type, mac_address, physnet, network_type,
              segmentation_id):
-        # args['binding_type'] in ('vhostuser', 'plugtap'):
+        """Bind an interface as instructed by ML2 on this host.
+
+        The interface as a network and binding type.  Assuming the
+        network as been dropped onto the physnet specified, bind
+        that uplink to the interface in question by creating an
+        interface of the appropriate form and propagating the network
+        to it.
+
+        This call also identifies if we should consider the interface
+        fully up.  This may happen now, or, asynchronously, later,
+        depending on whether all the prerequisites are in place.  That
+        includes the behaviour of whatever's on the other end of the
+        interface.
+        """
+
         props = self.vppf.bind_interface_on_host(binding_type,
                                                  id,
                                                  mac_address,
                                                  physnet,
                                                  network_type,
                                                  segmentation_id)
+
+        if props is not None:
+            # If security-groups is enabled, set L3/L2 ACLs
+            # TODO(najoy): Set ACLs on the interface before
+            # it is marked as up and a notification sent to nova
+            if (self.data.secgroup_enabled):
+                LOG.debug("port_watcher: known secgroup to acl "
+                          "mappings %s" % secgroups)
+                security_groups = data.get('security_groups', [])
+                LOG.debug("port_watcher:Setting secgroups %s "
+                          "on sw_if_index %s for port %s" %
+                          (security_groups,
+                           props['iface_idx'],
+                           port))
+                result = self.data.set_acls_on_port(
+                    security_groups,
+                    props['iface_idx'])
+                LOG.debug("port_watcher: setting secgroups "
+                          "%s on sw_if_index %s for port %s "
+                          "returned status code %s" %
+                          (security_groups,
+                           props['iface_idx'],
+                           port,
+                           result))
+                # Set Allowed address pairs and mac-spoof filter
+                aa_pairs = data.get('allowed_address_pairs', [])
+                LOG.debug("port_watcher: Setting allowed "
+                          "address pairs %s on port %s "
+                          "sw_if_index %s" %
+                          (aa_pairs,
+                           port,
+                           props['iface_idx']))
+                result = self.data.set_mac_ip_acl_on_port(
+                    data['mac_address'],
+                    data.get('fixed_ips'),
+                    aa_pairs,
+                    props['iface_idx'])
+                LOG.debug("port_watcher: setting allowed-addr-"
+                          "pairs %s on sw_if_index %s for port "
+                          "%s returned status code %s" %
+                          (aa_pairs,
+                           props['iface_idx'],
+                           port,
+                           result))
+
+            # Bring the interface up only when security is in place.
+            self.vppf.vpp.ifup(props['iface_idx'])
+
         if props is None:
             # Problems with the binding
             return None
 
+        # Store the binding information.  We put this into
+        # etcd when the interface comes up to show that things
+        # are ready and expose it to curious operators, who may
+        # be able to debug with it.  This may not happen
+        # immediately because the far end may not have connected.
         iface_idx = props['iface_idx']
         self.iface_state[iface_idx] = (id, props)
+
         if (binding_type != 'vhostuser' or
            self.vppf.vhostuser_linked_up(iface_idx)):
-            # Handle the case were the interface has already been
+            # Handle the case where the interface has already been
             # notified as up, as we need both the up-notification
             # and bind information ito be ready before we tell Nova
             # For tap devices, the interface is now ready for a VM
+            # regardless of whether we see the other end.
+
+            # If it's not up now, we'll get a vhost_ready notification
+            # later on.  We can't guarantee that vhost_ready notification
+            # as we may be resyncing and it may have bound in the period
+            # the agent was down.  This covers for that case.
             self._mark_up(iface_idx)
 
         return props
 
     def _vhost_ready(self, sw_if_index):
         if sw_if_index in self.iface_state:
-            # This index is linked up, and it's one of ours
+            # This index is linked up, and we bound it
+            # earlier.
             self._mark_up(sw_if_index)
 
     def _mark_up(self, sw_if_index):
@@ -1006,6 +1322,15 @@ class EtcdListener(object):
         Nova watches a key's existence before sending out
         bind events.  We set the key, and use the value
         to store debugging information.
+
+        This is a combination of 'we did our bit' and 'the other
+        end connected'.  These can happen in either order; if
+        we resync, we recheck our binding but the other end
+        may have connected already.
+
+        There is nothing wrong (other than a bit of inefficiency)
+        in sending this multiple times; the watching driver may
+        see the key write multiple times and will act accordingly.
         """
         LOG.debug('marking index %s as ready', str(sw_if_index))
         (port, props) = self.iface_state[sw_if_index]
@@ -1256,6 +1581,10 @@ class EtcdListener(object):
 
         class PortWatcher(EtcdWatcher):
 
+            def __init__(self, *args, **kwargs):
+                self.resynced_already = False
+                super(PortWatcher, self).__init__(*args, **kwargs)
+
             def do_tick(self):
                 # The key that indicates to people that we're alive
                 # (not that they care)
@@ -1263,10 +1592,98 @@ class EtcdListener(object):
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
-            def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
-                pass
+            def resync(self, etcd_results):
+                """Called when we have lost sync with etcd.
+
+                This can happen in two cases: we have either restarted,
+                in which case we don't know anything about bound interfaces,
+                or we have simply fallen off of etcd's history, in which
+                case we know of the interfaces we've done but they may have
+                been bound or unbound since that point.
+
+                If we know of an interface that is also in etcd then we check that it is
+                bound according to our local memory in the way etcd currently requires.  If not,
+                we unbind and rebind.  This will happen if ML2 was
+                asked to move the port to another VM.  In any case we
+                notify the bind in case the unbind and rebind look
+                identical. (A)
+                
+                If we know of an interface that is no longer in etcd, we unbind.
+                The unbind may have partially or totally completed before the 
+                reset.  Either way, we clean up. (B)
+
+                If we do not know of an interface and etcd doesn't either, but
+                state exists in VPP, we will clean it up.  This may clean up the
+                interface and may also clean up the network structures that
+                propagate the network to interfaces, in the event that we find
+                any. (C)
+
+                If we do not know of an interface in etcd, we assume this
+                is its first bind.  It may have been bound completely or 
+                partially before we
+                reset, but the bind call is idempotent and will fix what it
+                finds.  We will notify the bind; previously we may have notified
+                the bind as well, but we assume the worst and may send a second notification. (D)
+
+                We do not act upon interfaces that we know about that etcd
+                agrees with, because these interfaces were bound while we
+                were running.  We also assume that if we've ever resynced there will
+                be no state to clean up in etcd.
+
+                Note that our physnets may have changed.  Some interfaces that
+                were previously bindable may not be so right now.
+
+                params:
+                - etcd_results : generator of EtcdResult, corresponding to
+                                 the whole tree read under port_key_space
+                """
+
+
+                # Find the interfaces that etcd knows about so that we can
+                # distinguish the cases.
+
+                required_interfaces = set()
+                for kv in etcd_results:
+                    m = re.match(self.data.port_key_space + '/([^/]+)$',
+                                 kv.key)
+                    if m:
+                        port_uuid = m.group(1)
+                        required_interfaces.add(port_uuid)
+
+                        # Fix any interfaces in etcd that we know about that
+                        # appear not to be correctly bound. (case A.2)
+                        # This is an unbind followed by a bind.
+
+                        # Bind any interfaces we are unaware of (cases A.1,
+                        # D) - a no-op if they're correctly bound.
+
+                for f in set(self.interfaces.keys()) - required_interfaces:
+                    # Unbind interfaces we have records for that are no longer in etcd. (case B) 
+                    # All interfacecs that should be bound will now be in our interface
+                    # list, so the auto-cleanup of network interfaces here should work.
+                    self.unbind(f)
+
+                # Check VPP for interface data structures that it's aware of (those
+                # that have our tags)
+
+                # Clean up interface data structures not corresponding to our bound port
+                # list.
+                self.data.vppf.delete_unknown_interfaces(required_interfaces)
+
+                # Check VPP for network data structures that it's aware of (those
+                # that have our tags).  There may be outdated network structures.  Having
+                # sorted out the bindings (removing those that are invalid at this point
+                # because their physnet has gone away)
+                # and orphaned VPP interfaces (those that do not correspond to bindings)
+                # all empty networks can be removed.
+
+                # This is not required if we've previously resynced, because we have a
+                # record of all the interfaces that would use a network and will remove
+                # them as it goes.
+                self.data.vppf.delete_unused_bridges(self.interfaces)
+
+                self.resynced_once = True
+
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
@@ -1290,6 +1707,8 @@ class EtcdListener(object):
                             pass
                     else:
                         # Create or update == bind
+                        # NB most things will not change on an update.
+                        # TODO(ijw): go through the cases.
                         data = json.loads(value)
                         props = self.data.bind(port,
                                                data['binding_type'],
@@ -1308,49 +1727,6 @@ class EtcdListener(object):
                             # Until then, this etcd key will be ignored.
                             return
 
-                        # If security-groups is enabled, set L3/L2 ACLs
-                        # TODO(najoy): Set ACLs on the interface before
-                        # it is marked as up and a notification sent to nova
-                        if (self.data.secgroup_enabled
-                                and data['binding_type'] == 'vhostuser'):
-                            LOG.debug("port_watcher: known secgroup to acl "
-                                      "mappings %s" % secgroups)
-                            security_groups = data.get('security_groups', [])
-                            LOG.debug("port_watcher:Setting secgroups %s "
-                                      "on sw_if_index %s for port %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port))
-                            result = self.data.set_acls_on_port(
-                                security_groups,
-                                props['iface_idx'])
-                            LOG.debug("port_watcher: setting secgroups "
-                                      "%s on sw_if_index %s for port %s "
-                                      "returned status code %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port,
-                                       result))
-                            # Set Allowed address pairs and mac-spoof filter
-                            aa_pairs = data.get('allowed_address_pairs', [])
-                            LOG.debug("port_watcher: Setting allowed "
-                                      "address pairs %s on port %s "
-                                      "sw_if_index %s" %
-                                      (aa_pairs,
-                                       port,
-                                       props['iface_idx']))
-                            result = self.data.set_mac_ip_acl_on_port(
-                                data['mac_address'],
-                                data.get('fixed_ips'),
-                                aa_pairs,
-                                props['iface_idx'])
-                            LOG.debug("port_watcher: setting allowed-addr-"
-                                      "pairs %s on sw_if_index %s for port "
-                                      "%s returned status code %s" %
-                                      (aa_pairs,
-                                       props['iface_idx'],
-                                       port,
-                                       result))
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
