@@ -39,7 +39,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'test_iface': 720,
                 'test_iface.1': 740
             }
-            return vals[iface]
+            return vals.get(iface, None)
         self.vpp.vpp.get_ifidx_by_name.side_effect = idxes
         self.vpp.vpp.get_ifidx_by_tag.return_value = None
 
@@ -159,7 +159,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def test_ensure_interface_on_host_exists(self):
         if_type = 'maketap'
         uuid = 'fakeuuid'
-        mac = 'fakemac'
+        mac = '00:00:00:00:00:00'
         fake_iface = {'bind_type': if_type,
                       'iface_idx': 1,
                       'mac': mac}
