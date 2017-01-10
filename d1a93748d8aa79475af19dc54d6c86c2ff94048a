@@ -1,0 +1,9 @@
+Code-Review+1: Kahou Lei <kahou82@gmail.com>
+Code-Review+2: Ian Wells <iawells@cisco.com>
+Workflow+1: Ian Wells <iawells@cisco.com>
+Verified+2: Jenkins
+Submitted-by: Jenkins
+Submitted-at: Tue, 10 Jan 2017 02:10:35 +0000
+Reviewed-on: https://review.openstack.org/418156
+Project: openstack/networking-vpp
+Branch: refs/heads/master
