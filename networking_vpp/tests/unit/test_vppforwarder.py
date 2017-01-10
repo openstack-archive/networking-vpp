@@ -15,6 +15,7 @@
 
 import mock
 import sys
+import time
 sys.modules['vpp_papi'] = mock.MagicMock()
 sys.modules['threading'] = mock.MagicMock()
 from networking_vpp.agent import server
@@ -29,7 +30,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch('networking_vpp.agent.server.vpp')
     def setUp(self, m_vpp, m_vppif):
         super(VPPForwarderTestCase, self).setUp()
-        self.vpp = server.VPPForwarder({"test_net": "test_iface"}, 180)
+        # Set mac timeout to 180s
+        # TAP wait timeout does not need to be 60s, set it to 6s, as this may
+        # speed up the test
+        self.vpp = server.VPPForwarder({"test_net": "test_iface"}, 180, 6)
 
         def idxes(iface):
             vals = {
@@ -120,6 +124,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         bridge.owns_interface.return_value = False
         bridge_name = "fake_br"
         self.vpp.add_external_tap(device_name, bridge, bridge_name)
+        # tap creation is done asynchronously, wait until the queue is empty
+        while not self.vpp._external_taps.empty(): 
+            time.sleep(2)
         bridge.addif.assert_called_once_with(device_name)
 
     def test_create_interface_on_host_exists(self):
