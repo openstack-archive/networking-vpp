@@ -29,7 +29,6 @@ import json
 import os
 import re
 import sys
-import threading
 import time
 import vpp
 
@@ -106,6 +105,7 @@ class VPPForwarder(object):
     def __init__(self,
                  physnets,  # physnet_name: interface-name
                  mac_age,
+                 tap_wait_time,
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
                  vxlan_vrf=None):
@@ -138,6 +138,10 @@ class VPPForwarder(object):
         self.vhost_ready_callback = None
         cb_event = self.vpp.CallbackEvents.VHOST_USER_CONNECT
         self.vpp.register_for_events(cb_event, self._vhost_ready_event)
+
+        self.tap_wait_time = tap_wait_time
+        self._external_taps = eventlet.Queue()
+        eventlet.spawn(self._add_external_tap_worker)
 
     ########################################
 
@@ -305,40 +309,56 @@ class VPPForwarder(object):
 
     # end theft
     ########################################
-
-    # TODO(njoy): make wait_time configurable
-    # TODO(ijw): needs to be one thread for all waits
-    def add_external_tap(self, device_name, bridge, bridge_name):
+    def _add_external_tap_worker(self):
         """Add an externally created TAP device to the bridge
 
         Wait for the external tap device to be created by the DHCP agent.
         When the tap device is ready, add it to bridge Run as a thread
         so REST call can return before this code completes its
         execution.
-
         """
-        wait_time = 60
-        found = False
-        while wait_time > 0:
-            if ip_lib.device_exists(device_name):
-                LOG.debug('External tap device %s found!',
-                          device_name)
-                LOG.debug('Bridging tap interface %s on %s',
-                          device_name, bridge_name)
-                if not bridge.owns_interface(device_name):
-                    bridge.addif(device_name)
-                else:
-                    LOG.debug('Interface: %s is already added '
-                              'to the bridge %s',
+
+        def _is_tap_configured(device_name, bridge, bridge_name):
+            try:
+                if ip_lib.device_exists(device_name):
+                    LOG.debug('External tap device %s found!',
+                              device_name)
+                    LOG.debug('Bridging tap interface %s on %s',
                               device_name, bridge_name)
-                found = True
-                break
-            else:
-                time.sleep(2)
-                wait_time -= 2
-        if not found:
-            LOG.error('Failed waiting for external tap device:%s',
-                      device_name)
+                    if not bridge.owns_interface(device_name):
+                        bridge.addif(device_name)
+                    else:
+                        LOG.debug('Interface: %s is already added '
+                                  'to the bridge %s',
+                                  device_name, bridge_name)
+                    return True
+            except Exception as e:
+                LOG.exception(e)
+                # Something has gone bad, but we should not quit.
+                pass
+            return False
+
+        pending_taps = []
+        while True:
+            # Wait for a new tap
+            pending_taps.append(self._external_taps.get())
+            while len(pending_taps) > 0:
+                for tap in pending_taps:
+                    (tap_timeout, dev_name, bridge, br_name) = tap
+                    if _is_tap_configured(dev_name, bridge, br_name):
+                        pending_taps.remove(tap)
+                    elif tap_timeout > time.time():
+                        LOG.warning("Timeout for tap %s", dev_name)
+                        pending_taps.remove(tap)
+                eventlet.sleep(2)
+                # While we were working, check if new taps have been requested
+                while not self._external_taps.empty():
+                    pending_taps.append(self._external_taps.get())
+
+    def add_external_tap(self, device_name, bridge, bridge_name):
+        """Enqueue tap info for the tap worker."""
+        self._external_taps.put((time.time() + self.tap_wait_time,
+                                 device_name, bridge, bridge_name))
 
     def create_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
@@ -373,9 +393,7 @@ class VPPForwarder(object):
                     # This is the external TAP device that will be
                     # created by an agent, say the DHCP agent later in
                     # time
-                    t = threading.Thread(target=self.add_external_tap,
-                                         args=(tap_name, br, bridge_name,))
-                    t.start()
+                    self.add_external_tap(tap_name, br, bridge_name)
                     # This is the device that we just created with VPP
                     if not br.owns_interface(int_tap_name):
                         br.addif(int_tap_name)
@@ -1461,6 +1479,7 @@ def main():
                 sys.exit(1)
     vppf = VPPForwarder(physnets,
                         mac_age=cfg.CONF.ml2_vpp.mac_age,
+                        tap_wait_time=cfg.CONF.ml2_vpp.tap_wait_time,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
                         vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)

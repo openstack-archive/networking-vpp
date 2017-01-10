@@ -45,7 +45,9 @@ vpp_opts = [
     cfg.StrOpt('vhost_user_dir', default='/tmp',
                help=_("vhostuser socket directory")),
     cfg.IntOpt('mac_age', default=180,
-               help=_("bridge domain MAC aging TTL (in seconds)"))
+               help=_("bridge domain MAC aging TTL (in seconds)")),
+    cfg.IntOpt('tap_wait_time', default=60,
+               help=_("Maximum time to wait for a tap device."))
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
