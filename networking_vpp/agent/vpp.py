@@ -46,6 +46,23 @@ def singleton(cls):
 
 @singleton
 class VPPInterface(object):
+    """Interface that wraps VPP API to produce consumable functions.
+
+    The rules:
+
+    - these are atomic - they either change state in VPP or they don't.  They
+      shouldn't be hiding multiple functions that change state
+      inside.  That way, we know that VPP is either in the new state
+      (success) or the old (if there's a crash) which makes recovery easier.
+    - these should not return success or failure.  If they fail they
+      should throw an error.
+    - they should conceal the VPP API datastructures.  These are
+      subject to change with VPP version, so we should break out the
+      relevant values
+    - they should conceal weirdnesses of the interface (largely this
+      means running fix_string() on every string that comes back to get
+      rid of its trailing zeros)
+    """
 
     def _check_retval(self, t):
         """See if VPP returned OK.
@@ -58,6 +75,7 @@ class VPPInterface(object):
             self.LOG.debug("checking return value for object: %s", str(t))
             if t.retval != 0:
                 self.LOG.debug('FAIL? retval here is %s', t.retval)
+                # TODO(ijw): get the VPP interface consistent and add a raise
         except AttributeError as e:
             self.LOG.debug("Unexpected request format.  Error: %s on %s"
                            % (e, t))
@@ -318,7 +336,6 @@ class VPPInterface(object):
                                                  acls=acls)
         self.LOG.debug("ACL set_acl_list_on_interface response: %s" % str(t))
         self._check_retval(t)
-        return t.retval  # Return 0 on success
 
     def set_macip_acl_on_interface(self, sw_if_index, acl_index):
         self.LOG.debug("Setting macip acl %s on VPP interface %s"
@@ -329,7 +346,6 @@ class VPPInterface(object):
         self.LOG.debug("macip ACL set_acl_list_on_interface response: %s"
                        % str(t))
         self._check_retval(t)
-        return t.retval
 
     def delete_macip_acl(self, acl_index):
         self.LOG.debug("Deleting macip acl index %s" % acl_index)

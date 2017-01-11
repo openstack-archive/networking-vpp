@@ -785,23 +785,17 @@ class VPPForwarder(object):
         LOG.debug("secgroup_watcher: Setting VPP acl vector %s with "
                   "n_input %s on sw_if_index %s"
                   % (acls, len(input_acls), sw_if_index))
-        status = self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
-                                                    count=len(acls),
-                                                    n_input=len(input_acls),
-                                                    acls=acls)
-        if status == 0:
-            LOG.debug("secgroup_watcher: Successfully set VPP acl vector %s "
-                      "with n_input %s on sw_if_index %s"
-                      % (acls, len(input_acls), sw_if_index))
-            self.port_vpp_acls[sw_if_index]['l34'] = acls
-            LOG.debug("secgroup_watcher: Current port acl_vector mappings %s"
-                      % str(self.port_vpp_acls))
-        else:
-            status = 1  # Set failure status code == 1
-            LOG.error("secgroup_watcher: Failed to set VPP acl vector %s "
-                      "with n_input %s on sw_if_index %s"
-                      % (acls, len(input_acls), sw_if_index))
-        return status
+        self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
+                                           count=len(acls),
+                                           n_input=len(input_acls),
+                                           acls=acls)
+        LOG.debug("secgroup_watcher: set VPP acl vector %s "
+                  "with n_input %s on sw_if_index %s"
+                  % (acls, len(input_acls), sw_if_index))
+        self.port_vpp_acls[sw_if_index]['l34'] = acls
+        LOG.debug("secgroup_watcher: Current port acl_vector mappings %s"
+                  % str(self.port_vpp_acls))
+
 
     def set_mac_ip_acl_on_vpp_port(self, mac_ips, sw_if_index):
         """Set the mac-filter on VPP port
@@ -845,23 +839,15 @@ class VPPForwarder(object):
                                            count=len(mac_ip_rules))
         LOG.debug("secgroup_watcher: Setting mac_ip_acl index %s "
                   "on interface %s" % (acl_index, sw_if_index))
-        status = self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
+        self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
                                                      acl_index=acl_index,
                                                      )
-        if status == 0:
-            LOG.debug("secgroup_watcher: Successfully set macip acl %s on "
-                      "interface %s - got status %s" % (acl_index,
-                                                        sw_if_index,
-                                                        status))
-            if port_mac_ip_acl:  # Delete the previous macip ACL from VPP
-                self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
-            self.port_vpp_acls[sw_if_index]['l23'] = acl_index
-        else:
-            LOG.error("secgroup_watcher: Error setting macip acl %s on "
-                      "interface %s - got status %s" % (acl_index,
-                                                        sw_if_index,
-                                                        status))
-        return status
+        LOG.debug("secgroup_watcher: set macip acl %s on "
+                  "interface %s" % (acl_index,
+                                    sw_if_index))
+        if port_mac_ip_acl:  # Delete the previous macip ACL from VPP
+            self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
+        self.port_vpp_acls[sw_if_index]['l23'] = acl_index
 
     def spoof_filter_on_host(self):
         """Adds a spoof filter ACL on host if not already present.
@@ -1386,16 +1372,14 @@ class EtcdListener(object):
                                       (security_groups,
                                        props['iface_idx'],
                                        port))
-                            result = self.data.set_acls_on_port(
+                            self.data.set_acls_on_port(
                                 security_groups,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting secgroups "
-                                      "%s on sw_if_index %s for port %s "
-                                      "returned status code %s" %
+                                      "%s on sw_if_index %s for port %s " %
                                       (security_groups,
                                        props['iface_idx'],
-                                       port,
-                                       result))
+                                       port))
                             # Set Allowed address pairs and mac-spoof filter
                             aa_pairs = data.get('allowed_address_pairs', [])
                             LOG.debug("port_watcher: Setting allowed "
@@ -1404,18 +1388,16 @@ class EtcdListener(object):
                                       (aa_pairs,
                                        port,
                                        props['iface_idx']))
-                            result = self.data.set_mac_ip_acl_on_port(
+                            self.data.set_mac_ip_acl_on_port(
                                 data['mac_address'],
                                 data.get('fixed_ips'),
                                 aa_pairs,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting allowed-addr-"
-                                      "pairs %s on sw_if_index %s for port "
-                                      "%s returned status code %s" %
+                                      "pairs %s on sw_if_index %s for port " %
                                       (aa_pairs,
                                        props['iface_idx'],
-                                       port,
-                                       result))
+                                       port))
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
