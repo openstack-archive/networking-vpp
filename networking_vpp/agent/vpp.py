@@ -422,11 +422,12 @@ class VPPInterface(object):
         self.LOG.debug("ACL delete response: %s" % str(t))
         self._check_retval(t)
 
-    def get_acls(self):
+    def get_acl_tags(self):
         self.LOG.debug("Getting the ACL dump")
         t = self._vpp.acl_dump(acl_index=0xffffffff)
         self.LOG.debug("ACL dump response: %s" % str(t))
-        return t
+        for acl in t:
+            yield (t.acl_index, t.tag)
 
     def get_macip_acl_dump(self):
         self.LOG.debug("Getting the MAC-IP Interface ACL dump")
