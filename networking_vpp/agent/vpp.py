@@ -111,7 +111,7 @@ class VPPInterface(object):
 
     def create_vhostuser(self, ifpath, mac,
                          qemu_user=None, qemu_group=None, is_server=False):
-        self.LOG.info('Creating %s as a port', ifpath)
+        self.LOG.debug('Creating %s as a port', ifpath)
 
         t = self._vpp.create_vhost_user_if(is_server=is_server,
                                            sock_filename=str(ifpath),
@@ -125,9 +125,9 @@ class VPPInterface(object):
 
         if is_server:
             # The permission that qemu runs as.
-            self.LOG.info(('Changing vhostuser interface file permission '
-                           'to %s:%s'),
-                          (qemu_user, qemu_group))
+            self.LOG.debug(('Changing vhostuser interface file permission '
+                            'to %s:%s'),
+                           (qemu_user, qemu_group))
             uid = pwd.getpwnam(qemu_user).pw_uid
             gid = grp.getgrnam(qemu_group).gr_gid
             os.chown(ifpath, uid, gid)
