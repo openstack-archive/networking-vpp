@@ -210,6 +210,12 @@ class VPPInterface(object):
                 return f.sw_if_index
         return None
 
+    def get_vlan_ifidx_by_name(self, name, vlan):
+        # This form of name is VPP-specific, so in a function here
+        name = '%s.%s' % (name, str(vlan))
+
+        return get_ifidx_by_name(name)
+
     def get_version(self):
         t = self._vpp.show_version()
 
