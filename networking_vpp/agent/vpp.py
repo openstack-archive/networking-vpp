@@ -18,6 +18,7 @@ import enum
 import eventlet
 import fnmatch
 import grp
+from ipaddress import ip_address
 import os
 import pwd
 import time
@@ -27,12 +28,124 @@ L2_VTR_POP_1 = 3
 
 
 def mac_to_bytes(mac):
+    """ Pack a MAC into a byte array."""
     return str(''.join(chr(int(x, base=16)) for x in mac.split(':')))
 
-
 def fix_string(s):
+    """Deal with VPP returns by turning them into a legible string."""
     return s.rstrip("\0").decode(encoding='ascii')
 
+def pack_ipaddress(self, ip_addr):
+    """Pack an IPv4 or IPv6 ip_addr into binary."""
+    return ip_address(unicode(ip_addr)).packed
+
+def _get_ip_version(ip):
+    """Return the IP Version 4 or 6"""
+    ip_addr = ip_address(ip)
+    return ip_addr.version
+
+def mac_ip_acl_rule_from_input(in):
+    """Convert the world-format macip rule to one VPP likes for function calls.
+
+    input has is_permit, src_mac, src_ip_addr.
+
+    input may have src_ip_prefix_len but it's intended to be a
+    complete match if not supplied
+
+    input may have src_mac_mask by it's intended to be a complete match if
+    not supplied
+
+    output requires these to be packed, needs is_ipv6
+    """
+
+    mandatory = set(['is_permit', 'src_mac', 'src_ip_addr'])
+    allowed = y.union(['src_ip_prefix_len', 'src_mac_mask'])
+
+    
+    # Validate keys of input
+    if not allowed.issuperset(in.keys()):
+        # Additional keys
+        raise ValueError('mac_ip acl with too many keys')
+
+    if not mandatory.issubset(in.keys()):
+        # Missing keys
+        raise ValueError('mac_ip acl with missing mandatory keys')
+        
+    vpp_acl = {}
+    vpp_acl['is_permit'] = in['is_permit']
+    vpp_acl['src_mac'] = mac_to_bytes(in['src_mac'])
+    vpp_acl['src_mac'] = mac_to_bytes(in.get('src_mac_mask', 'ff:ff:ff:ff:ff:ff'))
+    src_addr = in['src_addr']
+    ip_version=ip_version(src_addr)
+    vpp_acl['is_ipv6'] = 1 if ip_version == 6 else 0
+    vpp_acl['src_ip_addr'] = pack_ipaddress(src_addr)
+    full_ip_prefix = 32 if ip_version == 4 else 128
+    vpp_acl['src_ip_prefix_len'] = int(in.get('src_ip_prefix_len', full_ip_prefix))
+
+    return vpp_acl
+
+def l3_ip_acl_rule_from_input(in):
+    """Convert the world-format l3 rule to one VPP likes for function calls.
+
+    input has is_permit, src_mac, src_ip_addr.
+
+                'is_permit': is_permit,
+                'is_ipv6': is_ipv6,
+                'src_ip_addr': self._pack_address(src_ip_addr),
+                'src_ip_prefix_len': src_ip_prefix_len,
+                'dst_ip_addr': self._pack_address(dst_ip_addr),
+                'dst_ip_prefix_len': dst_ip_prefix_len,
+                'proto': proto,
+                'srcport_or_icmptype_first': srcport_or_icmptype_first,
+                'srcport_or_icmptype_last': srcport_or_icmptype_last,
+                'dstport_or_icmpcode_first': dstport_or_icmpcode_first,
+                'dstport_or_icmpcode_last': dstport_or_icmpcode_last
+
+    input may have src_ip_prefix_len but it's intended to be a
+    complete match if not supplied
+
+    input may have src_mac_mask by it's intended to be a complete match if
+    not supplied
+
+    output requires these to be packed, needs is_ipv6
+    """
+
+    mandatory = set(['is_permit',
+                     'src_ip_addr', 'dst_ip_addr',
+                     'proto',
+                     'srcport_or_icmptype_first',
+                     'srcport_or_icmptype_last',
+                     'dstport_or_icmpcode_first',
+                     'dstport_or_icmpcode_last'
+                     ])
+    allowed = y.union(['src_ip_prefix_len', 'dst_ip_prefix_len'])
+
+    # Validate keys of input
+    if not allowed.issuperset(in.keys()):
+        # Additional keys
+        raise ValueError('l3 acl with too many keys')
+
+    if not mandatory.issubset(in.keys()):
+        # Missing keys
+        raise ValueError('l3 acl with missing mandatory keys')
+        
+    vpp_acl = {}
+    vpp_acl['is_permit'] = in['is_permit']
+
+    src_addr = in['src_addr']
+    ip_version=ip_version(src_addr)
+    vpp_acl['is_ipv6'] = 1 if ip_version == 6 else 0
+    vpp_acl['src_ip_addr'] = pack_ipaddress(src_addr)
+    full_ip_prefix = 32 if ip_version == 4 else 128
+    vpp_acl['src_ip_prefix_len'] = int(in.get('src_ip_prefix_len', full_ip_prefix))
+
+    dst_addr = in['dst_addr']
+    if ip_version != ip_version(dst_addr):
+        raise ValueError('l3 acl with differing address families')
+    vpp_acl['dst_ip_addr'] = pack_ipaddress(dst_addr)
+    vpp_acl['dst_ip_prefix_len'] = int(in.get('dst_ip_prefix_len', full_ip_prefix))
+
+    return vpp_acl
 
 def singleton(cls):
     instances = {}
@@ -72,9 +185,8 @@ class VPPInterface(object):
         """
 
         try:
-            self.LOG.debug("checking return value for object: %s", str(t))
             if t.retval != 0:
-                self.LOG.debug('FAIL? retval here is %s', t.retval)
+                self.LOG.error('FAIL? retval here is %s', t.retval)
                 # TODO(ijw): get the VPP interface consistent and add a raise
         except AttributeError as e:
             self.LOG.debug("Unexpected request format.  Error: %s on %s"
@@ -258,6 +370,8 @@ class VPPInterface(object):
     def disconnect(self):
         self._vpp.disconnect()
 
+    ########################################
+
     def create_bridge_domain(self, id, mac_age):
         t = self._vpp.bridge_domain_add_del(
             bd_id=id,  # the numeric ID of this domain
@@ -283,13 +397,14 @@ class VPPInterface(object):
         )
         self._check_retval(t)
 
+    ########################################
+
     def create_vlan_subif(self, if_id, vlan_tag):
         self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
                        % (if_id, vlan_tag))
         t = self._vpp.create_vlan_subif(
             sw_if_index=if_id,
             vlan_id=vlan_tag)
-        self.LOG.debug("Create vlan subinterface response: %s", str(t))
 
         self._check_retval(t)
 
@@ -302,40 +417,55 @@ class VPPInterface(object):
         self.LOG.debug("Deleting subinterface with sw_if_index: %s"
                        % (sw_if_index))
         t = self._vpp.delete_subif(sw_if_index=sw_if_index)
-        self.LOG.debug("Delete subinterface response: %s", str(t))
 
         self._check_retval(t)
         return
 
-    def acl_add_replace(self, acl_index, tag, rules, count):
-        self.LOG.debug("Add_Replace vpp acl with indx %s tag %s rules %s "
-                       "count %s" % (acl_index, tag, rules, count))
+    ########################################
+
+    def acl_add_replace(self, acl_index, rules, tag=None):
+        self.LOG.debug("Add_Replace vpp acl with indx %s tag %s rules %s ",
+                       acl_index, tag, rules))
+        rules = [l3_ip_acl_rule_from_input(f) for f in rules]
         t = self._vpp.acl_add_replace(acl_index=acl_index,
                                       tag=str(tag),
                                       r=rules,
-                                      count=count)
-        self.LOG.debug("ACL add_replace response: %s" % str(t))
+                                      count=len(rules))
         self._check_retval(t)
         return t.acl_index
 
-    def macip_acl_add(self, rules, count):
-        self.LOG.debug("Adding macip acl with rules %s count %s"
-                       % (rules, count))
-        t = self._vpp.macip_acl_add(count=count,
-                                    r=rules)
-        self.LOG.debug("macip ACL add_replace response: %s" % str(t))
-        self._check_retval(t)
-        return t.acl_index
-
-    def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
+    def set_acl_list_on_interface(self, sw_if_index, n_input, acls):
         self.LOG.debug("Setting ACL vector %s on VPP interface %s"
                        % (acls, sw_if_index))
+        # n_input: the first N acls are ingress acls, the remains are egress
         t = self._vpp.acl_interface_set_acl_list(sw_if_index=sw_if_index,
-                                                 count=count,
+                                                 count=len(acls),
                                                  n_input=n_input,
                                                  acls=acls)
-        self.LOG.debug("ACL set_acl_list_on_interface response: %s" % str(t))
+
         self._check_retval(t)
+
+    def acl_delete(self, acl_index):
+        self.LOG.debug("Deleting vpp acl index %s" % acl_index)
+        t = self._vpp.acl_del(acl_index=acl_index)
+        self._check_retval(t)
+
+    def get_acl_tags(self):
+        for f in self._vpp.acl_dump(acl_index=0xffffffff):
+            yield f.sw_if_index, fix_string(f.tag)
+            
+
+    ########################################
+
+    def macip_acl_add(self, rules):
+        self.LOG.debug("Adding macip acl with rules %s"
+                       % (rules))
+
+        rules = [mac_ip_acl_rule_from_input(f) for f in rules]
+        t = self._vpp.macip_acl_add(count=len(rules),
+                                    r=rules)
+        self._check_retval(t)
+        return t.acl_index
 
     def set_macip_acl_on_interface(self, sw_if_index, acl_index):
         self.LOG.debug("Setting macip acl %s on VPP interface %s"
@@ -343,33 +473,20 @@ class VPPInterface(object):
         t = self._vpp.macip_acl_interface_add_del(is_add=1,
                                                   sw_if_index=sw_if_index,
                                                   acl_index=acl_index)
-        self.LOG.debug("macip ACL set_acl_list_on_interface response: %s"
-                       % str(t))
         self._check_retval(t)
 
     def delete_macip_acl(self, acl_index):
         self.LOG.debug("Deleting macip acl index %s" % acl_index)
         t = self._vpp.macip_acl_del(acl_index=acl_index)
-        self.LOG.debug("macip ACL delete response: %s" % str(t))
         self._check_retval(t)
-
-    def acl_delete(self, acl_index):
-        self.LOG.debug("Deleting vpp acl index %s" % acl_index)
-        t = self._vpp.acl_del(acl_index=acl_index)
-        self.LOG.debug("ACL delete response: %s" % str(t))
-        self._check_retval(t)
-
-    def get_acls(self):
-        self.LOG.debug("Getting the ACL dump")
-        t = self._vpp.acl_dump(acl_index=0xffffffff)
-        self.LOG.debug("ACL dump response: %s" % str(t))
-        return t
 
     def get_macip_acl_dump(self):
         self.LOG.debug("Getting the MAC-IP Interface ACL dump")
         t = self._vpp.macip_acl_interface_get()
-        self.LOG.debug("MAC-IP ACL dump response: %s" % str(t))
-        return t
+        self._check_retval(t)
+
+        for sw_index, acl_index in t.acls:
+            yield sw_index, acl_index
 
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
 #        t = self._vpp.vxlan_add_del_tunnel(
@@ -395,8 +512,6 @@ class VPPInterface(object):
             push_dot1q=push_dot1q,
             tag1=tag1,
             tag2=tag2)
-        self.LOG.info("Set subinterface vlan tag pop response: %s", str(t))
-
         self._check_retval(t)
 
     def add_to_bridge(self, bridx, *ifidxes):

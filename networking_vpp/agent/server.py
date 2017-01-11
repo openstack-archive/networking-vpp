@@ -22,7 +22,6 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
-import binascii
 import etcd
 import eventlet
 import json
@@ -35,7 +34,6 @@ import vpp
 
 from collections import defaultdict
 from collections import namedtuple
-from ipaddress import ip_address
 from networking_vpp._i18n import _
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
@@ -692,12 +690,10 @@ class VPPForwarder(object):
                   % (out_acl_rules, secgroup.id))
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
                                               tag=secgroup_tag(secgroup.id, INGRESS),
-                                              rules=in_acl_rules,
-                                              count=len(in_acl_rules))
+                                              rules=in_acl_rules)
         out_acl_idx = self.vpp.acl_add_replace(acl_index=out_acl_idx,
                                                tag=secgroup_tag(secgroup.id, EGRESS),
-                                               rules=out_acl_rules,
-                                               count=len(out_acl_rules))
+                                               rules=out_acl_rules)
         LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
                   "for secgroup:%s" % (in_acl_idx, out_acl_idx, secgroup.id))
         secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
@@ -736,14 +732,10 @@ class VPPForwarder(object):
                 id, direction = decode_secgroup_tag(tag)
                 if id is not None:
                     acl_map[tag] = sw_if_index
-                else:
-                    direction = decode_common_spoof_tag(tag)
-                    if direction is not None:
-                        acl_map[tag] = sw_if_index
-
-                # Not all ACLs have tags, but ACLs we own will
-                # have them and they will be decodeable.  Ignore
-                # any externally created ACLs, they're not our problem.
+                    # Not all ACLs have tags, but ACLs we own will
+                    # have them and they will be decodeable.  Ignore
+                    # any externally created ACLs, they're not our problem.
+                    pass
 
             LOG.debug("secgroup_watcher: created acl_map %s from "
                       "vpp acl tags" % acl_map)
@@ -786,16 +778,14 @@ class VPPForwarder(object):
                   "n_input %s on sw_if_index %s"
                   % (acls, len(input_acls), sw_if_index))
         self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
-                                           count=len(acls),
                                            n_input=len(input_acls),
                                            acls=acls)
-        LOG.debug("secgroup_watcher: set VPP acl vector %s "
+        LOG.debug("secgroup_watcher: Successfully set VPP acl vector %s "
                   "with n_input %s on sw_if_index %s"
                   % (acls, len(input_acls), sw_if_index))
         self.port_vpp_acls[sw_if_index]['l34'] = acls
         LOG.debug("secgroup_watcher: Current port acl_vector mappings %s"
                   % str(self.port_vpp_acls))
-
 
     def set_mac_ip_acl_on_vpp_port(self, mac_ips, sw_if_index):
         """Set the mac-filter on VPP port
@@ -805,28 +795,12 @@ class VPPForwarder(object):
         sw_if_index - Software index ID of the VPP port
         """
 
-        def _pack_mac(mac_address):
-            """Pack a mac_address into binary."""
-            return binascii.unhexlify(mac_address.replace(':', ''))
-
-        def _get_ip_version(ip):
-            """Return the IP Version 4 or 6"""
-            ip_addr = ip_address(ip)
-            return ip_addr.version
-
-        src_mac_mask = _pack_mac('FF:FF:FF:FF:FF:FF')
         mac_ip_rules = []
         for mac, ip in mac_ips:
-            ip_version = _get_ip_version(ip)
-            is_ipv6 = 1 if ip_version == 6 else 0
-            ip_prefix = 32 if ip_version == 4 else 128
             mac_ip_rules.append(
                 {'is_permit': 1,
-                 'is_ipv6': is_ipv6,
-                 'src_mac': _pack_mac(mac),
-                 'src_mac_mask': src_mac_mask,
-                 'src_ip_addr': self._pack_address(ip),
-                 'src_ip_prefix_len': ip_prefix})
+                 'src_mac': mac,
+                 'src_ip_addr': ip})
         # get the current mac_ip_acl on the port if_any
         port_mac_ip_acl = None
         try:
@@ -835,29 +809,29 @@ class VPPForwarder(object):
             pass  # There may not be an ACL on the interface
         LOG.debug("secgroup_watcher: Adding macip acl with rules %s"
                   % mac_ip_rules)
-        acl_index = self.vpp.macip_acl_add(rules=mac_ip_rules,
-                                           count=len(mac_ip_rules))
-        LOG.debug("secgroup_watcher: Setting mac_ip_acl index %s "
-                  "on interface %s" % (acl_index, sw_if_index))
-        self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
-                                                     acl_index=acl_index,
-                                                     )
-        LOG.debug("secgroup_watcher: set macip acl %s on "
-                  "interface %s" % (acl_index,
-                                    sw_if_index))
-        if port_mac_ip_acl:  # Delete the previous macip ACL from VPP
+        # TODO(ijw): this acl is not tagged - potential to leak the
+        # occasional ACL but unfortunately we can't tag it in the
+        # current API
+        acl_index = self.vpp.macip_acl_add(mac_ip_rules)
+        self.vpp.set_macip_acl_on_interface(sw_if_index, acl_index)
+        # Delete the previous macip ACL from VPP
+        if port_mac_ip_acl is not None:
             self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
         self.port_vpp_acls[sw_if_index]['l23'] = acl_index
 
-    def spoof_filter_on_host(self):
+    def ensure_common_spoof_filter_on_host(self):
         """Adds a spoof filter ACL on host if not already present.
 
-        A spoof filter is identified by a common spoof tag mark.
+        This filter prevents spoofing of common protocols.  The spoof
+        filters are not address-sensitive, so the rules are only set
+        up once in VPP and reused for all ports.
+
         If not present create the filter on host
         Return: VppAcl(in_idx, out_idx)
         """
         # Check if we have an existing spoof filter deployed on vpp
-        spoof_acl = secgroups.get('FFFF')
+        # TODO(ijw): ensure this is searched for on reboot
+        spoof_acl = secgroups.get(COMMON_SPOOF_TAG)
         if not spoof_acl:  # Deploy new spoof_filter ingress+egress vpp acls
             spoof_filter_rules = self.get_spoof_filter_rules()
             LOG.debug("secgroup_watcher: adding a new spoof filter acl "
@@ -867,20 +841,18 @@ class VPPForwarder(object):
                 acl_index=0xffffffff,
                 tag=common_spoof_tag(INGRESS),
                 rules=spoof_filter_rules['ingress'],
-                count=len(spoof_filter_rules['ingress'])
                 )
 
             out_acl_idx = self.vpp.acl_add_replace(
                 acl_index=0xffffffff,
                 tag=common_spoof_tag(EGRESS),
                 rules=spoof_filter_rules['egress'],
-                count=len(spoof_filter_rules['egress'])
                 )
             LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
                       "for spoof filter" % (in_acl_idx, out_acl_idx))
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
-            if (spoof_acl.in_idx != 0xFFFFFFFF
-                    and spoof_acl.out_idx != 0xFFFFFFFF):
+            if (spoof_acl.in_idx != 0xffffffff
+                    and spoof_acl.out_idx != 0xffffffff):
                 LOG.debug("secgroup_watcher: adding spoof_acl %s to secgroup "
                           "mapping %s" % (str(spoof_acl), secgroups))
                 secgroups[DHCP_SPOOF_TAG] = spoof_acl
@@ -895,10 +867,6 @@ class VPPForwarder(object):
                       "in vpp with indices [in_idx, out_idx] = %s"
                       % [spoof_acl.in_idx, spoof_acl.out_idx])
         return spoof_acl
-
-    def _pack_address(self, ip_addr):
-        """Pack an IPv4 or IPv6 ip_addr into binary."""
-        return ip_address(unicode(ip_addr)).packed
 
     def get_spoof_filter_rules(self):
         """Build and return a list of anti-spoofing rules.
@@ -924,9 +892,9 @@ class VPPForwarder(object):
             return {
                 'is_permit': is_permit,
                 'is_ipv6': is_ipv6,
-                'src_ip_addr': self._pack_address(src_ip_addr),
+                'src_ip_addr': src_ip_addr,
                 'src_ip_prefix_len': src_ip_prefix_len,
-                'dst_ip_addr': self._pack_address(dst_ip_addr),
+                'dst_ip_addr': dst_ip_addr,
                 'dst_ip_prefix_len': dst_ip_prefix_len,
                 'proto': proto,
                 'srcport_or_icmptype_first': srcport_or_icmptype_first,
@@ -1078,7 +1046,7 @@ class EtcdListener(object):
             ip_addr = unicode(r['remote_ip_addr'])
             # VPP API requires the IP addresses to be represented in binary
             return SecurityGroupRule(r['is_ipv6'],
-                                     ip_address(ip_addr).packed,
+                                     ip_addr,
                                      r['ip_prefix_len'], r['protocol'],
                                      r['port_min'], r['port_max'])
         ingress_rules, egress_rules = (
@@ -1274,9 +1242,7 @@ class EtcdListener(object):
                   {sw_if_index -> {'l23' : <macip_acl_index>}}
         """
         try:
-            macip_acls = self.vppf.get_macip_acl_dump().acls
-            # The acl position is the sw_if_index
-            for sw_if_index, acl_index in enumerate(macip_acls):
+            for sw_if_index, acl_index in self.vppf.get_macip_acl_dump():
                 if acl_index != 4294967295:  # Exclude invalid acl index
                     self.vppf.port_vpp_acls[sw_if_index]['l23'] = acl_index
             LOG.debug('port_watcher: Existing mac-ip acl map %s'
@@ -1376,7 +1342,7 @@ class EtcdListener(object):
                                 security_groups,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting secgroups "
-                                      "%s on sw_if_index %s for port %s " %
+                                      "%s on sw_if_index %s for port %s ",
                                       (security_groups,
                                        props['iface_idx'],
                                        port))
