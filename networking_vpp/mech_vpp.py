@@ -364,8 +364,8 @@ SecurityGroup = namedtuple(
     )
 # Model for a VPP security group rule
 SecurityGroupRule = namedtuple(
-    'SecurityGroupRule', ['is_ipv6', 'remote_ip_addr',
-                          'ip_prefix_len', 'protocol',
+    'SecurityGroupRule', ['remote_ip_prefix',
+                          'protocol',
                           'port_min', 'port_max']
     )
 
@@ -608,13 +608,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # or both of the of the below fields to None
         # VPP uses all zeros to represent any Ipv4/IpV6 address
         # TODO(najoy) handle remote_group_id when remote_ip_prefix is None
-        if (rule['remote_ip_prefix'] is None
-                or rule['remote_group_id'] is None):
-            remote_ip_addr = '0.0.0.0' if not is_ipv6 else '0:0:0:0:0:0:0:0'
-            ip_prefix_len = 0
+        if rule['remote_ip_prefix'] is None \
+           or rule['remote_group_id'] is None:
+            remote_ip_prefix = ('0.0.0.0/0'
+                                if not is_ipv6
+                                else '0:0:0:0:0:0:0:0/0')
         else:
-            remote_ip_addr, ip_prefix_len = rule['remote_ip_prefix'
-                                                 ].split('/')
+            remote_ip_prefix = rule['remote_ip_prefix']
         # TODO(najoy): Add support for remote_group_id in sec-group-rules
         if rule['remote_group_id']:
             LOG.warning("ML2_VPP: A remote-group-id value is specified in "
@@ -636,13 +636,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         else:
             port_min, port_max = (rule['port_range_min'],
                                   rule['port_range_max'])
-        sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
+        sg_rule = SecurityGroupRule(remote_ip_prefix,
                                     protocol, port_min, port_max)
-        LOG.debug("ML2_VPP: Converted rule: is_ipv6:%s, remote_ip_addr:%s,"
-                  " ip_prefix_len:%s, protocol:%s, port_min:%s,"
+        LOG.debug("ML2_VPP: Converted rule: remote_ip_prefix:%s,"
+                  " protocol:%s, port_min:%s,"
                   " port_max:%s" %
-                  (sg_rule.is_ipv6, sg_rule.remote_ip_addr,
-                   sg_rule.ip_prefix_len, sg_rule.protocol,
+                  (sg_rule.remote_ip_prefix,
+                   sg_rule.protocol,
                    sg_rule.port_min, sg_rule.port_max))
         return sg_rule
 
