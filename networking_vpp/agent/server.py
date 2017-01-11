@@ -947,6 +947,9 @@ class EtcdListener(object):
         # We need certain directories to exist
         self.mkdir(LEADIN + '/state/%s/ports' % self.host)
         self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
+        # If the agent is started before q-svc, etcd watch fails as this
+        # directory may not exist. Make sure it exists
+        self.mkdir(LEADIN + '/global/secgroups')
         self.pool = eventlet.GreenPool()
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
 
