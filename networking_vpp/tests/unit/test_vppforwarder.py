@@ -107,8 +107,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.ensure_network_on_host('test_net', 'flat', '1')
         self.vpp.vpp.ifup.assert_called_once_with(720)
-        self.vpp.vpp.set_interface_tag.assert_called_once_with(720,
-                                                               'uplink:flat.1')
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(
+            720,
+            'net-vpp.uplink:flat.1')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -118,8 +119,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.ensure_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
-        self.vpp.vpp.set_interface_tag.assert_called_once_with(740,
-                                                               'uplink:vlan.1')
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(
+            740,
+            'net-vpp.uplink:vlan.1')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -185,7 +187,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         if_type = 'maketap'
         uuid = 'fakeuuid'
         mac = 'fakemac'
-        expected_tag = 'port:' + uuid
+        expected_tag = 'net-vpp.port:' + uuid
         retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
         self.vpp.vpp.create_tap.assert_called_once_with('tapfakeuuid',
                                                         mac,
@@ -197,7 +199,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         if_type = 'plugtap'
         uuid = 'fakeuuid'
         mac = 'fakemac'
-        expected_tag = 'port:' + uuid
+        expected_tag = 'net-vpp.port:' + uuid
         retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
         self.vpp.vpp.create_tap.assert_called_once_with('vppfakeuuid',
                                                         mac,
@@ -209,7 +211,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         if_type = 'vhostuser'
         uuid = 'fakeuuid'
         mac = 'fakemac'
-        expected_tag = 'port:' + uuid
+        expected_tag = 'net-vpp.port:' + uuid
         retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
         self.vpp.vpp.create_vhostuser.assert_called_once_with('/tmp/fakeuuid',
                                                               mac,
