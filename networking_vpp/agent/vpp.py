@@ -306,6 +306,10 @@ class VPPInterface(object):
 
         return t.sw_if_index
 
+    def get_vlan_subif(self, if_name, seg_id):
+        # We know how VPP makes names up so we can do this
+        return self.get_ifidx_by_name('%s.%s' % (if_name, seg_id))
+
     def delete_vlan_subif(self, sw_if_index):
         self.LOG.debug("Deleting subinterface with sw_if_index: %s"
                        % (sw_if_index))
