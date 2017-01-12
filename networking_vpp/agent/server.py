@@ -1101,11 +1101,11 @@ class EtcdListener(object):
         self.physnets = physnets
         self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
         # We need certain directories to exist
-        self.mkdir(LEADIN + '/state/%s/ports' % self.host)
-        self.mkdir(LEADIN + '/nodes/%s/ports' % self.host)
+        self.etcd_helper.ensure_dir(LEADIN + '/state/%s/ports' % self.host)
+        self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/ports' % self.host)
         # If the agent is started before q-svc, etcd watch fails as this
         # directory may not exist. Make sure it exists
-        self.mkdir(LEADIN + '/global/secgroups')
+        self.etcd_helper.ensure_dir(LEADIN + '/global/secgroups')
         self.pool = eventlet.GreenPool()
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
 
@@ -1113,16 +1113,6 @@ class EtcdListener(object):
         self.iface_state = {}
 
         self.vppf.vhost_ready_callback = self._vhost_ready
-
-    def mkdir(self, path):
-        try:
-            self.etcd_client.write(path, None, dir=True)
-        except etcd.EtcdNotFile:
-            # Thrown when the directory already exists, which is fine
-            pass
-
-    def repop_interfaces(self):
-        pass
 
     # The vppf bits
 
