@@ -396,10 +396,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def __init__(self):
         super(EtcdAgentCommunicator, self).__init__()
-        LOG.debug("Using etcd host:%s port:%s user:%s password:***" %
-                  (cfg.CONF.ml2_vpp.etcd_host,
-                   cfg.CONF.ml2_vpp.etcd_port,
-                   cfg.CONF.ml2_vpp.etcd_user,))
+        LOG.debug("Using etcd host:%s port:%s user:%s password:*** ",
+                  cfg.CONF.ml2_vpp.etcd_host,
+                  cfg.CONF.ml2_vpp.etcd_port,
+                  cfg.CONF.ml2_vpp.etcd_user)
 
         host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
                                              cfg.CONF.ml2_vpp.etcd_port)
@@ -483,8 +483,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def process_secgroup_events(self, resource, event, trigger, **kwargs):
         """Callback for handling security group change events"""
-        LOG.debug("ML2_VPP: Received event %s notification for resource"
-                  " %s with kwargs %s" % (event, resource, kwargs))
+        LOG.debug("ML2_VPP: Received event %s notification for resource "
+                  "%s with kwargs %s", event, resource, kwargs)
         context = kwargs['context']
         if event in (
                 events.AFTER_CREATE,
@@ -506,15 +506,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
             if event == events.PRECOMMIT_DELETE:
                 rule_id = kwargs['security_group_rule_id']
                 rule = self.get_secgroup_rule(rule_id, context)
-                LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
-                          (rule, rule_id))
+                LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s",
+                          rule, rule_id)
                 security_group_id = rule['security_group_id']
                 if not security_group_id:
                     LOG.error("ML2_VPP: Could not lookup a security group "
-                              "for rule_id %s" % rule_id)
+                              "for rule_id %s", rule_id)
                 else:
                     LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
-                              "rule-id %s" % (security_group_id, rule_id))
+                              "rule-id %s", security_group_id, rule_id)
             elif event == events.PRECOMMIT_CREATE:
                 rule = kwargs['security_group_rule']
                 security_group_id = rule['security_group_id']
@@ -536,14 +536,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
         3. Write secgroup to the secgroup_key_space in etcd
         """
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
-                  "updates for groups %s to etcd" % sgids)
+                  "updates for groups %s to etcd", sgids)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
             for sgid in sgids:
                 rules = plugin.get_security_group_rules(
                     context, filters={'security_group_id': [sgid]}
                     )
-                LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s", rules)
+                LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s",
+                          rules)
                 # Get the full details of the secgroup in exchange format
                 secgroup = self.get_secgroup_from_rules(sgid, rules)
                 # Write security group data to etcd
@@ -551,7 +552,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def get_secgroup_rule(self, rule_id, context):
         """Fetch and return a security group rule from Neutron DB"""
-        LOG.debug("ML2_VPP: fetching security group rule: %s" % rule_id)
+        LOG.debug("ML2_VPP: fetching security group rule: %s", rule_id)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
             return plugin.get_security_group_rule(context, rule_id)
@@ -592,7 +593,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         - Convert the neutron rule to a vpp_acl rule model
         - Return the SecurityGroupRule namedtuple.
         """
-        LOG.debug("ML2_VPP:Converting neutron rule %s" % rule)
+        LOG.debug("ML2_VPP:Converting neutron rule %s", rule)
         is_ipv6 = 0 if rule['ethertype'] == 'IPv4' else 1
         # Neutron uses None to represent any protocol
         # Use 0 to represent any protocol
@@ -621,7 +622,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if rule['remote_group_id']:
             LOG.warning("ML2_VPP: A remote-group-id value is specified in "
                         "rule %s. Setting a remote_group_id in rules is "
-                        "not supported" % rule)
+                        "not supported", rule)
         # Neutron uses -1 or None to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
@@ -640,12 +641,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                   rule['port_range_max'])
         sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
                                     protocol, port_min, port_max)
-        LOG.debug("ML2_VPP: Converted rule: is_ipv6:%s, remote_ip_addr:%s,"
-                  " ip_prefix_len:%s, protocol:%s, port_min:%s,"
-                  " port_max:%s" %
-                  (sg_rule.is_ipv6, sg_rule.remote_ip_addr,
-                   sg_rule.ip_prefix_len, sg_rule.protocol,
-                   sg_rule.port_min, sg_rule.port_max))
+        LOG.debug("ML2_VPP: Converted rule: is_ipv6:%s, remote_ip_addr:%s, "
+                  "ip_prefix_len:%s, protocol:%s, port_min:%s, "
+                  "port_max:%s",
+                  sg_rule.is_ipv6, sg_rule.remote_ip_addr,
+                  sg_rule.ip_prefix_len, sg_rule.protocol,
+                  sg_rule.port_min, sg_rule.port_max)
         return sg_rule
 
     def send_secgroup_to_agents(self, session, secgroup):
@@ -670,8 +671,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
             egress_rules.append(egress_rule._asdict())
         sg['ingress_rules'] = ingress_rules
         sg['egress_rules'] = egress_rules
-        LOG.debug('ML2_VPP: Writing secgroup key-val: %s-%s to etcd' %
-                  (secgroup_path, sg))
+        LOG.debug('ML2_VPP: Writing secgroup key-val: %s-%s to etcd',
+                  secgroup_path, sg)
         db.journal_write(session, secgroup_path, sg)
 
     def delete_secgroup_from_etcd(self, secgroup_id):
@@ -681,14 +682,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
         secgroup_id -- The id of the security group that we want to delete
         """
         try:
-            LOG.info("ML2_VPP: Deleting secgroup %s from etcd" %
+            LOG.info("ML2_VPP: Deleting secgroup %s from etcd",
                      secgroup_id)
             secgroup_path = self._secgroup_path(secgroup_id)
             self.etcd_client.delete(secgroup_path)
         except etcd.EtcdKeyNotFound:
             # Just log a message if the key is not found
-            LOG.debug("ML2_VPP: secgroup key %s which we were attempting"
-                      " to delete has disappeared" % secgroup_path)
+            LOG.debug("ML2_VPP: secgroup key %s which we were attempting "
+                      "to delete has disappeared", secgroup_path)
 
     def _secgroup_path(self, secgroup_id):
         return self.secgroup_key_space + "/" + secgroup_id
@@ -726,8 +727,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def bind(self, session, port, segment, host, binding_type):
         # NB segmentation_id is not optional in the wireline protocol,
         # we just pass 0 for unsegmented network types
-        LOG.debug("ML2_VPP: Received bind request for port:%s"
-                  % port)
+        LOG.debug("ML2_VPP: Received bind request for port:%s",
+                  port)
         data = {
             'mac_address': port['mac_address'],
             'mtu': 1500,  # not this, but what?: port['mtu'],
@@ -815,15 +816,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         # we've run out of things in the backlog
                         # so any trigger lost in this gap is harmless
                         self.db_q_ev.reset()
-                        LOG.debug("ML2_VPP(%s): worker thread kicked: %s"
-                                  % (self.__class__.__name__, str(dummy)))
+                        LOG.debug("ML2_VPP(%s): worker thread kicked: %s",
+                                  self.__class__.__name__, str(dummy))
                 except eventlet.Timeout:
                     LOG.debug("ML2_VPP(%s): worker thread suspicious of "
-                              "a long pause"
-                              % self.__class__.__name__)
+                              "a long pause",
+                              self.__class__.__name__)
                     pass
-                LOG.debug("ML2_VPP(%s): worker thread active"
-                          % self.__class__.__name__)
+                LOG.debug("ML2_VPP(%s): worker thread active",
+                          self.__class__.__name__)
             except Exception as e:
                 # TODO(ijw): log exception properly
                 LOG.error("problems in forward worker: %s", e)

@@ -131,8 +131,8 @@ class EtcdWatcher(object):
                 try:
                     self.do_work(kv.action, kv.key, kv.value)
                 except Exception:
-                    LOG.exception('%s key %s value %s could not be processed'
-                                  % (kv.action, kv.key, kv.value))
+                    LOG.exception('%s key %s value %s could not be processed',
+                                  kv.action, kv.key, kv.value)
                     # TODO(ijw) raise or not raise?  This is probably
                     # fatal and incurable.
                     raise

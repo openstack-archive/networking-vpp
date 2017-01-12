@@ -200,7 +200,7 @@ class VPPForwarder(object):
     def create_network_on_host(self, physnet, net_type, seg_id):
         intf, ifidx = self.get_if_for_physnet(physnet)
         if intf is None:
-            LOG.error('Cannot create network because physnet'
+            LOG.error('Cannot create network because physnet '
                       '%s config is broken', physnet)
             return None
 
@@ -438,7 +438,7 @@ class VPPForwarder(object):
                 if iface_idx in self.port_vpp_acls:
                     del self.port_vpp_acls[iface_idx]
                     LOG.debug("secgroup_watcher: Current port acl_vector "
-                              "mappings %s" % str(self.port_vpp_acls))
+                              "mappings %s", str(self.port_vpp_acls))
             elif props['bind_type'] in ['maketap', 'plugtap']:
                 # remove port from bridge (sets to l3 mode) prior to deletion
                 self.vpp.delete_from_bridge(iface_idx)
@@ -566,7 +566,7 @@ class VPPForwarder(object):
                 acl_rule['dst_ip_addr'] = r['src_ip_addr']
                 acl_rule['dst_ip_prefix_len'] = r['src_ip_prefix_len']
             else:
-                LOG.error("Invalid rule %s to be reversed" % r)
+                LOG.error("Invalid rule %s to be reversed", r)
                 return {}
             # Swap port range values
             acl_rule['srcport_or_icmptype_first'] = r[
@@ -592,13 +592,13 @@ class VPPForwarder(object):
         in_acl_idx, out_acl_idx = 0xffffffff, 0xffffffff
         if secgroup.id in secgroups:
             LOG.debug("secgroup_watcher:updating vpp acls for "
-                      "security group %s" % secgroup.id)
+                      "security group %s", secgroup.id)
             in_acl_idx, out_acl_idx = secgroups[secgroup.id]
             LOG.debug("secgroup_watcher:updating vpp input acl idx: %s and "
-                      "output acl idx %s" % (in_acl_idx, out_acl_idx))
+                      "output acl idx %s", in_acl_idx, out_acl_idx)
         else:
             LOG.debug("secgroup_watcher: adding new input and output "
-                      "vpp acls for secgroup %s" % secgroup.id)
+                      "vpp acls for secgroup %s", secgroup.id)
         in_acl_rules, out_acl_rules = (
             [self._to_acl_rule(r, 0) for r in secgroup.ingress_rules],
             [self._to_acl_rule(r, 1) for r in secgroup.egress_rules])
@@ -618,10 +618,10 @@ class VPPForwarder(object):
             out_acl_rules = out_acl_rules + in_acl_return_rules
         else:
             LOG.debug("secgroup_watcher: vpp reflexive_acls are enabled")
-        LOG.debug("secgroup_watcher:ingress ACL rules %s for secgroup %s"
-                  % (in_acl_rules, secgroup.id))
-        LOG.debug("secgroup_watcher:egress ACL rules %s for secgroup %s"
-                  % (out_acl_rules, secgroup.id))
+        LOG.debug("secgroup_watcher:ingress ACL rules %s for secgroup %s",
+                  in_acl_rules, secgroup.id)
+        LOG.debug("secgroup_watcher:egress ACL rules %s for secgroup %s",
+                  out_acl_rules, secgroup.id)
         # A tag of secgroup_id:0 denotes ingress acl
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
                                               tag="%s:%s" % (secgroup.id, 0),
@@ -633,10 +633,10 @@ class VPPForwarder(object):
                                                rules=out_acl_rules,
                                                count=len(out_acl_rules))
         LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
-                  "for secgroup:%s" % (in_acl_idx, out_acl_idx, secgroup.id))
+                  "for secgroup:%s", in_acl_idx, out_acl_idx, secgroup.id)
         secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
-        LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                  % secgroups)
+        LOG.debug("secgroup_watcher: current secgroup mapping: %s",
+                  secgroups)
 
     def acl_delete_on_host(self, secgroup):
         """Deletes the ingress and egress VPP ACLs on host for secgroup
@@ -647,16 +647,16 @@ class VPPForwarder(object):
         try:
             for acl_idx in secgroups[secgroup]:
                 LOG.debug("secgroup_watcher: deleting VPP ACL %s for "
-                          "secgroup %s" % (acl_idx, secgroup))
+                          "secgroup %s", acl_idx, secgroup)
                 self.vpp.acl_delete(acl_index=acl_idx)
             del secgroups[secgroup]
-            LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                      % secgroups)
+            LOG.debug("secgroup_watcher: current secgroup mapping: %s",
+                      secgroups)
         except KeyError:
             LOG.error("secgroup_watcher: received request to delete "
-                      "an unknown security group %s" % secgroup)
+                      "an unknown security group %s", secgroup)
         except Exception as e:
-            LOG.error("Exception while deleting ACL %s" % e)
+            LOG.error("Exception while deleting ACL %s", e)
 
     def get_secgroup_acl_map(self):
         """Read VPP ACL tag data, construct and return an acl_map
@@ -680,9 +680,9 @@ class VPPForwarder(object):
                     pass
 
             LOG.debug("secgroup_watcher: created acl_map %s from "
-                      "vpp acl tags" % acl_map)
+                      "vpp acl tags", acl_map)
         except Exception as e:
-            LOG.error("Exception getting acl_map from vpp acl tags %s" % e)
+            LOG.error("Exception getting acl_map from vpp acl tags %s", e)
             raise
         return acl_map
 
@@ -696,45 +696,45 @@ class VPPForwarder(object):
         """
         # Initialize lists with anti-spoofing vpp acl indices
         spoof_acl = self.spoof_filter_on_host()
-        LOG.debug("secgroup_watcher: spoof_acl indices [in, out] on host %s"
-                  % [spoof_acl.in_idx, spoof_acl.out_idx])
+        LOG.debug("secgroup_watcher: spoof_acl indices [in, out] on host %s",
+                  [spoof_acl.in_idx, spoof_acl.out_idx])
         # input acl on vpp filters egress traffic from vm and viceversa
         input_acls = [spoof_acl.out_idx]
         output_acls = [spoof_acl.in_idx]
         if vpp_acls:
-            LOG.debug("secgroup_watcher: building an acl vector from acl list"
-                      "%s to set on VPP sw_if_index %s"
-                      % (vpp_acls, sw_if_index))
+            LOG.debug("secgroup_watcher: building acl vector from acl list "
+                      "%s to set on VPP sw_if_index %s",
+                      vpp_acls, sw_if_index)
             for acl in vpp_acls:
                 input_acls.append(acl.out_idx)  # in on vpp == out on vm
                 output_acls.append(acl.in_idx)  # out on vpp == in on vm
         else:
-            LOG.debug("secgroup_watcher: setting only spoof-filter acl %s"
-                      "on vpp interface %s due to empty vpp_acls"
-                      % (spoof_acl, sw_if_index))
+            LOG.debug("secgroup_watcher: setting only spoof-filter acl %s "
+                      "on vpp interface %s due to empty vpp_acls",
+                      spoof_acl, sw_if_index)
         # Build the vpp ACL vector
         acls = input_acls + output_acls
         # (najoy) At this point we just keep a mapping of acl vectors
         # associated with a port and do not check for any repeat application.
         LOG.debug("secgroup_watcher: Setting VPP acl vector %s with "
-                  "n_input %s on sw_if_index %s"
-                  % (acls, len(input_acls), sw_if_index))
+                  "n_input %s on sw_if_index %s",
+                  acls, len(input_acls), sw_if_index)
         status = self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
                                                     count=len(acls),
                                                     n_input=len(input_acls),
                                                     acls=acls)
         if status == 0:
             LOG.debug("secgroup_watcher: Successfully set VPP acl vector %s "
-                      "with n_input %s on sw_if_index %s"
-                      % (acls, len(input_acls), sw_if_index))
+                      "with n_input %s on sw_if_index %s",
+                      acls, len(input_acls), sw_if_index)
             self.port_vpp_acls[sw_if_index]['l34'] = acls
-            LOG.debug("secgroup_watcher: Current port acl_vector mappings %s"
-                      % str(self.port_vpp_acls))
+            LOG.debug("secgroup_watcher: Current port acl_vector mappings %s",
+                      str(self.port_vpp_acls))
         else:
             status = 1  # Set failure status code == 1
             LOG.error("secgroup_watcher: Failed to set VPP acl vector %s "
-                      "with n_input %s on sw_if_index %s"
-                      % (acls, len(input_acls), sw_if_index))
+                      "with n_input %s on sw_if_index %s",
+                      acls, len(input_acls), sw_if_index)
         return status
 
     def set_mac_ip_acl_on_vpp_port(self, mac_ips, sw_if_index):
@@ -773,28 +773,26 @@ class VPPForwarder(object):
             port_mac_ip_acl = self.port_vpp_acls[sw_if_index]['l23']
         except KeyError:
             pass  # There may not be an ACL on the interface
-        LOG.debug("secgroup_watcher: Adding macip acl with rules %s"
-                  % mac_ip_rules)
+        LOG.debug("secgroup_watcher: Adding macip acl with rules %s",
+                  mac_ip_rules)
         acl_index = self.vpp.macip_acl_add(rules=mac_ip_rules,
                                            count=len(mac_ip_rules))
         LOG.debug("secgroup_watcher: Setting mac_ip_acl index %s "
-                  "on interface %s" % (acl_index, sw_if_index))
+                  "on interface %s", acl_index, sw_if_index)
         status = self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
                                                      acl_index=acl_index,
                                                      )
         if status == 0:
             LOG.debug("secgroup_watcher: Successfully set macip acl %s on "
-                      "interface %s - got status %s" % (acl_index,
-                                                        sw_if_index,
-                                                        status))
+                      "interface %s - got status %s",
+                      acl_index, sw_if_index, status)
             if port_mac_ip_acl:  # Delete the previous macip ACL from VPP
                 self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
             self.port_vpp_acls[sw_if_index]['l23'] = acl_index
         else:
             LOG.error("secgroup_watcher: Error setting macip acl %s on "
-                      "interface %s - got status %s" % (acl_index,
-                                                        sw_if_index,
-                                                        status))
+                      "interface %s - got status %s",
+                      acl_index, sw_if_index, status)
         return status
 
     def spoof_filter_on_host(self):
@@ -809,7 +807,7 @@ class VPPForwarder(object):
         if not spoof_acl:  # Deploy new spoof_filter ingress+egress vpp acls
             spoof_filter_rules = self.get_spoof_filter_rules()
             LOG.debug("secgroup_watcher: adding a new spoof filter acl "
-                      "with rules %s" % spoof_filter_rules)
+                      "with rules %s", spoof_filter_rules)
             # A tag of FFFF:0 denotes ingress spoof acl
             in_acl_idx = self.vpp.acl_add_replace(
                 acl_index=0xffffffff,
@@ -825,23 +823,23 @@ class VPPForwarder(object):
                 count=len(spoof_filter_rules['egress'])
                 )
             LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
-                      "for spoof filter" % (in_acl_idx, out_acl_idx))
+                      "for spoof filter", in_acl_idx, out_acl_idx)
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
             if (spoof_acl.in_idx != 0xFFFFFFFF
                     and spoof_acl.out_idx != 0xFFFFFFFF):
                 LOG.debug("secgroup_watcher: adding spoof_acl %s to secgroup "
-                          "mapping %s" % (str(spoof_acl), secgroups))
+                          "mapping %s", str(spoof_acl), secgroups)
                 secgroups['FFFF'] = spoof_acl
-                LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                          % secgroups)
+                LOG.debug("secgroup_watcher: current secgroup mapping: %s",
+                          secgroups)
             else:
                 LOG.error("secgroup_watcher: could not add a valid ingress/"
                           "egress spoof acl in VPP. We got an invalid acl "
-                          "index %s from vpp" % str(spoof_acl))
+                          "index %s from vpp", str(spoof_acl))
         else:
             LOG.debug("secgroup_watcher: found an existing spoof acl "
-                      "in vpp with indices [in_idx, out_idx] = %s"
-                      % [spoof_acl.in_idx, spoof_acl.out_idx])
+                      "in vpp with indices [in_idx, out_idx] = %s",
+                      [spoof_acl.in_idx, spoof_acl.out_idx])
         return spoof_acl
 
     def _pack_address(self, ip_addr):
@@ -1019,8 +1017,8 @@ class EtcdListener(object):
         secgroup - OpenStack SecurityGroup ID
         data - SecurityGroup data from etcd
         """
-        LOG.debug("secgroup_watcher: acl_add_replace secgroup %s data %s"
-                  % (secgroup, data))
+        LOG.debug("secgroup_watcher: acl_add_replace secgroup %s data %s",
+                  secgroup, data)
 
         def _secgroup_rule(r):
             ip_addr = unicode(r['remote_ip_addr'])
@@ -1043,7 +1041,7 @@ class EtcdListener(object):
         Arguments:
         secgroup - OpenStack SecurityGroup ID
         """
-        LOG.debug("secgroup_watcher: deleting secgroup %s" % secgroup)
+        LOG.debug("secgroup_watcher: deleting secgroup %s", secgroup)
         self.vppf.acl_delete_on_host(secgroup)
 
     def populate_secgroup_acl_mappings(self):
@@ -1084,8 +1082,8 @@ class EtcdListener(object):
                             out_idx=acl_idx)
             LOG.debug("secgroup_watcher: secgroup to VPP ACL mapping %s "
                       "constructed by reading "
-                      "acl tags and building an acl_map %s"
-                      % (secgroups, acl_map))
+                      "acl tags and building an acl_map %s",
+                      secgroups, acl_map)
             if not secgroups:
                 LOG.debug("secgroup_watcher: We have an empty secgroups "
                           "to acl mapping {}. Possible reason: vpp "
@@ -1137,7 +1135,7 @@ class EtcdListener(object):
                 # If any one or both indices are invalid wait for a valid acl
                 if (acl.in_idx == 0xFFFFFFFF or acl.out_idx == 0xFFFFFFFF):
                     LOG.debug("port_watcher: Waiting for a valid vpp acl "
-                              "corresponding to secgroup %s" % secgroup_id)
+                              "corresponding to secgroup %s", secgroup_id)
                     raise InvalidACLError
                 else:
                     vpp_acls.append(acl)
@@ -1158,33 +1156,33 @@ class EtcdListener(object):
                                 and acl.out_idx != 0xFFFFFFFF):
                                 LOG.debug("port_watcher: Found a valid vpp "
                                           "acl %s for "
-                                          "secgroup %s" % (acl, secgroup_id))
+                                          "secgroup %s", acl, secgroup_id)
                                 timeout.cancel()
                                 found = True  # Req. for non-greenthread runs
                         else:  # sleep and wait for the ACL
                             LOG.debug("port_watcher: Waiting 2 secs to "
                                       "for the secgroup: %s to VppAcl "
-                                      "mapping to populate" % secgroup_id)
+                                      "mapping to populate", secgroup_id)
                             time.sleep(2)
                 # Check for valid ACL and indices after timeout, append to list
                 if (acl and acl.in_idx != 0xFFFFFFFF
                         and acl.out_idx != 0xFFFFFFFF):
                         LOG.debug("port_watcher: Found VppAcl %s for "
-                                  "secgroup %s" % (acl, secgroup_id))
+                                  "secgroup %s", acl, secgroup_id)
                         vpp_acls.append(acl)
                 else:
                     LOG.error("port_watcher: Unable to locate a valid VPP ACL"
                               "for secgroup %s in secgroups mapping %s after "
                               "waiting several seconds for the mapping to "
-                              "populate" % (secgroup_id, secgroups))
+                              "populate", secgroup_id, secgroups)
                     raise ACLNotFoundError("Could not find an ACL for "
                                            "Secgroup %s" % secgroup_id)
             except (ACLNotFoundError, Exception) as e:
                 LOG.error("port_watcher: ran into an exception while "
                           "setting secgroup_ids %s on vpp port %s "
-                          "- details %s" % (secgroup_ids, sw_if_index, e))
+                          "- details %s", secgroup_ids, sw_if_index, e)
         LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
-                  "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
+                  "for secgroups %s", vpp_acls, sw_if_index, secgroup_ids)
         return self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
 
     def set_mac_ip_acl_on_port(self, mac_address, fixed_ips,
@@ -1213,7 +1211,7 @@ class EtcdListener(object):
                       for p in allowed_address_pairs]
         mac_ips = allowed_mac_ips + mac_ips + addr_pairs
         LOG.debug("port_watcher: setting mac-ip allowed address pairs %s "
-                  "on port %s" % (mac_ips, sw_if_index))
+                  "on port %s", mac_ips, sw_if_index)
         return self.vppf.set_mac_ip_acl_on_vpp_port(mac_ips, sw_if_index)
 
     def load_macip_acl_mapping(self):
@@ -1228,8 +1226,8 @@ class EtcdListener(object):
             for sw_if_index, acl_index in enumerate(macip_acls):
                 if acl_index != 4294967295:  # Exclude invalid acl index
                     self.vppf.port_vpp_acls[sw_if_index]['l23'] = acl_index
-            LOG.debug('port_watcher: Existing mac-ip acl map %s'
-                      % self.vppf.port_vpp_acls)
+            LOG.debug('port_watcher: Existing mac-ip acl map %s',
+                      self.vppf.port_vpp_acls)
         except ValueError:
             pass  # vpp_papi throws this error when no ACLs exist
         except AttributeError:
@@ -1279,7 +1277,7 @@ class EtcdListener(object):
                         # Removing key == desire to unbind
                         self.data.unbind(port)
                         LOG.debug("port_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
+                                  "mappings %s", secgroups)
                         try:
                             self.etcd_client.delete(
                                 self.data.state_key_space + '/%s'
@@ -1314,31 +1312,31 @@ class EtcdListener(object):
                         if (self.data.secgroup_enabled
                                 and data['binding_type'] == 'vhostuser'):
                             LOG.debug("port_watcher: known secgroup to acl "
-                                      "mappings %s" % secgroups)
+                                      "mappings %s", secgroups)
                             security_groups = data.get('security_groups', [])
                             LOG.debug("port_watcher:Setting secgroups %s "
-                                      "on sw_if_index %s for port %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port))
+                                      "on sw_if_index %s for port %s",
+                                      security_groups,
+                                      props['iface_idx'],
+                                      port)
                             result = self.data.set_acls_on_port(
                                 security_groups,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting secgroups "
                                       "%s on sw_if_index %s for port %s "
-                                      "returned status code %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port,
-                                       result))
+                                      "returned status code %s",
+                                      security_groups,
+                                      props['iface_idx'],
+                                      port,
+                                      result)
                             # Set Allowed address pairs and mac-spoof filter
                             aa_pairs = data.get('allowed_address_pairs', [])
                             LOG.debug("port_watcher: Setting allowed "
                                       "address pairs %s on port %s "
-                                      "sw_if_index %s" %
-                                      (aa_pairs,
-                                       port,
-                                       props['iface_idx']))
+                                      "sw_if_index %s",
+                                      aa_pairs,
+                                      port,
+                                      props['iface_idx'])
                             result = self.data.set_mac_ip_acl_on_port(
                                 data['mac_address'],
                                 data.get('fixed_ips'),
@@ -1346,11 +1344,11 @@ class EtcdListener(object):
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting allowed-addr-"
                                       "pairs %s on sw_if_index %s for port "
-                                      "%s returned status code %s" %
-                                      (aa_pairs,
-                                       props['iface_idx'],
-                                       port,
-                                       result))
+                                      "%s returned status code %s",
+                                      aa_pairs,
+                                      props['iface_idx'],
+                                      port,
+                                      result)
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
@@ -1372,18 +1370,18 @@ class EtcdListener(object):
 
             def do_work(self, action, key, value):
                 # Matches a security group key and does work
-                LOG.debug("secgroup_watcher: doing work for %s %s %s" %
-                          (action, key, value))
+                LOG.debug("secgroup_watcher: doing work for %s %s %s",
+                          action, key, value)
                 # Matches a secgroup key and gets its ID and data
                 m = re.match(self.data.secgroup_key_space + '/([^/]+)$', key)
                 if m:
                     secgroup = m.group(1)
                     if action == 'delete':
-                        LOG.debug("secgroup_watcher: deleting secgroup %s"
-                                  % secgroup)
+                        LOG.debug("secgroup_watcher: deleting secgroup %s",
+                                  secgroup)
                         self.data.acl_delete(secgroup)
                         LOG.debug("secgroup watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
+                                  "mappings %s", secgroups)
                         try:
                             self.etcd_client.delete(
                                 self.data.secgroup_key_space + '/%s'
@@ -1393,14 +1391,14 @@ class EtcdListener(object):
                     else:
                         # create or update a secgroup == add_replace vpp acl
                         data = json.loads(value)
-                        LOG.debug("secgroup_watcher: add_replace secgroup %s"
-                                  % secgroup)
+                        LOG.debug("secgroup_watcher: add_replace secgroup %s",
+                                  secgroup)
                         self.data.acl_add_replace(secgroup, data)
                         LOG.debug("secgroup_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
+                                  "mappings %s", secgroups)
                 else:
                     LOG.warning('secgroup_watcher: Unexpected change in '
-                                'etcd secgroup feedback for key %s' % key)
+                                'etcd secgroup feedback for key %s', key)
 
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
