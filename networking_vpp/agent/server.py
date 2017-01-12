@@ -76,6 +76,9 @@ assert config_opts
 
 eventlet.monkey_patch()
 
+# Apply monkey patch if necessary
+compat.monkey_patch()
+
 ######################################################################
 
 # This mirrors functionality in Neutron so that we're creating a name
@@ -83,17 +86,34 @@ eventlet.monkey_patch()
 
 DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
 
-# Apply monkey patch if necessary
-compat.monkey_patch()
-
 
 def get_tap_name(uuid):
     return n_const.TAP_DEVICE_PREFIX + uuid[0:11]
+
+######################################################################
+# Interface tagging naming scheme :
+# tap and vhost interfaces: port:<uuid>
+# Uplink Connectivity: uplink:<net_type>.<seg_id>
+
+TAG_UPLINK_PREFIX = 'uplink:'
 
 
 def get_vhostuser_name(uuid):
     return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
 
+
+def uplink_tag(net_type, seg_id):
+    return TAG_UPLINK_PREFIX + '%s.%s' % (net_type, seg_id)
+
+def decode_uplink_tag(tag):
+    """Spot an uplink interface tag.
+
+    Return (net_type, seg_id) or None if not an uplink tag
+    """
+    if tag is None:
+        return None  # not tagged
+    m = re.match('^' + TAG_UPLINK_PREFIX + '([^.]+)\.([^.]+)$', tag)
+    return None if m is None else (m.group(1), m.group(2))
 
 ######################################################################
 
@@ -121,7 +141,6 @@ class VPPForwarder(object):
         self.vxlan_bcast_addr = vxlan_bcast_addr
         self.vxlan_src_addr = vxlan_src_addr
         self.vxlan_vrf = vxlan_vrf
-        # Used as a unique number for bridge IDs
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
@@ -235,13 +254,16 @@ class VPPForwarder(object):
         else:
             raise Exception('network type %s not supported', net_type)
 
-        self.vpp.ifup(if_upstream)
+        self.vpp.set_interface_tag(if_upstream,
+                                   uplink_tag(net_type, seg_id))
 
-        # Out bridge IDs have one upstream interface in so we simply use
+        # Our bridge IDs have one upstream interface in so we simply use
         # that ID as their domain ID
         self.vpp.create_bridge_domain(if_upstream, self.mac_age)
 
         self.vpp.add_to_bridge(if_upstream, if_upstream)
+        self.vpp.ifup(if_upstream)
+
         self.networks[(physnet, net_type, seg_id)] = {
             'bridge_domain_id': if_upstream,
             'if_upstream': intf,
