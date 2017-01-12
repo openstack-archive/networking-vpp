@@ -14,6 +14,7 @@
 #    under the License.
 
 
+import collections
 import enum
 import eventlet
 import fnmatch
@@ -67,6 +68,12 @@ class VPPInterface(object):
 
         for interface in t:
             yield (fix_string(interface.interface_name), interface)
+
+    def is_vhostuser(self, iface_idx):
+        for vhost in self.get_vhostusers():
+            if vhost.sw_if_index == iface_idx:
+                return True
+        return False
 
     def get_interfaces(self):
         t = self._vpp.sw_interface_dump()
@@ -131,6 +138,18 @@ class VPPInterface(object):
 
         # Err, I just got a sw_interface_set_flags here, not a delete tap?
         # self._check_retval(t)
+
+    def get_taps(self):
+        t = self._vpp.sw_interface_tap_dump()
+        for iface in t:
+            yield {'dev_name': fix_string(iface.dev_name),
+                   'sw_if_idx': iface.sw_if_index}
+
+    def is_tap(self, iface_idx):
+        for tap in self.get_taps():
+            if tap['sw_if_index'] == iface_idx:
+                return True
+        return False
 
     #############################
 
@@ -290,6 +309,32 @@ class VPPInterface(object):
             is_add=False  # is a delete
         )
         self._check_retval(t)
+
+    def get_ifaces_in_bridge_domains(self):
+        """Read current bridge configuration in VPP.
+
+        - returns a dict
+          key: bridge id
+          values: array of connected sw_if_index
+        """
+        t = self._vpp.bridge_domain_dump(bd_id=0xffffffff)
+        # this method returns an array containing 2 types of object:
+        # - bridge_domain_details
+        # - bridge_domain_sw_if_details
+        # build a dict containing: {bridge_id--> list of interfaces}
+
+        bridges = collections.defaultdict(list)
+        for bd_info in t:
+            if bd_info.__class__.__name__.endswith('sw_if_details'):
+                bridges[bd_info.bd_id].append(bd_info.sw_if_index)
+            else:
+                # extending with an empty array is harmless but this ensures
+                # the key (ie: bridge_id) exists
+                bridges[bd_info.bd_id].extend([])
+        return bridges
+
+    def get_ifaces_in_bridge_domain(self, bd_id):
+        return self.get_ifaces_in_bridge_domains().get(bd_id, [])
 
     def create_vlan_subif(self, if_id, vlan_tag):
         self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
