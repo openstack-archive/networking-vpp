@@ -478,8 +478,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         registry.subscribe(self.process_secgroup_events,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_DELETE)
-        LOG.info("ML2_VPP: subscribed to receive security group delete "
-                 "and rule create/delete notifications")
 
     def process_secgroup_events(self, resource, event, trigger, **kwargs):
         """Callback for handling security group change events"""
@@ -681,8 +679,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
         secgroup_id -- The id of the security group that we want to delete
         """
         try:
-            LOG.info("ML2_VPP: Deleting secgroup %s from etcd" %
-                     secgroup_id)
+            LOG.debug("ML2_VPP: Deleting secgroup %s from etcd" %
+                      secgroup_id)
             secgroup_path = self._secgroup_path(secgroup_id)
             self.etcd_client.delete(secgroup_path)
         except etcd.EtcdKeyNotFound:
@@ -852,7 +850,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
                 # Agent deaths in this time will not be logged, so
                 # make this clear
-                LOG.info('Sync lost, resetting agent liveness')
+                LOG.debug('Sync lost, resetting agent liveness')
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
