@@ -36,6 +36,7 @@ import vpp
 from collections import defaultdict
 from collections import namedtuple
 from ipaddress import ip_address
+from ipaddress import ip_network
 from networking_vpp._i18n import _
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
@@ -749,16 +750,27 @@ class VPPForwarder(object):
             return binascii.unhexlify(mac_address.replace(':', ''))
 
         def _get_ip_version(ip):
-            """Return the IP Version 4 or 6"""
-            ip_addr = ip_address(ip)
-            return ip_addr.version
+            """Return the IP Version i.e. 4 or 6"""
+            return ip_network(unicode(ip)).version
+
+        def _get_ip_prefix_length(ip):
+            """Return the IP prefix length value
+
+            Arguments:-
+            ip - An ip IPv4 or IPv6 address (or) an IPv4 or IPv6 Network with
+                 a prefix length
+            If "ip" is an ip_address return its max_prefix_length
+            i.e. 32 if IPv4 and 128 if IPv6
+            if "ip" is an ip_network return its prefix_length
+            """
+            return ip_network(unicode(ip)).prefixlen
 
         src_mac_mask = _pack_mac('FF:FF:FF:FF:FF:FF')
         mac_ip_rules = []
-        for mac, ip in mac_ips:
+        for mac, ip in mac_ips:  # ip can be an address (or) a network/prefix
             ip_version = _get_ip_version(ip)
             is_ipv6 = 1 if ip_version == 6 else 0
-            ip_prefix = 32 if ip_version == 4 else 128
+            ip_prefix = _get_ip_prefix_length(ip)
             mac_ip_rules.append(
                 {'is_permit': 1,
                  'is_ipv6': is_ipv6,
@@ -844,8 +856,19 @@ class VPPForwarder(object):
         return spoof_acl
 
     def _pack_address(self, ip_addr):
-        """Pack an IPv4 or IPv6 ip_addr into binary."""
-        return ip_address(unicode(ip_addr)).packed
+        """Pack an IPv4 or IPv6 (ip_addr or ip_network) into binary.
+
+        If the argument is an ip_address, it is packed and if the argument is
+        an ip_network only the network portion of it is packed
+        Arguments:-
+        ip_addr: an IPv4 or IPv6 address without a prefix_length e.g. 1.1.1.1
+                                  (or)
+                 an IPv4 or IPv6 network with prefix_length e.g. 1.1.1.0/24
+        """
+        try:
+            return ip_address(unicode(ip_addr)).packed
+        except ValueError:  # the argument is a network
+            return ip_network(unicode(ip_addr)).network_address.packed
 
     def get_spoof_filter_rules(self):
         """Build and return a list of anti-spoofing rules.
