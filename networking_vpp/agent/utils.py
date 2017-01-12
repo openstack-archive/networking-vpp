@@ -13,7 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from etcd import EtcdNotFile
+import etcd
 from networking_vpp.agent import exceptions as vpp_agent_exec
 from oslo_log import log as logging
 
@@ -35,8 +35,15 @@ class EtcdHelper(object):
             rv = self.etcd_client.read(key_space)
             for child in rv.children:
                 self.etcd_client.delete(child.key)
-        except EtcdNotFile:
+        except etcd.EtcdNotFile:
             # Can't delete directories - they're harmless anyway
+            pass
+
+    def ensure_dir(self, path):
+        try:
+            self.etcd_client.write(path, None, dir=True)
+        except etcd.EtcdNotFile:
+            # Thrown when the directory already exists, which is fine
             pass
 
 
