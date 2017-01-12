@@ -15,6 +15,7 @@
 
 import mock
 import sys
+import uuid as uuidgen
 sys.modules['vpp_papi'] = mock.MagicMock()
 sys.modules['threading'] = mock.MagicMock()
 from networking_vpp.agent import server
@@ -38,6 +39,30 @@ class VPPForwarderTestCase(base.BaseTestCase):
             }
             return vals[iface]
         self.vpp.vpp.get_ifidx_by_name.side_effect = idxes
+
+    def test_interface_tag_len(self):
+        uuid = uuidgen.uuid1()
+        assert (len(server.port_tag(uuid)) <= 64), 'TAG len must be <= 64'
+
+    def test_uplink_tag_len(self):
+        assert (len(server.uplink_tag('flat', 0)) <= 64), \
+            'TAG len for flat networks  must be <= 64'
+        max_vlan_id = 4095
+        assert (len(server.uplink_tag('vlan', max_vlan_id)) <= 64), \
+            'TAG len for vlan overlays must be <= 64'
+        max_vxlan_id = 16777215
+        assert (len(server.uplink_tag('vxlan', max_vxlan_id)) <= 64), \
+            'TAG len for vxlan overlays must be <= 64'
+
+    def test_decode_port_tag(self):
+        uuid = uuidgen.uuid1()
+        r = server.decode_port_tag(server.TAG_L2IFACE_PREFIX + str(uuid))
+        assert (str(uuid) == r), "Expected '%s', got '%s'" % (str(uuid), r)
+
+    def test_no_decode_port_tag(self):
+        uuid = 'baduuid'
+        r = server.decode_port_tag(server.TAG_L2IFACE_PREFIX + str(uuid))
+        assert (r is None)
 
     def test_get_if_for_physnet(self):
         (ifname, ifidx) = self.vpp.get_if_for_physnet('test_net')
@@ -68,7 +93,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.create_network_on_host('test_net', 'flat', '1')
         self.vpp.vpp.ifup.assert_called_once_with(720)
-        self.vpp.vpp.add_to_bridge.called_once_with(5679, 720)
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(720,
+                                                               'uplink:flat.1')
+        self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
+        self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
 
@@ -76,6 +104,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.create_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(740,
+                                                               'uplink:vlan.1')
+        self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
