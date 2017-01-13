@@ -525,7 +525,7 @@ class VPPForwarder(object):
         return self.interfaces[uuid]
 
     def ensure_interface_in_vpp_bridge(self, net_br_idx, iface_idx):
-        if net_br_idx not in self.vpp.get_ifaces_in_bridge_domain():
+        if net_br_idx not in self.vpp.get_ifaces_in_bridge_domains():
             self.vpp.create_bridge_domain(net_br_idx, self.mac_age)
         # Adding an interface to a bridge does nothing if it's
         # already in there
