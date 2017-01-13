@@ -192,8 +192,8 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         self.etcd_client.etcd_client.write.assert_called_with(
             key, '\"' + val + '\"')
 
-    def test_do_etcd_mkdir(self):
+    def test_ensure_dir(self):
         path = "/networking-vpp/"
-        self.etcd_client.do_etcd_mkdir(path)
+        self.etcd_client.etcd_helper.ensure_dir(path)
         self.etcd_client.etcd_client.write.assert_called_with(path,
                                                               None, dir=True)

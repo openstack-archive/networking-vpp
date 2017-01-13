@@ -37,13 +37,13 @@ from collections import namedtuple
 from ipaddress import ip_address
 from ipaddress import ip_network
 from networking_vpp._i18n import _
-from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
-from networking_vpp.etcdutils import EtcdWatcher
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
+from networking_vpp.utils import etcd_gen
+from networking_vpp.utils.etcd_watch import EtcdWatcher
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
@@ -1126,7 +1126,7 @@ class EtcdListener(object):
         self.etcd_client = etcd_client
         self.vppf = vppf
         self.physnets = physnets
-        self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
+        self.etcd_helper = etcd_gen.EtcdHelper(self.etcd_client)
         # We need certain directories to exist
         self.etcd_helper.ensure_dir(LEADIN + '/state/%s/ports' % self.host)
         self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/ports' % self.host)
@@ -1683,8 +1683,8 @@ def main():
               cfg.CONF.ml2_vpp.etcd_port,
               cfg.CONF.ml2_vpp.etcd_user)
 
-    host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
-                                         cfg.CONF.ml2_vpp.etcd_port)
+    host = etcd_gen.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
+                                      cfg.CONF.ml2_vpp.etcd_port)
 
     etcd_client = etcd.Client(host=host,
                               username=cfg.CONF.ml2_vpp.etcd_user,
