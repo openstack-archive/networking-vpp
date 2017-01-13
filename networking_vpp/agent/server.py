@@ -107,10 +107,11 @@ class VPPForwarder(object):
     def __init__(self,
                  physnets,  # physnet_name: interface-name
                  mac_age,
+                 vpp_cmd_queue_len=None,
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
                  vxlan_vrf=None):
-        self.vpp = vpp.VPPInterface(LOG)
+        self.vpp = vpp.VPPInterface(LOG, vpp_cmd_queue_len)
 
         self.physnets = physnets
 
@@ -1482,6 +1483,7 @@ def main():
                 sys.exit(1)
     vppf = VPPForwarder(physnets,
                         mac_age=cfg.CONF.ml2_vpp.mac_age,
+                        vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
                         vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)

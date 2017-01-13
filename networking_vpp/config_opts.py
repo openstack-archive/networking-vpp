@@ -45,7 +45,9 @@ vpp_opts = [
     cfg.StrOpt('vhost_user_dir', default='/tmp',
                help=_("vhostuser socket directory")),
     cfg.IntOpt('mac_age', default=180,
-               help=_("bridge domain MAC aging TTL (in seconds)"))
+               help=_("bridge domain MAC aging TTL (in seconds)")),
+    cfg.IntOpt('vpp_cmd_queue_len', default=None,
+               help=_("Size of the VPP command queue (in messages)"))
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
