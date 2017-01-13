@@ -735,7 +735,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
             'binding_type': binding_type,
             'security_groups': port['security_groups'],
             'allowed_address_pairs': port['allowed_address_pairs'],
-            'fixed_ips': port['fixed_ips']
+            'fixed_ips': port['fixed_ips'],
+            'port_security_enabled': port['port_security_enabled']
         }
         LOG.debug("ML2_VPP: Queueing bind request for port:%s, "
                   "segment:%s, host:%s, type:%s",
