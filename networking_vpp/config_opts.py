@@ -47,7 +47,9 @@ vpp_opts = [
     cfg.IntOpt('mac_age', default=180,
                help=_("bridge domain MAC aging TTL (in seconds)")),
     cfg.IntOpt('tap_wait_time', default=60,
-               help=_("Maximum time to wait for a tap device."))
+               help=_("Maximum time to wait for a tap device.")),
+    cfg.IntOpt('vpp_cmd_queue_len', default=None,
+               help=_("Size of the VPP command queue (in messages)"))
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
