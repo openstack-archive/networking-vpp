@@ -26,6 +26,7 @@ from oslo_config import cfg
 FAKE_PORT = {'status': 'DOWN',
              'binding:host_id': '',
              'allowed_address_pairs': [],
+             'port_security_enabled': [],
              'device_owner': 'fake_owner',
              'binding:profile': {},
              'fixed_ips': [],
@@ -134,6 +135,7 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         mac_address = port_context.current['mac_address']
         security_groups = port_context.current['security_groups']
         allowed_address_pairs = port_context.current['allowed_address_pairs']
+        port_security_enabled = port_context.current['port_security_enabled']
         fixed_ips = port_context.current['fixed_ips']
         mtu = 1500
         physnet = segment[api.PHYSICAL_NETWORK]
@@ -149,6 +151,7 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
             'binding_type': binding_type,
             'security_groups': security_groups,
             'allowed_address_pairs': allowed_address_pairs,
+            'port_security_enabled': port_security_enabled,
             'fixed_ips': fixed_ips
         }
         self.etcd_client.bind(

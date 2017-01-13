@@ -399,6 +399,15 @@ class VPPInterface(object):
         self._check_retval(t)
         return t.retval  # Return 0 on success
 
+    def delete_acl_list_on_interface(self, sw_if_index):
+        self.LOG.debug("Deleting ACLs from VPP interface %s", sw_if_index)
+        t = self._vpp.acl_interface_set_acl_list(sw_if_index=sw_if_index,
+                                                 count=0,
+                                                 n_input=0,
+                                                 acls=[])
+        self.LOG.debug("Delete_acl_list_on_interface response: %s", str(t))
+        self._check_retval(t)
+
     def set_macip_acl_on_interface(self, sw_if_index, acl_index):
         self.LOG.debug("Setting macip acl %s on VPP interface %s"
                        % (acl_index, sw_if_index))
@@ -409,6 +418,16 @@ class VPPInterface(object):
                        % str(t))
         self._check_retval(t)
         return t.retval
+
+    def delete_macip_acl_on_interface(self, sw_if_index, acl_index):
+        self.LOG.debug("Deleting macip acl %s on VPP interface %s",
+                       acl_index, sw_if_index)
+        t = self._vpp.macip_acl_interface_add_del(is_add=0,  # delete
+                                                  sw_if_index=sw_if_index,
+                                                  acl_index=acl_index)
+        self.LOG.debug("macip ACL delete_acl_list_on_interface response: %s",
+                       str(t))
+        self._check_retval(t)
 
     def delete_macip_acl(self, acl_index):
         self.LOG.debug("Deleting macip acl index %s" % acl_index)

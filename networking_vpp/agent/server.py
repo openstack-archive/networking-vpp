@@ -978,6 +978,35 @@ class VPPForwarder(object):
                                                         status))
         return status
 
+    def remove_acls_on_vpp_port(self, sw_if_index):
+        """Removes all L3 and L2 ACLS on the vpp port
+
+        Arguments:-
+        sw_if_index - Software index of the port on which ACLs are to be
+                      removed
+        """
+        # We should know about the existing ACLS on port by looking up
+        # port_vpp_acls. If there is a KeyError, we do not know about any
+        # ACLs on that port. So ignore
+        try:
+            l3_acl_vector = self.port_vpp_acls[sw_if_index]['l34']
+            LOG.debug("Deleting Layer3 ACL vector %s from if_idx %s",
+                      l3_acl_vector, sw_if_index)
+            self.vpp.delete_acl_list_on_interface(sw_if_index)
+            del self.port_vpp_acls[sw_if_index]['l34']
+        except KeyError:
+            LOG.debug("No Layer3 ACLs are set on interface %s.. nothing "
+                      "to delete", sw_if_index)
+        try:
+            l2_acl_index = self.port_vpp_acls[sw_if_index]['l23']
+            LOG.debug("Deleting mac_ip acl %s from interface %s",
+                      l2_acl_index, sw_if_index)
+            self.vpp.delete_macip_acl_on_interface(sw_if_index, l2_acl_index)
+            del self.port_vpp_acls[sw_if_index]['l23']
+        except KeyError:
+            LOG.debug("No mac_ip ACLs are set on interface %s.. nothing "
+                      "to delete", sw_if_index)
+
     def spoof_filter_on_host(self):
         """Adds a spoof filter ACL on host if not already present.
 
@@ -1529,8 +1558,11 @@ class EtcdListener(object):
                             # Until then, this etcd key will be ignored.
                             return
 
-                        # If security-groups is enabled, set L3/L2 ACLs
+                        # If (security-groups and port_security)
+                        # are enabled and it's a vhostuser port
+                        # proceed to set L3/L2 ACLs, else skip security
                         if (self.data.secgroup_enabled
+                                and data.get('port_security_enabled', True)
                                 and data['binding_type'] == 'vhostuser'):
                             LOG.debug("port_watcher: known secgroup to acl "
                                       "mappings %s" % secgroups)
@@ -1571,6 +1603,14 @@ class EtcdListener(object):
                                        port,
                                        result))
                         self.data.vppf.vpp.ifup(props['iface_idx'])
+                        # Clear ACLs on vhostuser port if port_security
+                        # is disabled
+                        if (not data.get('port_security_enabled', True)
+                                and data['binding_type'] == 'vhostuser'):
+                            LOG.debug("Removing port_security on "
+                                      "port %s", port)
+                            self.data.vppf.remove_acls_on_vpp_port(
+                                props['iface_idx'])
 
                 else:
                     LOG.warning('Unexpected key change in etcd port feedback, '
