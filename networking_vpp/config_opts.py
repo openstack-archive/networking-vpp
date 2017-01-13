@@ -46,6 +46,8 @@ vpp_opts = [
                help=_("vhostuser socket directory")),
     cfg.IntOpt('mac_age', default=180,
                help=_("bridge domain MAC aging TTL (in seconds)"))
+    cfg.IntOpt('vpp_cmd_queue_len', default=None,
+               help=_("Size of the VPP command queue ringbuffer (in messages)"))
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
