@@ -142,14 +142,18 @@ class VPPInterface(object):
         self._check_retval(t)
 
     ########################################
-    def __init__(self, log):
+    def __init__(self, log, vpp_cmd_queue_len=None):
         self.LOG = log
         jsonfiles = []
         for root, dirnames, filenames in os.walk('/usr/share/vpp/api/'):
             for filename in fnmatch.filter(filenames, '*.api.json'):
                 jsonfiles.append(os.path.join(root, filename))
 
-        self._vpp = vpp_papi.VPP(jsonfiles)
+        if vpp_cmd_queue_len is not None:
+            self._vpp = vpp_papi.VPP(jsonfiles, rx_qlen=vpp_cmd_queue_len)
+        else:
+            self._vpp = vpp_papi.VPP(jsonfiles)
+
         # Sometimes a callback fires unexpectedly.  We need to catch them
         # because vpp_papi will traceback otherwise
         self._vpp.register_event_callback(self._cb)
