@@ -43,6 +43,16 @@ class VPPForwarderTestCase(base.BaseTestCase):
             return vals[iface]
         self.vpp.vpp.get_ifidx_by_name.side_effect = idxes
 
+    def test_uplink_tag_len(self):
+        assert (len(server.uplink_tag('flat', 0)) <= 64), \
+            'TAG len for flat networks  must be <= 64'
+        max_vlan_id = 4095
+        assert (len(server.uplink_tag('vlan', max_vlan_id)) <= 64), \
+            'TAG len for vlan overlays must be <= 64'
+        max_vxlan_id = 16777215
+        assert (len(server.uplink_tag('vxlan', max_vxlan_id)) <= 64), \
+            'TAG len for vxlan overlays must be <= 64'
+
     def test_get_if_for_physnet(self):
         (ifname, ifidx) = self.vpp.get_if_for_physnet('test_net')
         self.vpp.vpp.get_ifidx_by_name.assert_called_once_with('test_iface')
@@ -72,7 +82,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.create_network_on_host('test_net', 'flat', '1')
         self.vpp.vpp.ifup.assert_called_once_with(720)
-        self.vpp.vpp.add_to_bridge.called_once_with(5679, 720)
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(720,
+                                                               'uplink:flat.1')
+        self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
+        self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
 
@@ -80,6 +93,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.create_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(740,
+                                                               'uplink:vlan.1')
+        self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
             "There should be one more network now"
