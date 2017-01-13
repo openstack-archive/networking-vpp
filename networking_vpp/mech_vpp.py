@@ -28,12 +28,12 @@ import six
 import time
 import traceback
 
-from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
 from networking_vpp.db import db
-from networking_vpp.etcdutils import EtcdWatcher
+from networking_vpp.utils import etcd_gen
+from networking_vpp.utils.etcd_watch import EtcdWatcher
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
@@ -401,8 +401,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                    cfg.CONF.ml2_vpp.etcd_port,
                    cfg.CONF.ml2_vpp.etcd_user,))
 
-        host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
-                                             cfg.CONF.ml2_vpp.etcd_port)
+        host = etcd_gen.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
+                                          cfg.CONF.ml2_vpp.etcd_port)
         self.etcd_client = etcd.Client(host=host,
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
@@ -411,9 +411,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
-        self.do_etcd_mkdir(self.state_key_space)
-        self.do_etcd_mkdir(self.port_key_space)
-        self.do_etcd_mkdir(self.secgroup_key_space)
+        self.etcd_helper = etcd_gen.EtcdHelper(self.etcd_client)
+        self.etcd_helper.ensure_dir(self.state_key_space)
+        self.etcd_helper.ensure_dir(self.port_key_space)
+        self.etcd_helper.ensure_dir(self.secgroup_key_space)
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
             self.register_secgroup_event_handler()
@@ -755,7 +756,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def do_etcd_update(self, k, v):
         try:
-            # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
+            # not needed? -
+            # self.etcd_helper.ensure_dir('/'.join(k.split('/')[:-1]))
             if v is None:
                 LOG.debug('deleting key %s', k)
                 try:
@@ -770,13 +772,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
             return True
         except Exception:       # TODO(ijw) select your exceptions
             return False
-
-    def do_etcd_mkdir(self, path):
-        try:
-            self.etcd_client.write(path, None, dir=True)
-        except etcd.EtcdNotFile:
-            # Thrown when the directory already exists, which is fine
-            pass
 
     def _forward_worker(self):
         LOG.debug('forward worker begun')
