@@ -605,7 +605,10 @@ class VPPForwarder(object):
                     LOG.debug("secgroup_watcher: Current port acl_vector "
                               "mappings %s" % str(self.port_vpp_acls))
                 # This interface is no longer connected if it's deleted
-                self.iface_connected.remove(iface_idx)
+                # RACE, as we may call unbind BEFORE the vhost user
+                # interface is notified as connected to qemu
+                if iface_idx in self.iface_connected:
+                    self.iface_connected.remove(iface_idx)
             elif props['bind_type'] in ['maketap', 'plugtap']:
                 # remove port from bridge (sets to l3 mode) prior to deletion
                 self.vpp.delete_from_bridge(iface_idx)
