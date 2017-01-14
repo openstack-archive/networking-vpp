@@ -421,7 +421,7 @@ class VPPForwarder(object):
                 (tap_timeout, dev_name, bridge, br_name) = tap
                 if _is_tap_configured(dev_name, bridge, br_name):
                     pending_taps.remove(tap)
-                elif tap_timeout > time.time():
+                elif time.time() > tap_timeout:
                     LOG.warning("Timeout for tap %s", dev_name)
                     pending_taps.remove(tap)
 
