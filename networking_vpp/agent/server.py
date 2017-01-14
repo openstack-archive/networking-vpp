@@ -412,7 +412,7 @@ class VPPForwarder(object):
             # While we were working, check if new taps have been requested
             if not self._external_taps.empty():
                 pending_taps.append(self._external_taps.get())
-            elif pending_taps.empty():
+            elif len(pending_taps) == 0:
                 # We have no work to do and blocking is now OK,
                 # so wait on the empty external TAPs
                 pending_taps.append(self._external_taps.get())
@@ -428,7 +428,7 @@ class VPPForwarder(object):
             # If we have more work, go for it straight away, otherwise
             # take a breather because the old tap state will take
             # time to change.
-            if not pending_taps.empty():
+            if len(pending_taps) != 0:
                 eventlet.sleep(2)
 
     def add_external_tap(self, device_name, bridge, bridge_name):
