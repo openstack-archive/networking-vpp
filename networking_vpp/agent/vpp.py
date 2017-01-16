@@ -49,23 +49,8 @@ def singleton(cls):
 @singleton
 class VPPInterface(object):
 
-    def _check_retval(self, t):
-        """See if VPP returned OK.
-
-        VPP is very inconsistent in return codes, so for now this reports
-        a logged warning rather than flagging an error.
-        """
-
-        try:
-            self.LOG.debug("checking return value for object: %s", str(t))
-            if t.retval != 0:
-                self.LOG.debug('FAIL? retval here is %s', t.retval)
-        except AttributeError as e:
-            self.LOG.debug("Unexpected request format.  Error: %s on %s"
-                           % (e, t))
-
     def get_vhostusers(self):
-        t = self._vpp.sw_interface_vhost_user_dump()
+        t = self.call_vpp('sw_interface_vhost_user_dump')
 
         for interface in t:
             yield (fix_string(interface.interface_name), interface)
@@ -77,7 +62,7 @@ class VPPInterface(object):
         return False
 
     def get_interfaces(self):
-        t = self._vpp.sw_interface_dump()
+        t = self.call_vpp('sw_interface_dump')
 
         for iface in t:
             mac = bytearray(iface.l2_address[:iface.l2_address_length])
@@ -107,15 +92,13 @@ class VPPInterface(object):
         on interface creation for subinterface or loopback).
         """
         # TODO(ijw): this is a race condition.
-        t = self._vpp.sw_interface_tag_add_del(is_add=1,
-                                               sw_if_index=if_idx,
-                                               tag=str(tag))
-        self._check_retval(t)
+        self.call_vpp('sw_interface_tag_add_del',
+                      is_add=1,
+                      sw_if_index=if_idx,
+                      tag=str(tag))
 
     def get_version(self):
-        t = self._vpp.show_version()
-
-        self._check_retval(t)
+        t = self.call_vpp('show_version')
 
         return fix_string(t.version)
 
@@ -123,25 +106,22 @@ class VPPInterface(object):
 
     def create_tap(self, ifname, mac, tag):
         # (we don't like unicode in VPP hence str(ifname))
-        t = self._vpp.tap_connect(use_random_mac=False,
-                                  tap_name=str(ifname),
-                                  mac_address=mac_to_bytes(mac),
-                                  renumber=False,
-                                  custom_dev_instance=0,
-                                  tag=tag)
-
-        self._check_retval(t)
+        t = self.call_vpp('tap_connect',
+                          use_random_mac=False,
+                          tap_name=str(ifname),
+                          mac_address=mac_to_bytes(mac),
+                          renumber=False,
+                          custom_dev_instance=0,
+                          tag=tag)
 
         return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
     def delete_tap(self, idx):
-        self._vpp.tap_delete(sw_if_index=idx)
-
-        # Err, I just got a sw_interface_set_flags here, not a delete tap?
-        # self._check_retval(t)
+        self.call_vpp('tap_delete',
+                      sw_if_index=idx)
 
     def get_taps(self):
-        t = self._vpp.sw_interface_tap_dump()
+        t = self.call_vpp('sw_interface_tap_dump')
         for iface in t:
             yield {'dev_name': fix_string(iface.dev_name),
                    'sw_if_idx': iface.sw_if_index}
@@ -156,24 +136,17 @@ class VPPInterface(object):
 
     def create_vhostuser(self, ifpath, mac, tag,
                          qemu_user=None, qemu_group=None, is_server=False):
-        self.LOG.debug('Creating %s as a port', ifpath)
-
-        t = self._vpp.create_vhost_user_if(is_server=is_server,
-                                           sock_filename=str(ifpath),
-                                           renumber=False,
-                                           custom_dev_instance=0,
-                                           use_custom_mac=True,
-                                           mac_address=mac_to_bytes(mac),
-                                           tag=tag)
-
-        self.LOG.debug("Created vhost user interface object: %s", str(t))
-        self._check_retval(t)
+        t = self.call_vpp('create_vhost_user_if',
+                          is_server=is_server,
+                          sock_filename=str(ifpath),
+                          renumber=False,
+                          custom_dev_instance=0,
+                          use_custom_mac=True,
+                          mac_address=mac_to_bytes(mac),
+                          tag=tag)
 
         if is_server:
             # The permission that qemu runs as.
-            self.LOG.debug(('Changing vhostuser interface file permission '
-                            'to %s:%s'),
-                           (qemu_user, qemu_group))
             uid = pwd.getpwnam(qemu_user).pw_uid
             gid = grp.getgrnam(qemu_group).gr_gid
             os.chown(ifpath, uid, gid)
@@ -182,12 +155,11 @@ class VPPInterface(object):
         return t.sw_if_index
 
     def delete_vhostuser(self, idx):
-        self.LOG.debug("Deleting VPP interface - index: %s", idx)
-        t = self._vpp.delete_vhost_user_if(sw_if_index=idx)
-
-        self._check_retval(t)
+        self.call_vpp('delete_vhost_user_if',
+                      sw_if_index=idx)
 
     ########################################
+
     def __init__(self, log, vpp_cmd_queue_len=None):
         self.LOG = log
         jsonfiles = []
@@ -197,13 +169,13 @@ class VPPInterface(object):
 
         self._vpp = vpp_papi.VPP(jsonfiles)
 
-        # Sometimes a callback fires unexpectedly.  We need to catch them
-        # because vpp_papi will traceback otherwise
-        self._vpp.register_event_callback(self._queue_cb)
-
         self.registered_callbacks = {}
         for event in self.CallbackEvents:
             self.registered_callbacks[event] = []
+
+        # Sometimes a callback fires unexpectedly.  We need to catch them
+        # because vpp_papi will traceback otherwise
+        self._vpp.register_event_callback(self._queue_cb)
 
         self.event_q_lock = semaphore.Semaphore()
         self.event_q = []
@@ -215,6 +187,23 @@ class VPPInterface(object):
             self._vpp.connect("python-VPPInterface")
 
         eventlet.spawn_n(self.vpp_watcher_thread)
+
+    def call_vpp(self, func, *args, **kwargs):
+        self.LOG.debug('VPP: %s(%s, %s): ', func, *args, **kwargs)
+        func_call = getattr(self._vpp, func)
+        t = func_call(*args, **kwargs)
+        self.LOG.debug('VPP: %s returned %s', func, str(t))
+
+        try:
+            if t.retval != 0:
+                self.LOG.debug('FAIL? retval here is %s', t.retval)
+                # raise ValueError('VPP call %s returned %s',
+                #                  func, t.retval)
+        except AttributeError as e:
+            self.LOG.debug("Unexpected request format.  Error: %s on %s"
+                           % (e, t))
+
+        return t
 
     ########################################
 
@@ -290,8 +279,7 @@ class VPPInterface(object):
         if len(self.registered_callbacks[event]) == 1:
             (method_name, event_cls) = event.value
             if method_name is not None:
-                register_method = getattr(self._vpp, method_name)
-                register_method(enable_disable=1, pid=os.getpid())
+                self.call_vpp(method_name, enable_disable=1, pid=os.getpid())
 
     def unregister_for_event(self, event, target):
         if target not in self.registered_callbacks[event]:
@@ -301,8 +289,7 @@ class VPPInterface(object):
         if len(self.registered_callbacks[event]) == 0:
             (method_name, event_cls) = event.value
             if method_name is not None:
-                register_method = getattr(self._vpp, method_name)
-                register_method(enable_disable=0, pid=os.getpid())
+                self.call_vpp(method_name, enable_disable=0, pid=os.getpid())
 
     def vpp_watcher_thread(self):
         """Background thread to watch for significant changes in VPP
@@ -352,10 +339,11 @@ class VPPInterface(object):
     ########################################
 
     def disconnect(self):
-        self._vpp.disconnect()
+        self.call_vpp('disconnect')
 
     def create_bridge_domain(self, id, mac_age):
-        t = self._vpp.bridge_domain_add_del(
+        self.call_vpp(
+            'bridge_domain_add_del',
             bd_id=id,  # the numeric ID of this domain
             flood=True,  # enable bcast and mcast flooding
             uu_flood=True,  # enable unknown ucast flooding
@@ -365,10 +353,10 @@ class VPPInterface(object):
             mac_age=mac_age,  # set bridge domain MAC aging TTL
             is_add=True  # is an add
         )
-        self._check_retval(t)
 
     def delete_bridge_domain(self, id):
-        t = self._vpp.bridge_domain_add_del(
+        self.call_vpp(
+            'bridge_domain_add_del',
             bd_id=id,  # the numeric ID of this domain
             flood=True,  # enable bcast and mcast flooding
             uu_flood=True,  # enable unknown ucast flooding
@@ -377,7 +365,6 @@ class VPPInterface(object):
             arp_term=False,  # enable ARP termination in the BD
             is_add=False  # is a delete
         )
-        self._check_retval(t)
 
     def get_ifaces_in_bridge_domains(self):
         """Read current bridge configuration in VPP.
@@ -386,7 +373,8 @@ class VPPInterface(object):
           key: bridge id
           values: array of connected sw_if_index
         """
-        t = self._vpp.bridge_domain_dump(bd_id=0xffffffff)
+        t = self.call_vpp('bridge_domain_dump',
+                          bd_id=0xffffffff)
         # this method returns an array containing 2 types of object:
         # - bridge_domain_details
         # - bridge_domain_sw_if_details
@@ -406,14 +394,9 @@ class VPPInterface(object):
         return self.get_ifaces_in_bridge_domains().get(bd_id, [])
 
     def create_vlan_subif(self, if_id, vlan_tag):
-        self.LOG.debug("Creating vlan subinterface with ID:%s and vlan_tag:%s"
-                       % (if_id, vlan_tag))
-        t = self._vpp.create_vlan_subif(
-            sw_if_index=if_id,
-            vlan_id=vlan_tag)
-        self.LOG.debug("Create vlan subinterface response: %s", str(t))
-
-        self._check_retval(t)
+        t = self.call_vpp('create_vlan_subif',
+                          sw_if_index=if_id,
+                          vlan_id=vlan_tag)
 
         # pop vlan tag from subinterface
         self.set_vlan_remove(t.sw_if_index)
@@ -425,109 +408,74 @@ class VPPInterface(object):
         return self.get_ifidx_by_name('%s.%s' % (if_name, seg_id))
 
     def delete_vlan_subif(self, sw_if_index):
-        self.LOG.debug("Deleting subinterface with sw_if_index: %s"
-                       % (sw_if_index))
-        t = self._vpp.delete_subif(sw_if_index=sw_if_index)
-        self.LOG.debug("Delete subinterface response: %s", str(t))
-
-        self._check_retval(t)
-        return
+        self.call_vpp('delete_subif',
+                      sw_if_index=sw_if_index)
 
     def acl_add_replace(self, acl_index, tag, rules, count):
-        self.LOG.debug("Add_Replace vpp acl with indx %s tag %s rules %s "
-                       "count %s" % (acl_index, tag, rules, count))
-        t = self._vpp.acl_add_replace(acl_index=acl_index,
-                                      tag=str(tag),
-                                      r=rules,
-                                      count=count)
-        self.LOG.debug("ACL add_replace response: %s" % str(t))
-        self._check_retval(t)
+        t = self.call_vpp('acl_add_replace',
+                          acl_index=acl_index,
+                          tag=str(tag),
+                          r=rules,
+                          count=count)
         return t.acl_index
 
     def macip_acl_add(self, rules, count):
-        self.LOG.debug("Adding macip acl with rules %s count %s"
-                       % (rules, count))
-        t = self._vpp.macip_acl_add(count=count,
-                                    r=rules)
-        self.LOG.debug("macip ACL add_replace response: %s" % str(t))
-        self._check_retval(t)
+        t = self.call_vpp('macip_acl_add',
+                          count=count,
+                          r=rules)
         return t.acl_index
 
     def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
-        self.LOG.debug("Setting ACL vector %s on VPP interface %s"
-                       % (acls, sw_if_index))
-        t = self._vpp.acl_interface_set_acl_list(sw_if_index=sw_if_index,
-                                                 count=count,
-                                                 n_input=n_input,
-                                                 acls=acls)
-        self.LOG.debug("ACL set_acl_list_on_interface response: %s" % str(t))
-        self._check_retval(t)
-        return t.retval  # Return 0 on success
+        self.call_vpp('acl_interface_set_acl_list',
+                      sw_if_index=sw_if_index,
+                      count=count,
+                      n_input=n_input,
+                      acls=acls)
 
     def delete_acl_list_on_interface(self, sw_if_index):
-        self.LOG.debug("Deleting ACLs from VPP interface %s", sw_if_index)
-        t = self._vpp.acl_interface_set_acl_list(sw_if_index=sw_if_index,
-                                                 count=0,
-                                                 n_input=0,
-                                                 acls=[])
-        self.LOG.debug("Delete_acl_list_on_interface response: %s", str(t))
-        self._check_retval(t)
+        self.call_vpp('acl_interface_set_acl_list',
+                      sw_if_index=sw_if_index,
+                      count=0,
+                      n_input=0,
+                      acls=[])
 
     def set_macip_acl_on_interface(self, sw_if_index, acl_index):
-        self.LOG.debug("Setting macip acl %s on VPP interface %s"
-                       % (acl_index, sw_if_index))
-        t = self._vpp.macip_acl_interface_add_del(is_add=1,
-                                                  sw_if_index=sw_if_index,
-                                                  acl_index=acl_index)
-        self.LOG.debug("macip ACL set_acl_list_on_interface response: %s"
-                       % str(t))
-        self._check_retval(t)
-        return t.retval
+        self.call_vpp('macip_acl_interface_add_del',
+                      is_add=1,
+                      sw_if_index=sw_if_index,
+                      acl_index=acl_index)
 
     def delete_macip_acl_on_interface(self, sw_if_index, acl_index):
-        self.LOG.debug("Deleting macip acl %s on VPP interface %s",
-                       acl_index, sw_if_index)
-        t = self._vpp.macip_acl_interface_add_del(is_add=0,  # delete
-                                                  sw_if_index=sw_if_index,
-                                                  acl_index=acl_index)
-        self.LOG.debug("macip ACL delete_acl_list_on_interface response: %s",
-                       str(t))
-        self._check_retval(t)
+        self.call_vpp('macip_acl_interface_add_del',
+                          is_add=0,  # delete
+                          sw_if_index=sw_if_index,
+                          acl_index=acl_index)
 
     def delete_macip_acl(self, acl_index):
-        self.LOG.debug("Deleting macip acl index %s" % acl_index)
-        t = self._vpp.macip_acl_del(acl_index=acl_index)
-        self.LOG.debug("macip ACL delete response: %s" % str(t))
-        self._check_retval(t)
+        self.call_vpp('macip_acl_del',
+                      acl_index=acl_index)
 
     def acl_delete(self, acl_index):
-        self.LOG.debug("Deleting vpp acl index %s" % acl_index)
-        t = self._vpp.acl_del(acl_index=acl_index)
-        self.LOG.debug("ACL delete response: %s" % str(t))
-        self._check_retval(t)
+        self.call_vpp('acl_del',
+                      acl_index=acl_index)
 
     def get_acls(self):
-        self.LOG.debug("Getting the ACL dump")
-        t = self._vpp.acl_dump(acl_index=0xffffffff)
-        self.LOG.debug("ACL dump response: %s" % str(t))
+        t = self.call_vpp('acl_dump',
+                          acl_index=0xffffffff)
         return t
 
     def get_macip_acl_dump(self):
-        self.LOG.debug("Getting the MAC-IP Interface ACL dump")
-        t = self._vpp.macip_acl_interface_get()
-        self.LOG.debug("MAC-IP ACL dump response: %s" % str(t))
+        t = self.call_vpp('macip_acl_interface_get')
         return t
 
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
-#        t = self._vpp.vxlan_add_del_tunnel(
+#        t = self.call_vpp('vxlan_add_del_tunnel',
 #            True,  # is_add
 #            src_addr,
 #            bcast_addr,
 #            vrf_id,
 #            decap_next_index,   # what is this?
 #            vni)
-#
-#        self._check_retval(t)
 #
 #        return t.sw_if_index
     ########################################
@@ -536,47 +484,53 @@ class VPPInterface(object):
         self.set_vlan_tag_rewrite(if_id, L2_VTR_POP_1, 0, 0, 0)
 
     def set_vlan_tag_rewrite(self, if_id, vtr_op, push_dot1q, tag1, tag2):
-        t = self._vpp.l2_interface_vlan_tag_rewrite(
-            sw_if_index=if_id,
-            vtr_op=vtr_op,
-            push_dot1q=push_dot1q,
-            tag1=tag1,
-            tag2=tag2)
+        t = self.call_vpp('l2_interface_vlan_tag_rewrite',
+                          sw_if_index=if_id,
+                          vtr_op=vtr_op,
+                          push_dot1q=push_dot1q,
+                          tag1=tag1,
+                          tag2=tag2)
         self.LOG.info("Set subinterface vlan tag pop response: %s", str(t))
-
-        self._check_retval(t)
 
     def add_to_bridge(self, bridx, *ifidxes):
         for ifidx in ifidxes:
-            t = self._vpp.sw_interface_set_l2_bridge(
+            self.call_vpp(
+                'sw_interface_set_l2_bridge',
                 rx_sw_if_index=ifidx, bd_id=bridx,
-                bvi=False,                  # BVI (no thanks)
-                shg=0,                      # shared horizon group
-                enable=True)                # enable bridge mode
-            self._check_retval(t)
+                bvi=False,              # BVI (no thanks)
+                shg=0,                  # shared horizon group
+                enable=True)            # enable bridge mode
 
     def delete_from_bridge(self, *ifidxes):
         for ifidx in ifidxes:
-            t = self._vpp.sw_interface_set_l2_bridge(
+            self.call_vpp(
+                'sw_interface_set_l2_bridge',
                 rx_sw_if_index=ifidx,
-                bd_id=0,                    # no bridge id is necessary
-                bvi=False,                  # BVI (no thanks)
-                shg=0,                      # shared horizon group
-                enable=False)              # disable bridge mode (sets l3 mode)
-            self._check_retval(t)
+                bd_id=0,                # no bridge id is necessary
+                bvi=False,              # BVI (no thanks)
+                shg=0,                  # shared horizon group
+                enable=False)           # disable bridge mode (sets l3 mode)
 
     def ifup(self, *ifidxes):
+        """Bring a list of interfaces up
+
+        NB: NOT ATOMIC if multiple interfaces
+        """
         for ifidx in ifidxes:
-            self._vpp.sw_interface_set_flags(
-                sw_if_index=ifidx,
-                admin_up_down=1,
-                link_up_down=1,
-                deleted=0)  # err, I can set the delected flag?
+            self.call_vpp('sw_interface_set_flags',
+                          sw_if_index=ifidx,
+                          admin_up_down=1,
+                          link_up_down=1,
+                          deleted=0)
 
     def ifdown(self, *ifidxes):
+        """Bring a list of interfaces down
+
+        NB: NOT ATOMIC if multiple interfaces
+        """
         for ifidx in ifidxes:
-            self._vpp.sw_interface_set_flags(
-                sw_if_index=ifidx,
-                admin_up_down=0,
-                link_up_down=0,
-                deleted=0)  # err, I can set the delected flag?
+            self.call_vpp('sw_interface_set_flags',
+                          sw_if_index=ifidx,
+                          admin_up_down=0,
+                          link_up_down=0,
+                          deleted=0)
