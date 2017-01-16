@@ -21,10 +21,11 @@ import fnmatch
 import grp
 import os
 import pwd
-import time
 import vpp_papi
 
 L2_VTR_POP_1 = 3
+
+eventlet.monkey_patch()
 
 
 def mac_to_bytes(mac):
@@ -33,6 +34,33 @@ def mac_to_bytes(mac):
 
 def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
+
+
+class Serialize(object):
+    def __init__(self, instance, log):
+        self.api_lock = eventlet.semaphore.Semaphore(1)
+        # as we overload '__getattr__', fill the cache
+        # with api lock to be able to access to it
+        self.cache = {'api_lock': self.api_lock}
+        self.instance = instance
+        self.LOG = log
+
+    def __getattr__(self, name):
+        if name in self.cache:
+            return self.cache[name]
+
+        if hasattr(self.instance, name):
+            def locked(*args, **kwargs):
+                self.LOG.debug('call %s(args: %s, kwargs:%s)',
+                               str(name), str(args), str(kwargs))
+                with self.api_lock:
+                    vpp_func = getattr(self.instance, name)
+                    ret_val = vpp_func(*args, **kwargs)
+                return ret_val
+            self.cache[name] = locked
+            return self.cache[name]
+        else:
+            raise AttributeError
 
 
 def singleton(cls):
@@ -194,7 +222,7 @@ class VPPInterface(object):
             for filename in fnmatch.filter(filenames, '*.api.json'):
                 jsonfiles.append(os.path.join(root, filename))
 
-        self._vpp = vpp_papi.VPP(jsonfiles)
+        self._vpp = Serialize(vpp_papi.VPP(jsonfiles), log)
 
         # Sometimes a callback fires unexpectedly.  We need to catch them
         # because vpp_papi will traceback otherwise
@@ -238,6 +266,10 @@ class VPPInterface(object):
         - msg_name: name of the message type
         - data: the data within the message
         """
+        self.LOG.info('_cb: %s %s', msg_name, str(data))
+        if self._vpp.api_lock.locked():
+            self.LOG.debug('Callback while vpp_papi is beeing accessed.')
+
         for event in self.CallbackEvents:
             (unused, event_data_name) = event.value
             if msg_name == event_data_name:
@@ -271,7 +303,7 @@ class VPPInterface(object):
         while True:
             ifs = {}
             try:
-                time.sleep(1)  # TODO(ijw) - this needs a real callback
+                eventlet.sleep(1)  # TODO(ijw) - this needs a real callback
                 for name, data in self.get_vhostusers():
                     if data.sock_errno == 0:  # connected, near as we can tell
                         ifs[data.sw_if_index] = data
