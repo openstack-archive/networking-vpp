@@ -963,23 +963,16 @@ class VPPForwarder(object):
         LOG.debug("secgroup_watcher: Setting VPP acl vector %s with "
                   "n_input %s on sw_if_index %s"
                   % (acls, len(input_acls), sw_if_index))
-        status = self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
-                                                    count=len(acls),
-                                                    n_input=len(input_acls),
-                                                    acls=acls)
-        if status == 0:
-            LOG.debug("secgroup_watcher: Successfully set VPP acl vector %s "
-                      "with n_input %s on sw_if_index %s"
-                      % (acls, len(input_acls), sw_if_index))
-            self.port_vpp_acls[sw_if_index]['l34'] = acls
-            LOG.debug("secgroup_watcher: Current port acl_vector mappings %s"
-                      % str(self.port_vpp_acls))
-        else:
-            status = 1  # Set failure status code == 1
-            LOG.error("secgroup_watcher: Failed to set VPP acl vector %s "
-                      "with n_input %s on sw_if_index %s"
-                      % (acls, len(input_acls), sw_if_index))
-        return status
+        self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
+                                           count=len(acls),
+                                           n_input=len(input_acls),
+                                           acls=acls)
+        LOG.debug("secgroup_watcher: Successfully set VPP acl vector %s "
+                  "with n_input %s on sw_if_index %s"
+                  % (acls, len(input_acls), sw_if_index))
+        self.port_vpp_acls[sw_if_index]['l34'] = acls
+        LOG.debug("secgroup_watcher: Current port acl_vector mappings %s"
+                  % str(self.port_vpp_acls))
 
     def set_mac_ip_acl_on_vpp_port(self, mac_ips, sw_if_index):
         """Set the mac-filter on VPP port
@@ -1034,23 +1027,15 @@ class VPPForwarder(object):
                                            count=len(mac_ip_rules))
         LOG.debug("secgroup_watcher: Setting mac_ip_acl index %s "
                   "on interface %s" % (acl_index, sw_if_index))
-        status = self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
-                                                     acl_index=acl_index,
-                                                     )
-        if status == 0:
-            LOG.debug("secgroup_watcher: Successfully set macip acl %s on "
-                      "interface %s - got status %s" % (acl_index,
-                                                        sw_if_index,
-                                                        status))
-            if port_mac_ip_acl:  # Delete the previous macip ACL from VPP
-                self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
-            self.port_vpp_acls[sw_if_index]['l23'] = acl_index
-        else:
-            LOG.error("secgroup_watcher: Error setting macip acl %s on "
-                      "interface %s - got status %s" % (acl_index,
-                                                        sw_if_index,
-                                                        status))
-        return status
+        self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
+                                            acl_index=acl_index,
+                                            )
+        LOG.debug("secgroup_watcher: Successfully set macip acl %s on "
+                  "interface %s" % (acl_index,
+                                    sw_if_index))
+        if port_mac_ip_acl:  # Delete the previous macip ACL from VPP
+            self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
+        self.port_vpp_acls[sw_if_index]['l23'] = acl_index
 
     def remove_acls_on_vpp_port(self, sw_if_index):
         """Removes all L3 and L2 ACLS on the vpp port
@@ -1523,7 +1508,7 @@ class EtcdListener(object):
                           "- details %s" % (secgroup_ids, sw_if_index, e))
         LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
                   "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
-        return self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
+        self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
 
     def set_mac_ip_acl_on_port(self, mac_address, fixed_ips,
                                allowed_address_pairs, sw_if_index):
@@ -1552,7 +1537,7 @@ class EtcdListener(object):
         mac_ips = allowed_mac_ips + mac_ips + addr_pairs
         LOG.debug("port_watcher: setting mac-ip allowed address pairs %s "
                   "on port %s" % (mac_ips, sw_if_index))
-        return self.vppf.set_mac_ip_acl_on_vpp_port(mac_ips, sw_if_index)
+        self.vppf.set_mac_ip_acl_on_vpp_port(mac_ips, sw_if_index)
 
     def load_macip_acl_mapping(self):
         """Load the sw_if_index to mac_ip_acl index mappings on vpp.
@@ -1662,16 +1647,14 @@ class EtcdListener(object):
                                       (security_groups,
                                        props['iface_idx'],
                                        port))
-                            result = self.data.set_acls_on_port(
+                            self.data.set_acls_on_port(
                                 security_groups,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting secgroups "
-                                      "%s on sw_if_index %s for port %s "
-                                      "returned status code %s" %
+                                      "%s on sw_if_index %s for port %s " %
                                       (security_groups,
                                        props['iface_idx'],
-                                       port,
-                                       result))
+                                       port))
                             # Set Allowed address pairs and mac-spoof filter
                             aa_pairs = data.get('allowed_address_pairs', [])
                             LOG.debug("port_watcher: Setting allowed "
@@ -1680,18 +1663,17 @@ class EtcdListener(object):
                                       (aa_pairs,
                                        port,
                                        props['iface_idx']))
-                            result = self.data.set_mac_ip_acl_on_port(
+                            self.data.set_mac_ip_acl_on_port(
                                 data['mac_address'],
                                 data.get('fixed_ips'),
                                 aa_pairs,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting allowed-addr-"
-                                      "pairs %s on sw_if_index %s for port "
-                                      "%s returned status code %s" %
+                                      "pairs %s on sw_if_index %s for "
+                                      "port %s" %
                                       (aa_pairs,
                                        props['iface_idx'],
-                                       port,
-                                       result))
+                                       port))
                         self.data.vppf.vpp.ifup(props['iface_idx'])
                         # Clear ACLs on vhostuser port if port_security
                         # is disabled
@@ -1703,8 +1685,8 @@ class EtcdListener(object):
                                 props['iface_idx'])
 
                 else:
-                    LOG.warning('Unexpected key change in etcd port feedback, '
-                                'key %s', key)
+                    LOG.warning('Unexpected key change in etcd '
+                                'port feedback, key %s', key)
 
         LOG.debug("Spawning port_watcher")
         self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
