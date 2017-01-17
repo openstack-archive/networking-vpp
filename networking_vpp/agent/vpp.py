@@ -17,6 +17,7 @@
 import collections
 import enum
 import eventlet
+from eventlet import semaphore
 import fnmatch
 import grp
 import os
@@ -198,19 +199,25 @@ class VPPInterface(object):
 
         # Sometimes a callback fires unexpectedly.  We need to catch them
         # because vpp_papi will traceback otherwise
-        self._vpp.register_event_callback(self._cb)
+        self._vpp.register_event_callback(self._queue_cb)
 
         self.registered_callbacks = {}
         for event in self.CallbackEvents:
             self.registered_callbacks[event] = []
 
+        self.event_q_lock = semaphore.Semaphore()
+        self.event_q = []
+
         if vpp_cmd_queue_len is not None:
-            self._vpp.connect("python-VPPInterface", rx_qlen=vpp_cmd_queue_len)
+            self._vpp.connect("python-VPPInterface",
+                              rx_qlen=vpp_cmd_queue_len)
         else:
             self._vpp.connect("python-VPPInterface")
+
         eventlet.spawn_n(self.vpp_watcher_thread)
 
     ########################################
+
     class CallbackEvents(enum.Enum):
         """Enum of possible events from vpp.
 
@@ -232,17 +239,48 @@ class VPPInterface(object):
         VHOST_USER_CONNECT = (None,
                               'XXXvhost_user_connect')
 
-    def _cb(self, msg_name, data):
+    # Make a static lookup of message type -> event type
+    callback_lookup = {}
+    for event in CallbackEvents:
+        (unused, event_msg_name) = event.value
+        callback_lookup[event_msg_name] = event
+
+    def _queue_cb(self, msg_name, data):
+        """Queue a received callback
+
+        This is used from the callback of VPP.  In the callback,
+        the VPP library holds a lock on the response queue from
+        the VPP binary, and pretty much prevents anything else
+        from proceeding.  It's important that we get out of the
+        way as soon as possible and absolutely don't process
+        any VPP calls in the callback, so we queue the
+        message for later processing and return immediately.
+
+        TODO(ijw): this may still leave the possibility that
+        the thread yields.  If so, we need to request a change
+        from the VPP team.
+        """
+
+        with self.event_q_lock:
+            self.event_q.append((msg_name, data,))
+
+    def _fire_cb(self, msg_name, data):
         """VPP callback.
+
+        Fires event listeners registered with this class for
+        the type of event received.
+
+        This is called directly by VPP and indirectly by the
+        background watcher thread.
 
         - msg_name: name of the message type
         - data: the data within the message
         """
-        for event in self.CallbackEvents:
-            (unused, event_data_name) = event.value
-            if msg_name == event_data_name:
-                for callback in self.registered_callbacks[event]:
-                    callback(data)
+        event = self.callback_lookup.get(msg_name)
+        # Ignore unknown callbacks
+        if event is not None:
+            for callback in self.registered_callbacks[event]:
+                callback(data)
 
     def register_for_events(self, event, target):
         if target in self.registered_callbacks[event]:
@@ -267,11 +305,22 @@ class VPPInterface(object):
                 register_method(enable_disable=0, pid=os.getpid())
 
     def vpp_watcher_thread(self):
+        """Background thread to watch for significant changes in VPP
+
+        Watches data and fires off 'events' - like VPP's own events - to
+        users of this VPP class.  Ideally we would get VPP events
+        from this, and the code is designed to make it easy to convert
+        should such events become available, but right now some events
+        we want - specifically, 'has the vhostuser interface connected' -
+        are not sent asynchronously and we have to fake it.
+        """
         prev_seen = set()
         while True:
             ifs = {}
             try:
-                time.sleep(1)  # TODO(ijw) - this needs a real callback
+                active = False
+
+                # Spot vhostuser changes, specifically
                 for name, data in self.get_vhostusers():
                     if data.sock_errno == 0:  # connected, near as we can tell
                         ifs[data.sw_if_index] = data
@@ -279,10 +328,26 @@ class VPPInterface(object):
 
                 newly_seen = seen - prev_seen
                 for f in newly_seen:
-                    self._cb('XXXvhost_user_connect', ifs[f])
+                    self._fire_cb('XXXvhost_user_connect', ifs[f])
+                    active = True
                 prev_seen = seen
+
+                # See if anything is queued
+                events = []
+                with self.event_q_lock:
+                    events = self.event_q
+                    self.event_q = []
+
+                for (t, data) in events:
+                    self._fire_cb(t, data)
+                    active = True
+
+                if not active:
+                    # No change - we assume we've entered a period of
+                    # nothing much happening and pause before rechecking
+                    time.sleep(1)
             except Exception:
-                self.LOG.exception('Exception in vhostuser watcher thread')
+                self.LOG.exception('Exception in vpp watcher thread')
 
     ########################################
 
