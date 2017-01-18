@@ -148,6 +148,8 @@ the flavor::
 
   nova flavor-create m1.tiny.hugepage auto 512 0 1
   nova flavor-key m1.tiny.hugepage set  hw:mem_page_size=2048
+  neutron net-list | grep private
 
-  nova boot --image cirros-0.3.4-x86_64-uec --flavor m1.tiny.hugepage --nic net-name=private myvm
+  nova boot --image cirros-0.3.4-x86_64-uec --flavor m1.tiny.hugepage \
+      --nic net-id=32082ef7-9859-43fd-8662-b127270cea5c myvm
 
