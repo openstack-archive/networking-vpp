@@ -149,5 +149,10 @@ the flavor::
   nova flavor-create m1.tiny.hugepage auto 512 0 1
   nova flavor-key m1.tiny.hugepage set  hw:mem_page_size=2048
 
+  If using nova Liberty or older:
+  nova boot --image cirros-0.3.4-x86_64-uec --flavor m1.tiny.hugepage \
+      --nic net-id=<ID of network> myvm
+
+  else if using nova Mitaka or newer:
   nova boot --image cirros-0.3.4-x86_64-uec --flavor m1.tiny.hugepage --nic net-name=private myvm
 
