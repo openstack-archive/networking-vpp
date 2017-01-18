@@ -1596,7 +1596,7 @@ class EtcdListener(object):
                                 aa_pairs,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting allowed-addr-"
-                                      "pairs %s on sw_if_index %s for port "
+                                      "pairs %s on sw_if_index %s for port %s"
                                       "%s returned status code %s" %
                                       (aa_pairs,
                                        props['iface_idx'],
