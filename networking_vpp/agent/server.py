@@ -291,6 +291,9 @@ class VPPForwarder(object):
         elif net_type == 'vlan':
             LOG.debug('Adding upstream interface %s vlan %s '
                       'to bridge for vlan networking', intf, seg_id)
+            # Besides the vlan sub-interface we need to also bring
+            # up the primary uplink interface for Vlan networking
+            self.vpp.ifup(ifidx)
             if_upstream = self.vpp.get_vlan_subif(intf, seg_id)
             if if_upstream is None:
                 if_upstream = self.vpp.create_vlan_subif(ifidx, seg_id)
