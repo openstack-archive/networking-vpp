@@ -210,9 +210,11 @@ class VPPInterface(object):
 
         if vpp_cmd_queue_len is not None:
             self._vpp.connect("python-VPPInterface",
+                              mode=vpp_papi.VPP.VPP_MODE_SYNC,
                               rx_qlen=vpp_cmd_queue_len)
         else:
-            self._vpp.connect("python-VPPInterface")
+            self._vpp.connect("python-VPPInterface",
+                              mode=vpp_papi.VPP.VPP_MODE_SYNC)
 
         eventlet.spawn_n(self.vpp_watcher_thread)
 
