@@ -46,6 +46,19 @@ from neutron.plugins.ml2 import driver_api as api
 
 eventlet.monkey_patch()
 
+# Liberty doesn't support precommit events.  We fix that here.
+# 'commit time' is defined (by us alone) as 'when you should
+# be using a callback to commit things'
+try:
+    CREATE_COMMIT_TIME = events.PRECOMMIT_CREATE
+    UPDATE_COMMIT_TIME = events.PRECOMMIT_UPDATE
+    DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
+except AttributeError:
+    # Liberty fallbacks:
+    CREATE_COMMIT_TIME = events.AFTER_CREATE
+    UPDATE_COMMIT_TIME = events.AFTER_UPDATE
+    DELETE_COMMIT_TIME = events.AFTER_DELETE
+
 LOG = logging.getLogger(__name__)
 
 
@@ -458,50 +471,82 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
 
         LOG.info("ML2_VPP: Security groups feature is enabled")
-        registry.subscribe(self.process_secgroup_events,
-                           resources.SECURITY_GROUP,
-                           events.PRECOMMIT_DELETE)
-        registry.subscribe(self.process_secgroup_events,
+        # Liberty is not capable of trapping precommits, so we can't
+        # register for them in that circumstance.
+        try:
+            events.PRECOMMIT_DELETE
+            do_precommit = True
+        except AttributeError:  # on PRECOMMIT_DELETE not being available
+            do_precommit = False
+
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP,
+                               events.PRECOMMIT_DELETE)
+        registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP,
                            events.AFTER_DELETE)
         # NB security group rules can only be created or deleted
         # We don't trap update, therefore
-        registry.subscribe(self.process_secgroup_events,
-                           resources.SECURITY_GROUP_RULE,
-                           events.PRECOMMIT_CREATE)
-        registry.subscribe(self.process_secgroup_events,
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP_RULE,
+                               events.PRECOMMIT_CREATE)
+        registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_CREATE)
-        registry.subscribe(self.process_secgroup_events,
-                           resources.SECURITY_GROUP_RULE,
-                           events.PRECOMMIT_DELETE)
-        registry.subscribe(self.process_secgroup_events,
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP_RULE,
+                               events.PRECOMMIT_DELETE)
+        registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_DELETE)
 
-    def process_secgroup_events(self, resource, event, trigger, **kwargs):
-        """Callback for handling security group change events"""
+    def process_secgroup_after(self, resource, event, trigger, **kwargs):
+        """Callback for handling security group commit-complete events
+
+        This is when we should tell other things that a change has
+        happened and has been recorded permanently in the DB.
+        """
+        # In Liberty, this is the only callback that's called.
+        # We use our own event names, which will identify AFTER_*
+        # events as the right time to commit, so in this case we
+        # simply call the commit function ourselves.
+
+        # This is not perfect - since we're not committing in one
+        # transaction we can commit the secgroup change but fail to
+        # propagate it to the journal and from there  to etcd on a
+        # crash.  It's all we can do for Liberty.
+        if events.AFTER_CREATE == CREATE_COMMIT_TIME:
+            self.process_secgroup_commit(resource, event, trigger, **kwargs)
+
+        # Whatever the object that caused this, we've put something
+        # in the journal and now need to nudge the communicator
+        self.kick()
+
+    def process_secgroup_commit(self, resource, event, trigger, **kwargs):
+        """Callback for handling security group commit events
+
+        This is the time at which we should be committing any of our
+        own auxiliary changes to the DB.
+        """
         LOG.debug("ML2_VPP: Received event %s notification for resource"
                   " %s with kwargs %s" % (event, resource, kwargs))
         context = kwargs['context']
-        if event in (
-                events.AFTER_CREATE,
-                events.AFTER_DELETE,
-                events.AFTER_UPDATE):
-            # Whatever the object that caused this, we've put something
-            # in the journal and now need to nudge the communicator
-            self.kick()
 
-        elif resource == resources.SECURITY_GROUP:
-            # We only subscribe to deletes
+        if resource == resources.SECURITY_GROUP:
+            # We only subscribe to deletes - nothing else changes
+            # the end result of firewalling.
             self.delete_secgroup_from_etcd(kwargs['security_group_id'])
 
         elif resource == resources.SECURITY_GROUP_RULE:
             # We store security groups with a composite of all their
             # rules.  So in this case we track down the affected
             # rule and update its entire data.
+            # NB: rules are never updated.
 
-            if event == events.PRECOMMIT_DELETE:
+            if event == DELETE_COMMIT_TIME:
                 rule_id = kwargs['security_group_rule_id']
                 rule = self.get_secgroup_rule(rule_id, context)
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
@@ -513,7 +558,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 else:
                     LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
                               "rule-id %s" % (security_group_id, rule_id))
-            elif event == events.PRECOMMIT_CREATE:
+            elif event == CREATE_COMMIT_TIME:
                 rule = kwargs['security_group_rule']
                 security_group_id = rule['security_group_id']
             else:
