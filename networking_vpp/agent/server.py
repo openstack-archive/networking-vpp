@@ -1382,37 +1382,54 @@ class EtcdListener(object):
                   "to vpp-acl mappings")
         global secgroups
         secgroups = {}
-        # acl_map: {'secgroup_id:direction' : acl_idx}
-        # direction == 0 for ingress and direction == 1 for egress
+        # Example of the acl_map data
+        # acl_map: {'net-vpp.secgroup:<uuid>.from-vpp' : acl_idx
+        #           'net-vpp.secgroup:<uuid>.to-vpp' : acl_idx,
+        #           'net-vpp.common_spoof.from-vpp': acl_idx }
         acl_map = self.vppf.get_secgroup_acl_map()
-        try:
-            for item in acl_map:
-                secgroup_id, direction = decode_secgroup_tag(item)
-                acl_idx = acl_map[item]
+        for item, acl_idx in acl_map.items():
+            # Tags can be one of ours, or one something else set
+            # decode_* functions attempt to match the tags to one of our
+            # formats, and returns None if that's not a format it matches.
+
+            secgroup_id, direction = decode_secgroup_tag(item)
+            if secgroup_id is None:
+                # Check if this is one of our common spoof ACL tag
+                # If so, get the tag direction and set the secgroup_id to
+                # COMMON_SPOOF_TAG so the correct spoof ACL can be read
+                direction = decode_common_spoof_tag(item)
+                if direction is not None:
+                    # But it is a valid spoof tag
+                    secgroup_id = COMMON_SPOOF_TAG
+                    ingress = direction == VPP_TO_VM
+            else:  # one of our valid secgroup ACL tag
                 ingress = direction == VPP_TO_VM
-                vpp_acl = secgroups.get(secgroup_id)
-                if not vpp_acl:  # create a new secgroup to acl mapping
-                    if ingress:  # create partial ingress acl mapping
-                        secgroups[secgroup_id] = VppAcl(acl_idx, 0xffffffff)
-                    else:  # create partial egress ACL mapping
-                        secgroups[secgroup_id] = VppAcl(0xffffffff, acl_idx)
-                else:  # secgroup in map with one acl_idx, update the other idx
-                    if ingress:  # replace ingress ACL idx
-                        secgroups[secgroup_id] = vpp_acl._replace(
-                            in_idx=acl_idx)
-                    else:  # replace egress ACL idx
-                        secgroups[secgroup_id] = vpp_acl._replace(
-                            out_idx=acl_idx)
+
+            if secgroup_id is None:
+                # This is neither a security group or a spoof
+                # - so it's not installed by the mechdriver at all
+                continue
+
+            vpp_acl = secgroups.get(secgroup_id,
+                                    VppAcl(0xffffffff, 0xffffffff))
+            # secgroup_id will be missing first pass, and should be
+            # completed on the second round through.
+            if ingress:
+                secgroups[secgroup_id] = vpp_acl._replace(
+                    in_idx=acl_idx)
+            else:
+                secgroups[secgroup_id] = vpp_acl._replace(
+                    out_idx=acl_idx)
+
             LOG.debug("secgroup_watcher: secgroup to VPP ACL mapping %s "
                       "constructed by reading "
                       "acl tags and building an acl_map %s"
                       % (secgroups, acl_map))
-            if not secgroups:
-                LOG.debug("secgroup_watcher: We have an empty secgroups "
-                          "to acl mapping {}. Possible reason: vpp "
-                          "may have been restarted on host.")
-        except ValueError:
-            pass  # Any tag with incorrect format can generate this - ignore
+
+        if secgroups == {}:
+            LOG.debug("secgroup_watcher: We have an empty secgroups "
+                      "to acl mapping {}. Possible reason: vpp "
+                      "may have been restarted on host.")
 
     def spoof_filter_on_host(self):
         """Deploy anti-spoofing ingress and egress ACLs on VPP.
