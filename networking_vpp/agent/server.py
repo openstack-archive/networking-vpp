@@ -52,7 +52,9 @@ from oslo_log import log as logging
 
 
 LOG = logging.getLogger(__name__)
-eventlet.monkey_patch()
+# We actually need to co-operate with a threaded callback in VPP, so
+# don't monkey patch the thread operations.
+eventlet.monkey_patch(thread=False)
 # A model of a bi-directional VPP ACL corresponding to a secgroup
 VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
 # a Mapping of security groups to VPP ACLs
