@@ -1382,14 +1382,24 @@ class EtcdListener(object):
                   "to vpp-acl mappings")
         global secgroups
         secgroups = {}
-        # acl_map: {'secgroup_id:direction' : acl_idx}
-        # direction == 0 for ingress and direction == 1 for egress
+        # Example of the acl_map data
+        # acl_map: {'net-vpp.secgroup:<uuid>.from-vpp' : acl_idx
+        #           'net-vpp.secgroup:<uuid>.to-vpp' : acl_idx,
+        #           'net-vpp.common_spoof.from-vpp': acl_idx }
         acl_map = self.vppf.get_secgroup_acl_map()
         try:
             for item in acl_map:
                 secgroup_id, direction = decode_secgroup_tag(item)
                 acl_idx = acl_map[item]
-                ingress = direction == VPP_TO_VM
+                # Check if this is one of our common spoof ACL tag
+                # If so, get the tag direction and set the secgroup_id to
+                # COMMON_SPOOF_TAG so the correct spoof ACL can be read
+                if secgroup_id is None or secgroup_id == COMMON_SPOOF_TAG:
+                    ingress = VPP_TO_VM == decode_common_spoof_tag(item)
+                    if secgroup_id is None:
+                        secgroup_id = COMMON_SPOOF_TAG
+                else:  # one of our valid secgroup ACL tag
+                    ingress = direction == VPP_TO_VM
                 vpp_acl = secgroups.get(secgroup_id)
                 if not vpp_acl:  # create a new secgroup to acl mapping
                     if ingress:  # create partial ingress acl mapping
