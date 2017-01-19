@@ -39,9 +39,9 @@ from neutron.callbacks import registry
 from neutron.callbacks import resources
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
-from neutron.extensions import portbindings
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
+from neutron_lib.api.definitions import portbindings
 
 
 eventlet.monkey_patch()
