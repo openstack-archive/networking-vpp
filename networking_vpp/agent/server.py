@@ -52,16 +52,23 @@ from oslo_log import log as logging
 
 
 LOG = logging.getLogger(__name__)
-eventlet.monkey_patch()
+
+# We actually need to co-operate with a threaded callback in VPP, so
+# don't monkey patch the thread operations.
+eventlet.monkey_patch(thread=False)
+
 # A model of a bi-directional VPP ACL corresponding to a secgroup
 VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
+
 # a Mapping of security groups to VPP ACLs
 secgroups = {}     # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
+
 # TODO(najoy) Expose the below as a config option
 # Enable stateful reflexive ACLs in VPP which adds automatic reverse rules
 # When False, reverse rules are added by the vpp-agent and
 # VPP does not maintain any session states
 reflexive_acls = True
+
 # Register security group option
 security_group_opts = [
     cfg.BoolOpt('enable_security_group', default=True,
@@ -72,8 +79,6 @@ cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
 # config_opts is required to configure the options within it, but
 # not referenced from here, so shut up tox:
 assert config_opts
-
-eventlet.monkey_patch()
 
 # Apply monkey patch if necessary
 compat.monkey_patch()
