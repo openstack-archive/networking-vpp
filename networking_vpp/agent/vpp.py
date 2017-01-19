@@ -17,11 +17,11 @@
 import collections
 import enum
 import eventlet
-from eventlet import semaphore
 import fnmatch
 import grp
 import os
 import pwd
+from threading import Lock
 import time
 import vpp_papi
 
@@ -177,7 +177,8 @@ class VPPInterface(object):
         for event in self.CallbackEvents:
             self.registered_callbacks[event] = []
 
-        self.event_q_lock = semaphore.Semaphore()
+        # NB: a real threading lock
+        self.event_q_lock = Lock()
         self.event_q = []
 
         if vpp_cmd_queue_len is not None:
@@ -245,9 +246,10 @@ class VPPInterface(object):
         any VPP calls in the callback, so we queue the
         message for later processing and return immediately.
 
-        TODO(ijw): this may still leave the possibility that
-        the thread yields.  If so, we need to request a change
-        from the VPP team.
+        NB: This is called in a Python thread and not an eventlet
+        thread - it is critical that event_q_lock is *not*
+        monkeypatched, as the eventlet version won't be able
+        to schedule another greenthread if it blocks.
         """
 
         with self.event_q_lock:
