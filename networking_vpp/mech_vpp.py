@@ -44,8 +44,6 @@ from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
 
-eventlet.monkey_patch()
-
 LOG = logging.getLogger(__name__)
 
 
