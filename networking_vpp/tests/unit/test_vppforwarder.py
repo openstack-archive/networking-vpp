@@ -18,6 +18,7 @@ import sys
 import time
 import uuid as uuidgen
 sys.modules['vpp_papi'] = mock.MagicMock()
+sys.modules['vpp'] = mock.MagicMock()
 sys.modules['threading'] = mock.MagicMock()
 from networking_vpp.agent import server
 from neutron.tests import base
