@@ -107,12 +107,16 @@ def get_vpptap_name(uuid):
 
 ######################################################################
 
+
+def VPP_TAG(tag):
+    return 'net-vpp.' + tag
+
 # Interface tagging naming scheme :
 # tap and vhost interfaces: port:<uuid>
 # Uplink Connectivity: uplink:<net_type>.<seg_id>
 
-TAG_UPLINK_PREFIX = 'uplink:'
-TAG_L2IFACE_PREFIX = 'port:'
+TAG_UPLINK_PREFIX = VPP_TAG('uplink:')
+TAG_L2IFACE_PREFIX = VPP_TAG('port:')
 
 
 def get_vhostuser_name(uuid):
@@ -149,6 +153,76 @@ def decode_port_tag(tag):
                  tag)
     return None if m is None else m.group(1)
 
+
+######################################################################
+
+# Security group tag formats used to tag ACLs in VPP for
+# re-identification on restart
+
+# When leaving VPP and entering the VM
+VPP_TO_VM = 1
+# When leaving the VM and entering VPP
+VM_TO_VPP = 0
+VPP_TO_VM_MARK = 'from-vpp'
+VM_TO_VPP_MARK = 'to-vpp'
+
+
+def VPP_TO_VM_TAG(tag):
+    return tag + '.' + VPP_TO_VM_MARK
+
+
+def VM_TO_VPP_TAG(tag):
+    return tag + '.' + VM_TO_VPP_MARK
+
+
+def DIRECTION_TAG(tag, is_vm_ingress):
+    if is_vm_ingress:
+        return VPP_TO_VM_TAG(tag)
+    else:
+        return VM_TO_VPP_TAG(tag)
+
+COMMON_SPOOF_TAG = VPP_TAG('common_spoof')
+COMMON_SPOOF_VPP_TO_VM_TAG = VPP_TO_VM_TAG(COMMON_SPOOF_TAG)
+COMMON_SPOOF_VM_TO_VPP_TAG = VM_TO_VPP_TAG(COMMON_SPOOF_TAG)
+
+
+def common_spoof_tag(is_vm_ingress):
+    if is_vm_ingress:
+        return COMMON_SPOOF_VPP_TO_VM_TAG
+    else:
+        return COMMON_SPOOF_VM_TO_VPP_TAG
+
+
+def decode_common_spoof_tag(tag):
+    """Work out if this tag is one of our common spoof filter tags
+
+    """
+    if COMMON_SPOOF_VPP_TO_VM_TAG == tag:
+        return 1
+    if COMMON_SPOOF_VM_TO_VPP_TAG == tag:
+        return 0
+
+    return None
+
+SECGROUP_TAG = VPP_TAG('secgroup:')
+
+
+def secgroup_tag(secgroup_id, is_vm_ingress):
+    base_tag = SECGROUP_TAG + secgroup_id
+    return DIRECTION_TAG(base_tag, is_vm_ingress)
+
+
+def decode_secgroup_tag(tag):
+    # Matches the formats constructed earlier
+    m = re.match('^' + SECGROUP_TAG + '(' + n_const.UUID_PATTERN + ')\.(.*)$',
+                 tag)
+    if m:
+        secgroup_id = m.group(1)
+        dirmark = m.group(2)
+        is_vm_ingress = dirmark == VPP_TO_VM_MARK
+        return secgroup_id, is_vm_ingress
+
+    return None, None
 
 ######################################################################
 
@@ -750,7 +824,7 @@ class VPPForwarder(object):
         return acl_rule
 
     def acl_add_replace_on_host(self, secgroup):
-        """Adds/Replaces the secgroup ACL on host.
+        """Adds/Replaces the secgroup ACL within VPP
 
         Arguments:
         secgroup - SecurityGroup NamedTuple object
@@ -792,14 +866,14 @@ class VPPForwarder(object):
                   % (in_acl_rules, secgroup.id))
         LOG.debug("secgroup_watcher:egress ACL rules %s for secgroup %s"
                   % (out_acl_rules, secgroup.id))
-        # A tag of secgroup_id:0 denotes ingress acl
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
-                                              tag="%s:%s" % (secgroup.id, 0),
+                                              tag=secgroup_tag(secgroup.id,
+                                                               VPP_TO_VM),
                                               rules=in_acl_rules,
                                               count=len(in_acl_rules))
-        # A tag of secgroup_id:1 denotes egress acl
         out_acl_idx = self.vpp.acl_add_replace(acl_index=out_acl_idx,
-                                               tag="%s:%s" % (secgroup.id, 1),
+                                               tag=secgroup_tag(secgroup.id,
+                                                                VM_TO_VPP),
                                                rules=out_acl_rules,
                                                count=len(out_acl_rules))
         LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
@@ -831,23 +905,23 @@ class VPPForwarder(object):
     def get_secgroup_acl_map(self):
         """Read VPP ACL tag data, construct and return an acl_map
 
-        acl_map: {'secgroup_id:direction' : acl_idx}
+        acl_map: {secgroup_tag : acl_idx}
         """
         acl_map = {}
         try:
-            for acl in self.vpp.get_acls():
-                # only the first 38 chars of the tag are of interest to us
-                # if spoofing-acl only the first 6 chars of the tags are
-                # of interest
-                try:
-                    if acl.tag[:5] in 'FFFF:':
-                        acl_map[acl.tag[:6]] = acl.acl_index
-                    else:
-                        acl_map[acl.tag[:38]] = acl.acl_index
-                except (KeyError, AttributeError):
-                    # Not all ACLs have tags, but ACLs we own will have them
-                    # Ignore any system-configured ACLs
-                    pass
+            for acl_index, tag in self.vpp.get_acl_tags():
+                # TODO(ijw): identify that this is one of our tags
+                id, direction = decode_secgroup_tag(tag)
+                if id is not None:
+                    acl_map[tag] = acl_index
+                else:
+                    direction = decode_common_spoof_tag(tag)
+                    if direction is not None:
+                        acl_map[tag] = acl_index
+
+                # Not all ACLs have tags, but ACLs we own will
+                # have them and they will be decodeable.  Ignore
+                # any externally created ACLs, they're not our problem.
 
             LOG.debug("secgroup_watcher: created acl_map %s from "
                       "vpp acl tags" % acl_map)
@@ -1010,27 +1084,27 @@ class VPPForwarder(object):
     def spoof_filter_on_host(self):
         """Adds a spoof filter ACL on host if not already present.
 
-        A spoof filter is identified by the ID: "FFFF" in secgroups mapping
+        A spoof filter is identified by a common spoof tag mark.
         If not present create the filter on host
         Return: VppAcl(in_idx, out_idx)
         """
         # Check if we have an existing spoof filter deployed on vpp
-        spoof_acl = secgroups.get('FFFF')
+        spoof_acl = secgroups.get(COMMON_SPOOF_TAG)
         if not spoof_acl:  # Deploy new spoof_filter ingress+egress vpp acls
             spoof_filter_rules = self.get_spoof_filter_rules()
             LOG.debug("secgroup_watcher: adding a new spoof filter acl "
                       "with rules %s" % spoof_filter_rules)
-            # A tag of FFFF:0 denotes ingress spoof acl
+
             in_acl_idx = self.vpp.acl_add_replace(
                 acl_index=0xffffffff,
-                tag="FFFF:0",
+                tag=common_spoof_tag(VPP_TO_VM),
                 rules=spoof_filter_rules['ingress'],
                 count=len(spoof_filter_rules['ingress'])
                 )
-            # A tag of FFFF:1 denotes egress spoof acl
+
             out_acl_idx = self.vpp.acl_add_replace(
                 acl_index=0xffffffff,
-                tag="FFFF:1",
+                tag=common_spoof_tag(VM_TO_VPP),
                 rules=spoof_filter_rules['egress'],
                 count=len(spoof_filter_rules['egress'])
                 )
@@ -1041,7 +1115,7 @@ class VPPForwarder(object):
                     and spoof_acl.out_idx != 0xFFFFFFFF):
                 LOG.debug("secgroup_watcher: adding spoof_acl %s to secgroup "
                           "mapping %s" % (str(spoof_acl), secgroups))
-                secgroups['FFFF'] = spoof_acl
+                secgroups[COMMON_SPOOF_TAG] = spoof_acl
                 LOG.debug("secgroup_watcher: current secgroup mapping: %s"
                           % secgroups)
             else:
@@ -1299,7 +1373,6 @@ class EtcdListener(object):
 
         Get a dump of existing vpp acls
         Read tag info
-        Tag format: secgroup_id:0 for in_idx && secgroup_id:1 for out_idx
         populate secgroups data structure
         secgroups = {secgroup_id : VppAcl(in_idx, out_idx)}
         """
@@ -1314,9 +1387,9 @@ class EtcdListener(object):
         acl_map = self.vppf.get_secgroup_acl_map()
         try:
             for item in acl_map:
-                secgroup_id, direction = item.split(":")
+                secgroup_id, direction = decode_secgroup_tag(item)
                 acl_idx = acl_map[item]
-                ingress = True if int(direction) == 0 else False
+                ingress = direction == VPP_TO_VM
                 vpp_acl = secgroups.get(secgroup_id)
                 if not vpp_acl:  # create a new secgroup to acl mapping
                     if ingress:  # create partial ingress acl mapping
