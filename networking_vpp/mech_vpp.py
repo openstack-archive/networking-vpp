@@ -480,6 +480,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if do_precommit:
             registry.subscribe(self.process_secgroup_commit,
                                resources.SECURITY_GROUP,
+                               events.PRECOMMIT_CREATE)
+        registry.subscribe(self.process_secgroup_after,
+                           resources.SECURITY_GROUP,
+                           events.AFTER_CREATE)
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP,
                                events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP,
@@ -536,9 +543,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
         security_group_id = None
         deleted_rule_id = None
         if resource == resources.SECURITY_GROUP:
-            # We only subscribe to deletes - nothing else changes
-            # the end result of firewalling.
-            self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            if event == DELETE_COMMIT_TIME:
+                self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            elif event == CREATE_COMMIT_TIME:
+                # When Neutron creates a security group it also
+                # attaches rules to it.  Sync the rules.
+                security_group_id = kwargs['security_group_id']
 
         elif resource == resources.SECURITY_GROUP_RULE:
             # We store security groups with a composite of all their
