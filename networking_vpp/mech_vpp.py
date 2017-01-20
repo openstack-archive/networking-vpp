@@ -656,6 +656,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         'icmpv6': 58}[rule['protocol']]
         else:
             protocol = rule['protocol']
+        # If IPv6 and protocol == icmp, convert protocol to icmpv6
+        if is_ipv6 and protocol == 1:
+            protocol = 58
         # Neutron represents any ip address by setting one
         # or both of the of the below fields to None
         # VPP uses all zeros to represent any Ipv4/IpV6 address
