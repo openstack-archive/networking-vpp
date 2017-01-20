@@ -1076,47 +1076,53 @@ class VPPForwarder(object):
         """Adds a spoof filter ACL on host if not already present.
 
         A spoof filter is identified by a common spoof tag mark.
-        If not present create the filter on host
+        If not present create the filter on VPP, If it is present, replace
+        it for good measure to ensure that the correct anti-spoof rules
+        are always applied.
+
         Return: VppAcl(in_idx, out_idx)
         """
         # Check if we have an existing spoof filter deployed on vpp
         spoof_acl = secgroups.get(COMMON_SPOOF_TAG)
-        if not spoof_acl:  # Deploy new spoof_filter ingress+egress vpp acls
-            spoof_filter_rules = self.get_spoof_filter_rules()
-            LOG.debug("secgroup_watcher: adding a new spoof filter acl "
-                      "with rules %s" % spoof_filter_rules)
-
-            in_acl_idx = self.vpp.acl_add_replace(
-                acl_index=0xffffffff,
-                tag=common_spoof_tag(VPP_TO_VM),
-                rules=spoof_filter_rules['ingress'],
-                count=len(spoof_filter_rules['ingress'])
-                )
-
-            out_acl_idx = self.vpp.acl_add_replace(
-                acl_index=0xffffffff,
-                tag=common_spoof_tag(VM_TO_VPP),
-                rules=spoof_filter_rules['egress'],
-                count=len(spoof_filter_rules['egress'])
-                )
-            LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
-                      "for spoof filter" % (in_acl_idx, out_acl_idx))
-            spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
-            if (spoof_acl.in_idx != 0xFFFFFFFF
-                    and spoof_acl.out_idx != 0xFFFFFFFF):
-                LOG.debug("secgroup_watcher: adding spoof_acl %s to secgroup "
-                          "mapping %s" % (str(spoof_acl), secgroups))
-                secgroups[COMMON_SPOOF_TAG] = spoof_acl
-                LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                          % secgroups)
-            else:
-                LOG.error("secgroup_watcher: could not add a valid ingress/"
-                          "egress spoof acl in VPP. We got an invalid acl "
-                          "index %s from vpp" % str(spoof_acl))
+        # Get the current anti-spoof filter rules. If a spoof filter is
+        # present replace rules for good measure, else create a new
+        # spoof filter
+        spoof_filter_rules = self.get_spoof_filter_rules()
+        if spoof_acl:
+            LOG.debug("secgroup_watcher: replacing existing spoof acl "
+                      "indices [in_idx, out_idx] = %s with rules %s",
+                      [spoof_acl.in_idx, spoof_acl.out_idx],
+                      spoof_filter_rules)
+            in_acl_idx, out_acl_idx = spoof_acl.in_idx, spoof_acl.out_idx
         else:
-            LOG.debug("secgroup_watcher: found an existing spoof acl "
-                      "in vpp with indices [in_idx, out_idx] = %s"
-                      % [spoof_acl.in_idx, spoof_acl.out_idx])
+            LOG.debug("secgroup_watcher: adding a new spoof filter acl "
+                      "with rules %s", spoof_filter_rules)
+            in_acl_idx = out_acl_idx = 0xffffffff
+
+        in_acl_idx = self.vpp.acl_add_replace(
+            acl_index=in_acl_idx,
+            tag=common_spoof_tag(VPP_TO_VM),
+            rules=spoof_filter_rules['ingress'],
+            count=len(spoof_filter_rules['ingress'])
+            )
+
+        out_acl_idx = self.vpp.acl_add_replace(
+            acl_index=out_acl_idx,
+            tag=common_spoof_tag(VM_TO_VPP),
+            rules=spoof_filter_rules['egress'],
+            count=len(spoof_filter_rules['egress'])
+            )
+        LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
+                  "for the current spoof filter", in_acl_idx, out_acl_idx)
+        # Add the new spoof ACL to secgroups mapping if it is valid
+        if (spoof_acl.in_idx != 0xFFFFFFFF
+                and spoof_acl.out_idx != 0xFFFFFFFF and not spoof_acl):
+            spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
+            LOG.debug("secgroup_watcher: adding spoof_acl %s to secgroup "
+                      "mapping %s", str(spoof_acl), secgroups)
+            secgroups[COMMON_SPOOF_TAG] = spoof_acl
+            LOG.debug("secgroup_watcher: current secgroup mapping: %s",
+                      secgroups)
         return spoof_acl
 
     def _pack_address(self, ip_addr):
@@ -1207,6 +1213,9 @@ class VPPForwarder(object):
                           58, ICMP_RA, ICMP_RA, 0, 255),
             _compose_rule(1, 1, '::', 0, '::', 0,
                           58, 0, 255, 0, 255),
+            # Permit TCP port 80 traffic to 169.254.169.254/32 for metadata
+            _compose_rule(1, 0, '0.0.0.0', 0, '169.254.169.254', 32,
+                          6, 0, 65535, 80, 80),
             ]
 
         return {'ingress': ingress_rules,
