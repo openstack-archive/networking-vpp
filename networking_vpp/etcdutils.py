@@ -96,10 +96,17 @@ class EtcdWatcher(object):
                 # to return can lead to timeouts much longer than you
                 # might expect.  So we watch for a timeout for
                 # ourselves as well.
-                with eventlet.Timeout(self.heartbeat):
+
+                # Here, we use both etcd Client timeout and eventlet timeout
+                # As etcd.Client timeout is not reliable, enforce
+                # the timeout with eventlet.Timeout
+                # Most of the time, we timeout thanks to etcd client,
+                # if we timeout due to eventlet, we have an ugly error message
+                with eventlet.Timeout(self.heartbeat + 5):
                     rv = self.etcd_client.watch(self.watch_path,
                                                 recursive=True,
-                                                index=self.tick)
+                                                index=self.tick,
+                                                timeout=self.heartbeat)
 
                 vals = [rv]
 
