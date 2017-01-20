@@ -39,6 +39,7 @@ from neutron.callbacks import registry
 from neutron.callbacks import resources
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
+from neutron.db.models import securitygroup
 from neutron.extensions import portbindings
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
@@ -298,6 +299,10 @@ class VPPMechanismDriver(api.MechanismDriver):
 
     def ensure_secgroups_in_etcd(self, port_context):
         """Ensure secgroup key-value is present in etcd if enabled"""
+
+        # TODO(ijw): we will change things so that we populate the initial
+        # security group rules up front and so that the agent can deal with
+        # secgroups arriving after ports, but for now this is a workaround.
         if self.communicator.secgroup_enabled:
             sgids = port_context.current.get('security_groups', [])
             for sgid in sgids:
@@ -305,8 +310,8 @@ class VPPMechanismDriver(api.MechanismDriver):
                     LOG.debug("ML2_VPP: Update port postcommit "
                               "writing missing secgroup %s to etcd" % sgid)
                     self.communicator.send_sg_updates(
-                        [sgid],
-                        port_context._plugin_context
+                        port_context._plugin_context,
+                        [sgid]
                         )
 
 
@@ -480,6 +485,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if do_precommit:
             registry.subscribe(self.process_secgroup_commit,
                                resources.SECURITY_GROUP,
+                               events.PRECOMMIT_CREATE)
+        registry.subscribe(self.process_secgroup_after,
+                           resources.SECURITY_GROUP,
+                           events.AFTER_CREATE)
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP,
                                events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP,
@@ -533,12 +545,40 @@ class EtcdAgentCommunicator(AgentCommunicator):
                   " %s with kwargs %s" % (event, resource, kwargs))
         context = kwargs['context']
 
-        security_group_id = None
-        deleted_rule_id = None
+        # Whatever we're working from should have a resource ID
+        # in this form, if it exists at all.  Alternatively, it may
+        # be that there's no ID (because the row is freshly created).
+        res = kwargs.get(resource)
+        res_id = kwargs.get("%s_id" % resource)
+        if res_id is None:
+            res_id = res.get('id')
+
+        new_objects = context.session.new
+
+        changed_sgids = []
+        deleted_rules = []
+
         if resource == resources.SECURITY_GROUP:
-            # We only subscribe to deletes - nothing else changes
-            # the end result of firewalling.
-            self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            if event == DELETE_COMMIT_TIME:
+                self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            elif event == CREATE_COMMIT_TIME:
+                # When Neutron creates a security group it also
+                # attaches rules to it.  We need to sync the rules.
+
+                # Also, the SG passed to us is what comes in from the user.
+                # We require what went into the DB (where we added a UUID
+                # to it).
+                LOG.error('resource ID %s', res_id)
+
+                if res_id is None:
+                    # New objects do not have their resource ID assigned
+                    changed_sgids = \
+                        [sg.id for sg in new_objects
+                            if isinstance(sg, securitygroup.SecurityGroup)]
+                else:
+                    changed_sgids = [res_id]
+                LOG.error('creating secgroups: %s', ', '.join(changed_sgids))
+                LOG.error('kwargs %s', str(kwargs))
 
         elif resource == resources.SECURITY_GROUP_RULE:
             # We store security groups with a composite of all their
@@ -547,50 +587,50 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # NB: rules are never updated.
 
             if event == DELETE_COMMIT_TIME:
-                rule_id = kwargs['security_group_rule_id']
-                rule = self.get_secgroup_rule(rule_id, context)
+                rule = self.get_secgroup_rule(res_id, context)
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
-                          (rule, rule_id))
-                security_group_id = rule['security_group_id']
-                deleted_rule_id = rule_id
+                          (rule, res_id))
+                deleted_rules.append(res_id)
+                changed_sgids = [rule['security_group_id']]
 
-                if not security_group_id:
-                    LOG.error("ML2_VPP: Could not lookup a security group "
-                              "for rule_id %s" % rule_id)
-                else:
-                    LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
-                              "rule-id %s" % (security_group_id, rule_id))
             elif event == CREATE_COMMIT_TIME:
+                # Groups don't have the same UUID problem - we're not
+                # using their UUID, we're using their SG's, which must
+                # be present.
                 rule = kwargs['security_group_rule']
-                security_group_id = rule['security_group_id']
+                changed_sgids = [rule['security_group_id']]
 
-            if security_group_id:
-                self.send_sg_updates([security_group_id],
-                                     [deleted_rule_id],
-                                     context)
+        if changed_sgids:
+            self.send_sg_updates(context,
+                                 changed_sgids,
+                                 deleted_rules=deleted_rules)
+            LOG.error('sent updates')
 
-    def send_sg_updates(self, sgids, deleted_rules, context):
+    def send_sg_updates(self, context, sgs, deleted_rules=[]):
         """Called when security group rules are updated
 
         Arguments:
-        sgids - A list of one or more security_group_ids
+        sgs - A list of one or more security_group rows, or
+        security group IDs
         context - The plugin context i.e. neutron.context.Context object
+        deleted-rules - An optional list of deleted rules
 
         1. Read security group rules from neutron DB
         2. Build security group objects from their rules
         3. Write secgroup to the secgroup_key_space in etcd
         """
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
-                  "updates for groups %s to etcd" % sgids)
+                  "updates for groups %s to etcd" % sgs)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
-            for sgid in sgids:
+            for sg in sgs:
                 rules = plugin.get_security_group_rules(
-                    context, filters={'security_group_id': [sgid]}
-                    )
+                    context, filters={'security_group_id': [sg]}
+                )
+
                 LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s", rules)
                 # Get the full details of the secgroup in exchange format
-                secgroup = self.get_secgroup_from_rules(sgid, rules,
+                secgroup = self.get_secgroup_from_rules(sg, rules,
                                                         deleted_rules)
                 # Write security group data to etcd
                 self.send_secgroup_to_agents(context.session, secgroup)
