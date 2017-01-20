@@ -533,6 +533,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                   " %s with kwargs %s" % (event, resource, kwargs))
         context = kwargs['context']
 
+        security_group_id = None
+        deleted_rule_id = None
         if resource == resources.SECURITY_GROUP:
             # We only subscribe to deletes - nothing else changes
             # the end result of firewalling.
@@ -550,6 +552,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
                           (rule, rule_id))
                 security_group_id = rule['security_group_id']
+                deleted_rule_id = rule_id
+
                 if not security_group_id:
                     LOG.error("ML2_VPP: Could not lookup a security group "
                               "for rule_id %s" % rule_id)
@@ -559,13 +563,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
             elif event == CREATE_COMMIT_TIME:
                 rule = kwargs['security_group_rule']
                 security_group_id = rule['security_group_id']
-            else:
-                security_group_id = None
 
             if security_group_id:
-                self.send_sg_updates([security_group_id], context)
+                self.send_sg_updates([security_group_id],
+                                     set(deleted_rule_id),
+                                     context)
 
-    def send_sg_updates(self, sgids, context):
+    def send_sg_updates(self, sgids, deleted_rules, context):
         """Called when security group rules are updated
 
         Arguments:
@@ -586,7 +590,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     )
                 LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s", rules)
                 # Get the full details of the secgroup in exchange format
-                secgroup = self.get_secgroup_from_rules(sgid, rules)
+                secgroup = self.get_secgroup_from_rules(sgid, rules,
+                                                        deleted_rules)
                 # Write security group data to etcd
                 self.send_secgroup_to_agents(context.session, secgroup)
 
@@ -597,7 +602,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         with context.session.begin(subtransactions=True):
             return plugin.get_security_group_rule(context, rule_id)
 
-    def get_secgroup_from_rules(self, sgid, rules):
+    def get_secgroup_from_rules(self, sgid, rules, deleted_rules):
         """Build and return a security group namedtuple object.
 
         This object is the format with which we exchange data with
@@ -606,6 +611,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         sgid - ID of the security group
         rules - A list of security group rules as returned from the DB
+        deleted_rules - A set of rule IDs that have been deleted (and
+        which sometimes turn up in 'rules' because they're not gone from
+        memory yet)
 
         1. Filter rules using the input param: sgid to ensure that rules
         belong to that group
@@ -614,6 +622,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
         # A generator object of security group rules for sgid
         sg_rules = (r for r in rules if r['security_group_id'] == sgid)
+        sg_rules = (r for r in sg_rules
+                    if r['security_group_rule_id'] not in deleted_rules)
         # A list of ingress and egress namedtuple rule objects
         ingress_rules = []
         egress_rules = []
