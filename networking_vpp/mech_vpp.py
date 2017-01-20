@@ -305,8 +305,8 @@ class VPPMechanismDriver(api.MechanismDriver):
                     LOG.debug("ML2_VPP: Update port postcommit "
                               "writing missing secgroup %s to etcd" % sgid)
                     self.communicator.send_sg_updates(
-                        [sgid],
-                        port_context._plugin_context
+                        port_context._plugin_context,
+                        [sgid]
                         )
 
 
@@ -480,6 +480,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if do_precommit:
             registry.subscribe(self.process_secgroup_commit,
                                resources.SECURITY_GROUP,
+                               events.PRECOMMIT_CREATE)
+        registry.subscribe(self.process_secgroup_after,
+                           resources.SECURITY_GROUP,
+                           events.AFTER_CREATE)
+        if do_precommit:
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP,
                                events.PRECOMMIT_DELETE)
         registry.subscribe(self.process_secgroup_after,
                            resources.SECURITY_GROUP,
@@ -534,11 +541,18 @@ class EtcdAgentCommunicator(AgentCommunicator):
         context = kwargs['context']
 
         security_group_id = None
-        deleted_rule_id = None
+        deleted_rules = []
         if resource == resources.SECURITY_GROUP:
-            # We only subscribe to deletes - nothing else changes
-            # the end result of firewalling.
-            self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            if event == DELETE_COMMIT_TIME:
+                self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            elif event == CREATE_COMMIT_TIME:
+                # When Neutron creates a security group it also
+                # attaches rules to it.  We need to sync the rules.
+                # Since there is security_group_id attribute in a precommit
+                # resource data, we are syncing the rules after the
+                # security-group has been created
+                security_group = kwargs['security_group']
+                security_group_id = security_group['security_group_id']
 
         elif resource == resources.SECURITY_GROUP_RULE:
             # We store security groups with a composite of all their
@@ -552,29 +566,24 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
                           (rule, rule_id))
                 security_group_id = rule['security_group_id']
-                deleted_rule_id = rule_id
+                deleted_rules.append(rule_id)
 
-                if not security_group_id:
-                    LOG.error("ML2_VPP: Could not lookup a security group "
-                              "for rule_id %s" % rule_id)
-                else:
-                    LOG.debug("ML2_VPP: Fetched secgroup_id %s for "
-                              "rule-id %s" % (security_group_id, rule_id))
             elif event == CREATE_COMMIT_TIME:
                 rule = kwargs['security_group_rule']
                 security_group_id = rule['security_group_id']
 
-            if security_group_id:
-                self.send_sg_updates([security_group_id],
-                                     [deleted_rule_id],
-                                     context)
+        if security_group_id:
+            self.send_sg_updates(context,
+                                 [security_group_id],
+                                 deleted_rules=deleted_rules)
 
-    def send_sg_updates(self, sgids, deleted_rules, context):
+    def send_sg_updates(self, context, sgids, deleted_rules=[]):
         """Called when security group rules are updated
 
         Arguments:
         sgids - A list of one or more security_group_ids
         context - The plugin context i.e. neutron.context.Context object
+        deleted-rules - An optional list of deleted rules
 
         1. Read security group rules from neutron DB
         2. Build security group objects from their rules
