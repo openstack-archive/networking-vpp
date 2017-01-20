@@ -191,7 +191,9 @@ class VPPInterface(object):
         eventlet.spawn_n(self.vpp_watcher_thread)
 
     def call_vpp(self, func, *args, **kwargs):
-        self.LOG.debug('VPP: %s(%s, %s): ', func, ', '.join(args), str(kwargs))
+        # Disabling to prevent message debug flooding
+        # self.LOG.debug('VPP: %s(%s, %s): ',
+        # func, ', '.join(args), str(kwargs))
         func_call = getattr(self._vpp, func)
         try:
             t = func_call(*args, **kwargs)
@@ -202,7 +204,8 @@ class VPPInterface(object):
             # and our best option is to exit.
             sys.exit(1)
 
-        self.LOG.debug('VPP: %s returned %s', func, str(t))
+        # Turning this on produces a continuous sequence of debug messages
+        # self.LOG.debug('VPP: %s returned %s', func, str(t))
 
         # Many - but not all - return values have a 'retval'
         # flag that we can make use of to confirm success.
