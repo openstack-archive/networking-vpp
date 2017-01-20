@@ -477,6 +477,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
         except AttributeError:  # on PRECOMMIT_DELETE not being available
             do_precommit = False
 
+        registry.subscribe(self.process_secgroup_after,
+                           resources.SECURITY_GROUP,
+                           events.AFTER_CREATE)
         if do_precommit:
             registry.subscribe(self.process_secgroup_commit,
                                resources.SECURITY_GROUP,
@@ -518,6 +521,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # crash.  It's all we can do for Liberty.
         if events.AFTER_CREATE == CREATE_COMMIT_TIME:
             self.process_secgroup_commit(resource, event, trigger, **kwargs)
+        # Push security group to journal and nudge communicator
+        # as soon as it is created
+        if (resource == resources.SECURITY_GROUP
+                and event == events.AFTER_CREATE):
+            self.process_secgroup_commit(resource, event, trigger, **kwargs)
 
         # Whatever the object that caused this, we've put something
         # in the journal and now need to nudge the communicator
@@ -536,9 +544,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
         security_group_id = None
         deleted_rule_id = None
         if resource == resources.SECURITY_GROUP:
-            # We only subscribe to deletes - nothing else changes
-            # the end result of firewalling.
-            self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            if event == DELETE_COMMIT_TIME:
+                self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+            elif event == events.AFTER_CREATE:
+                # When Neutron creates a security group it also
+                # attaches rules to it.  We need to sync the rules.
+                # Since there is security_group_id attribute in a precommit
+                # resource data, we are syncing the rules after the
+                # security-group has been created
+                security_group_id = kwargs['security_group']['id']
 
         elif resource == resources.SECURITY_GROUP_RULE:
             # We store security groups with a composite of all their
@@ -564,17 +578,18 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 rule = kwargs['security_group_rule']
                 security_group_id = rule['security_group_id']
 
-            if security_group_id:
-                self.send_sg_updates([security_group_id],
-                                     [deleted_rule_id],
-                                     context)
+        if security_group_id:
+            self.send_sg_updates([security_group_id],
+                                 context,
+                                 [deleted_rule_id])
 
-    def send_sg_updates(self, sgids, deleted_rules, context):
+    def send_sg_updates(self, sgids, context, deleted_rules=[]):
         """Called when security group rules are updated
 
         Arguments:
         sgids - A list of one or more security_group_ids
         context - The plugin context i.e. neutron.context.Context object
+        deleted-rules - An optional list of deleted rules
 
         1. Read security group rules from neutron DB
         2. Build security group objects from their rules
