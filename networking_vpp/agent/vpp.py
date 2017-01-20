@@ -511,8 +511,8 @@ class VPPInterface(object):
         t = self._vpp.acl_dump(acl_index=0xffffffff)
         self.LOG.debug("ACL dump response: %s" % str(t))
         for acl in t:
-            if hasattr(t, 'acl_index'):
-                yield (t.acl_index, t.tag)
+            if hasattr(acl, 'acl_index'):
+                yield (acl.acl_index, fix_string(acl.tag))
 
     def get_macip_acl_dump(self):
         self.LOG.debug("Getting the MAC-IP Interface ACL dump")
