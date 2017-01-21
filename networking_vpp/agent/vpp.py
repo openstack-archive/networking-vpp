@@ -54,10 +54,14 @@ class VPPInterface(object):
         t = self.call_vpp('sw_interface_vhost_user_dump')
 
         for interface in t:
-            yield (fix_string(interface.interface_name), interface)
+            yield {
+                'name': fix_string(interface.interface_name),
+                'sw_if_index': interface.sw_if_index,
+                'path': interface.sock_filename
+            }
 
     def is_vhostuser(self, iface_idx):
-        for vhost in self.get_vhostusers():
+        for vhost_name, vhost in self.get_vhostusers():
             if vhost.sw_if_index == iface_idx:
                 return True
         return False
@@ -70,20 +74,26 @@ class VPPInterface(object):
             yield {'name': fix_string(iface.interface_name),
                    'tag': fix_string(iface.tag),
                    'mac': ':'.join(["%02x" % int(c) for c in mac]),
-                   'sw_if_idx': iface.sw_if_index,
-                   'sup_sw_if_idx': iface.sup_sw_if_index
+                   'sw_if_index': iface.sw_if_index,
+                   'sup_sw_if_index': iface.sup_sw_if_index
                    }
 
     def get_ifidx_by_name(self, name):
         for iface in self.get_interfaces():
             if iface['name'] == name:
-                return iface['sw_if_idx']
+                return iface['sw_if_index']
         return None
 
     def get_ifidx_by_tag(self, tag):
         for iface in self.get_interfaces():
             if iface['tag'] == tag:
-                return iface['sw_if_idx']
+                return iface['sw_if_index']
+        return None
+
+    def get_interface_by_id(self, sw_if_index):
+        for iface in self.get_interfaces():
+            if iface['sw_if_index'] == sw_if_index:
+                return iface
         return None
 
     def set_interface_tag(self, if_idx, tag):
@@ -125,7 +135,7 @@ class VPPInterface(object):
         t = self.call_vpp('sw_interface_tap_dump')
         for iface in t:
             yield {'dev_name': fix_string(iface.dev_name),
-                   'sw_if_idx': iface.sw_if_index}
+                   'sw_if_index': iface.sw_if_index}
 
     def is_tap(self, iface_idx):
         for tap in self.get_taps():
@@ -480,6 +490,14 @@ class VPPInterface(object):
     def get_macip_acl_dump(self):
         t = self.call_vpp('macip_acl_interface_get')
         return t
+
+    def get_acl_interface_list_dump(self, sw_if_index):
+        self.LOG.debug("Getting the acls for interface %d", sw_if_index)
+        t = self._vpp.acl_interface_list_dump(sw_if_index=sw_if_index)
+        self.LOG.debug("acl_interface_list_dump response: %s", str(t))
+        for rule in t:
+            if hasattr(rule, 'acl_index'):
+                yield rule.acl_index
 
 #    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
 #        t = self.call_vpp('vxlan_add_del_tunnel',

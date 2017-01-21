@@ -177,7 +177,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         uuid = 'fakeuuid'
         mac = 'fakemac'
         fake_iface = {'bind_type': if_type,
-                      'iface_idx': 1,
+                      'sw_if_index': 1,
                       'mac': mac}
         self.vpp.interfaces = {uuid: fake_iface}
         retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
@@ -240,8 +240,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_type = 'flat'
         seg_id = 1
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
-        m_create_iface_on_host.return_value = {'iface_idx': 'fakeidx'}
-        expected_val = {'iface_idx': 'fakeidx',
+        m_create_iface_on_host.return_value = {'sw_if_index': 'fakeidx'}
+        expected_val = {'sw_if_index': 'fakeidx',
                         'net_data': {'bridge_domain_id': 'fake_dom_id'}}
         retval = self.vpp.bind_interface_on_host(if_type,
                                                  uuid, mac, physnet,
