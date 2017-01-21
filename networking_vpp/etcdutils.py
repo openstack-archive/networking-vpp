@@ -43,10 +43,27 @@ class EtcdWatcher(object):
         self.watch_path = watch_path
         self.data = data
         self.heartbeat = heartbeat
+        # A 'cold' resync is the first one after restart.
+        self.cold_resync = True
         pass
 
     @abstractmethod
-    def resync(self):
+    def resync_start(self, etcd_results):
+        """Begining of the resync phase.
+
+        Proceed to any action before actual read() is done.
+        params:
+        - etcd_results : list of EtcdResult, corresponding to
+                         the whole tree read under self.watch_path
+        """
+        pass
+
+    @abstractmethod
+    def resync_end(self):
+        """End of the resync phase.
+
+        Called after the do_work method with the whole read.
+        """
         pass
 
     @abstractmethod
@@ -81,7 +98,7 @@ class EtcdWatcher(object):
 
         This will conduct one watch or one read.
         """
-
+        did_resync = False
         try:
             LOG.debug("%s: pausing", self.name)
 
@@ -122,9 +139,10 @@ class EtcdWatcher(object):
 
                 # This appears as if all the keys have been updated -
                 # because we can't tell which have been and which haven't.
-                vals = rv.children
-
-                self.resync()
+                # create a list as rv.children is a generator
+                vals = list(rv.children)
+                self.resync_start(vals)
+                did_resync = True
 
                 next_tick = rv.etcd_index + 1
 
@@ -143,6 +161,14 @@ class EtcdWatcher(object):
                     # TODO(ijw) raise or not raise?  This is probably
                     # fatal and incurable.
                     raise
+
+            if did_resync:
+                did_resync = False
+                self.resync_end()
+
+                # We are now in sync with VPP, and no resync in the
+                # future will be cold
+                self.cold_resync = False
 
             # Update the tick only when all the above completes so that
             # exceptions don't cause the count to skip before the data

@@ -288,7 +288,7 @@ class VPPForwarder(object):
         # TODO(ijw): messy and a bit specific to the VPP interface -
         # shouldn't be returning the API datastructure?
         LOG.debug("vhost online: %s", str(iface))
-        self._notify_connected(iface.sw_if_index)
+        self._notify_connected(iface['sw_if_index'])
 
     def _notify_connected(self, sw_if_index):
         """Deal with newly active interfaces noticed by VPP
@@ -541,6 +541,21 @@ class VPPForwarder(object):
         if not br.owns_interface(int_tap_name):
             br.addif(int_tap_name)
 
+    def _clean_kernelside_plugtap(self, bridge_name, tap_name, int_tap_name):
+        bridge = bridge_lib.BridgeDevice(bridge_name)
+        # TODO(cfontaine): exists method is not implemented in Liberty
+        try:
+            if bridge.exists():
+            # These may fail, don't care much
+                if bridge.owns_interface(tap_name):
+                    bridge.delif(tap_name)
+                if bridge.owns_interface(int_tap_name):
+                    bridge.delif(int_tap_name)
+                bridge.link.set_down()
+                bridge.delbr()
+        except Exception as exc:
+            LOG.debug(exc)
+
     def ensure_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
@@ -604,7 +619,7 @@ class VPPForwarder(object):
                                                 tap_name,
                                                 int_tap_name)
 
-            props['iface_idx'] = iface_idx
+            props['sw_if_index'] = iface_idx
             self.interfaces[uuid] = props
         return self.interfaces[uuid]
 
@@ -647,7 +662,7 @@ class VPPForwarder(object):
             return None
         net_br_idx = net_data['bridge_domain_id']
         props = self.ensure_interface_on_host(if_type, uuid, mac)
-        iface_idx = props['iface_idx']
+        iface_idx = props['sw_if_index']
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
         props['net_data'] = net_data
         LOG.debug('Bound vpp interface with sw_idx:%s on '
@@ -669,54 +684,50 @@ class VPPForwarder(object):
                       uuid)
         else:
             props = self.interfaces[uuid]
-            iface_idx = props['iface_idx']
+            self.clean_interface_from_vpp(uuid, props)
 
-            LOG.debug('unbinding port %s, recorded as type %s',
-                      uuid, props['bind_type'])
+    def clean_interface_from_vpp(self, uuid, props):
 
-            # We no longer need this interface.  Specifically if it's
-            # a vhostuser interface it's annoying to have it around
-            # because the VM's memory (hugepages) will not be
-            # released.  So, here, we destroy it.
+        LOG.debug('unbinding port %s, recorded as type %s',
+                  uuid, props['bind_type'])
 
-            if props['bind_type'] == 'vhostuser':
-                # remove port from bridge (sets to l3 mode) prior to deletion
-                self.vpp.delete_from_bridge(iface_idx)
-                self.vpp.delete_vhostuser(iface_idx)
-                # Delete port from vpp_acl map if present
-                if iface_idx in self.port_vpp_acls:
-                    del self.port_vpp_acls[iface_idx]
-                    LOG.debug("secgroup_watcher: Current port acl_vector "
-                              "mappings %s" % str(self.port_vpp_acls))
-                # This interface is no longer connected if it's deleted
-                # RACE, as we may call unbind BEFORE the vhost user
-                # interface is notified as connected to qemu
-                if iface_idx in self.iface_connected:
-                    self.iface_connected.remove(iface_idx)
-            elif props['bind_type'] in ['maketap', 'plugtap']:
-                # remove port from bridge (sets to l3 mode) prior to deletion
-                self.vpp.delete_from_bridge(iface_idx)
-                self.vpp.delete_tap(iface_idx)
-                if props['bind_type'] == 'plugtap':
-                    bridge_name = get_bridge_name(uuid)
-                    bridge = bridge_lib.BridgeDevice(bridge_name)
-                    if bridge.exists():
-                        # These may fail, don't care much
-                        try:
-                            if bridge.owns_interface(props['int_tap_name']):
-                                bridge.delif(props['int_tap_name'])
-                            if bridge.owns_interface(props['ext_tap_name']):
-                                bridge.delif(props['ext_tap_name'])
-                            bridge.link.set_down()
-                            bridge.delbr()
-                        except Exception as exc:
-                            LOG.debug(exc)
-            else:
-                LOG.error('Unknown port type %s during unbind',
-                          props['bind_type'])
-            self.interfaces.pop(uuid)
+        iface_idx = props['sw_if_index']
 
-            # Check if this is the last interface on host
+        # We no longer need this interface.  Specifically if it's
+        # a vhostuser interface it's annoying to have it around
+        # because the VM's memory (hugepages) will not be
+        # released.  So, here, we destroy it.
+
+        self.vpp.ifdown(iface_idx)
+        # remove port from bridge (sets to l3 mode) prior to deletion
+        self.vpp.delete_from_bridge(iface_idx)
+
+        if props['bind_type'] == 'vhostuser':
+            self.vpp.delete_vhostuser(iface_idx)
+            # Delete port from vpp_acl map if present
+            if iface_idx in self.port_vpp_acls:
+                del self.port_vpp_acls[iface_idx]
+                LOG.debug("secgroup_watcher: Current port acl_vector "
+                          "mappings %s" % str(self.port_vpp_acls))
+            # This interface is no longer connected if it's deleted
+            # RACE, as we may call unbind BEFORE the vhost user
+            # interface is notified as connected to qemu
+            if iface_idx in self.iface_connected:
+                self.iface_connected.remove(iface_idx)
+        elif props['bind_type'] in ['maketap', 'plugtap']:
+            self.vpp.delete_tap(iface_idx)
+            if props['bind_type'] == 'plugtap':
+                self._clean_kernelside_plugtap(props['sw_if_index'],
+                                               props['ext_tap_name'],
+                                               props['int_tap_name'])
+        else:
+            LOG.error('Unknown port type %s during unbind',
+                      props['bind_type'])
+        self.interfaces.pop(uuid)
+
+        # Check if this is the last interface on host
+        # net_data is not in props for cold resync interfaces
+        if 'net_data' in props:
             for interface in self.interfaces.values():
                 if props['net_data'] == interface['net_data']:
                     break
@@ -1055,7 +1066,7 @@ class VPPForwarder(object):
         # ACLs on that port. So ignore
         try:
             l3_acl_vector = self.port_vpp_acls[sw_if_index]['l34']
-            LOG.debug("Deleting Layer3 ACL vector %s from if_idx %s",
+            LOG.debug("Deleting Layer3 ACL vector %s from if_index %s",
                       l3_acl_vector, sw_if_index)
             self.vpp.delete_acl_list_on_interface(sw_if_index)
             del self.port_vpp_acls[sw_if_index]['l34']
@@ -1216,6 +1227,221 @@ class VPPForwarder(object):
         """Get a dump of macip ACLs on the node"""
         return self.vpp.get_macip_acl_dump()
 
+    def find_and_fix_vpp_networks(self):
+        """Find VPP networks and uplinks that we can still use.
+
+        Get a list of network configurations (bridge domains with
+        configured uplinks) and report them.  Where the configuration
+        is partial or unrescuable, delete it from VPP.
+
+        At the end of this, the only tagged uplink instances remaining
+        will be valid ones that match the physical network config.
+        They may be unwanted (that is, there may ultimately be no
+        ports attached to them, subject to the bindings ultimately set
+        up) but they are self-consistent and usable.
+
+        Our aim here is to minimise disruption.  We won't delete any
+        networks that Neutron will simply recreate, because we don't
+        want to stop traffic for VMs or randomly bounce connections.
+        We just need to get rid of things we absolutely can't use.
+
+        Return a dict of (physnet, type, seg-id): [interface,
+        interface...] for all valid networks.  Interfaces will be a
+        mixture of ports interfaces and other ones (such as uplinks).
+        """
+
+        valid_networks = {}
+
+        physnets_by_port = {v: k for k, v in self.physnets.items()}
+
+        for iface in self.vpp.get_interfaces():
+            if not decode_uplink_tag(iface['tag']):
+                # Not tagged by VPP agent, skip (eg: local0 iface)
+                break
+
+            if_index = iface['sw_if_index']
+
+            # Physical ifaces bound by the agent have a specific tag type
+            (net_type, seg_id) = decode_uplink_tag(iface['tag'])
+
+            bad_uplink = False
+
+            if net_type == 'vlan':
+                uplink_name = self.vpp.get_interface_by_id(
+                    iface['sup_sw_if_index'])['if_name']
+            elif net_type == 'flat':
+                uplink_name = if_index
+            else:
+                bad_uplink = True
+            # Other network types are not supported today
+
+            if not bad_uplink:
+                # All uplinks should attach to a known physical
+                # network, but someone can change the physical network
+                # config and restart
+                physnet = physnets_by_port.get(uplink_name)
+                if physnet is None:
+                    bad_uplink = True
+
+            interfaces_in_network = \
+                self.vpp.get_ifaces_in_bridge_domain(self, if_index)
+
+            if not bad_uplink:
+                # The interface should be in a bridge with the same
+                # index.  This can fail to be true because the crash
+                # can happen between operations.
+                if if_index not in interfaces_in_network:
+                    bad_uplink = True
+
+            if bad_uplink:
+                # There's something ungood about this physical
+                # interface (e.g. it's been invalidated by a physnet
+                # config change).
+                LOG.warning("Physical interface %s not registered in "
+                            "current configuration", iface['name'])
+
+                # Lower all interfaces in the bridge, remove them and
+                # delete the bridge
+                self.vpp.ifdown(interfaces_in_network)
+                self.vpp.delete_from_bridge(interfaces_in_network)
+
+                if net_type == 'vlan':
+                    # delete the VLAN subinterface
+                    self.vpp.delete_vlan_subif(if_index)
+                else:
+                    # physical interface, but unmark it
+                    self.vpp.set_interface_tag(if_index, None)
+
+                # TODO(ijw): delete the bridge as well - it's of no
+                # use if its uplink is broken - and lower all
+                # interfaces in that bridge
+
+            else:
+                valid_networks[(physnet, net_type, seg_id)] = \
+                    interfaces_in_network
+
+        return valid_networks
+
+    def find_and_fix_vpp_ports(self):
+        """Find VPP interfaces configured as ports that we can still use.
+
+        this method returns a VPP-side view of the internal
+        cache for the port interfaces.  It removes irreparably faulty
+        interfaces.
+
+        Since interfaces will be rebound (bind() is idempotent, as are
+        the functions to create both interface and network that it
+        makes use of) a partially assembled interface is fine.
+
+        At the end of the call, the data structures it returns will
+        reflect what remains in VPP, and what is in VPP will be
+        self-consistent.  This may not yet be what Neutron wants - it
+        is the responsibility of a future pass to make config that
+        Neutron is happy with.  But it is what the Neutron-level code
+        can work with.
+
+        Our aim here is to minimise disruption.  We won't delete any
+        interfaces that Neutron will simply recreate, because we don't
+        want to stop traffic for VMs or randomly bounce connections.
+        We just need to get rid of things we absolutely can't use.
+
+        returns:
+        - dict of interfaces: same format as we use internally
+
+        """
+        interfaces = {}
+
+        # Read interfaces configuration
+        vpp_interfaces = {}
+        for i in self.vpp.get_interfaces():
+            vpp_interfaces[i['sw_if_index']] = i
+
+        # The vhost and tap functions VPP offers are slower than
+        # caching everything up front.
+        all_taps = {}
+        for i in self.vpp.get_taps():
+            all_taps[i['sw_if_index']] = i
+
+        all_vhostusers = {}
+        for i in self.vpp.get_vhostusers():
+            all_vhostusers[i['sw_if_index']] = i
+
+        for iface in self.vpp.get_interfaces():
+            if_index = iface['sw_if_index']
+            if_name = iface['name']
+
+            # All port interfaces created by the agent have a port
+            # tag.
+            port_uuid = decode_port_tag(iface['tag'])
+            if port_uuid is not None:
+                props = {}
+                if if_index in all_vhostusers:
+                    path = get_vhostuser_name(port_uuid)
+
+                    # Because the config it's based on can
+                    # change, confirm the vhostuser path set in VPP is
+                    # what we think it should be
+                    if path != all_vhostusers[if_index]['path']:
+                        LOG.warn('Existing interface %s for port %s '
+                                 'has a valid UUID but incorrect vhostuser '
+                                 'socket file %s, cleaning',
+                                 if_name, port_uuid,
+                                 all_vhostusers[if_index]['path'])
+
+                        self.vpp.delete_vhostuser(if_index)
+                        break
+
+                    props['path'] = path
+                    props['bind_type'] = 'vhostuser'
+
+                elif if_index in all_taps:
+                    tap_name = get_tap_name(port_uuid)
+                    int_tap_name = get_vpptap_name(port_uuid)
+
+                    # Get tap name to differentiate between
+                    # plugtap and maketap
+                    dev_name = all_taps[if_index]['dev_name']
+
+                    if dev_name == tap_name:
+                        props['name'] = tap_name
+                        props['bind_type'] = 'maketap'
+                    elif dev_name == int_tap_name:
+                        props['bind_type'] = 'plugtap'
+                        props['bridge_name'] = get_bridge_name(port_uuid)
+                        props['ext_tap_name'] = tap_name
+                        props['int_tap_name'] = int_tap_name
+                    else:
+                        # This is especially paranoid, because we
+                        # never set up an interface like this
+                        LOG.warn('Existing interface %s for port %s '
+                                 'has a valid UUID but '
+                                 'incorrect tap name, cleaning',
+                                 if_name, port_uuid)
+
+                        self.vpp.delete_tap(if_index)
+                        break
+                else:
+                    # Also paranoid, because we would never set up an
+                    # interface that isn't one of these types
+                    LOG.warn('Ignoring interface %s for port %s '
+                             '- tagged, but neither vhost nor tap',
+                             if_name, port_uuid)
+                    # We can't easily remove an unknown interface
+                    # type, so we'll just pretend we haven't seen it
+                    break
+
+                props['sw_if_index'] = if_index
+                props['mac'] = iface['mac']
+
+                interfaces[port_uuid] = props
+                LOG.debug('existing port %s found in vpp: %s',
+                          port_uuid, str(props))
+
+        return interfaces
+
+    def remove_unknown_vpp_ports(self, neutron_ports, vpp_ports):
+        """Remove ports in VPP that Neutron does not know about."""
+
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
@@ -1279,7 +1505,7 @@ class EtcdListener(object):
         # are ready and expose it to curious operators, who may
         # be able to debug with it.  This may not happen
         # immediately because the far end may not have connected.
-        iface_idx = props['iface_idx']
+        iface_idx = props['sw_if_index']
         self.iface_state[iface_idx] = (id, props)
 
         if (binding_type != 'vhostuser' or
@@ -1528,7 +1754,7 @@ class EtcdListener(object):
                     - Each address pair is a dict with
                       keys: ip_address (required)
                             mac_address (optional)
-        sw_if_index - VPP vhostuser  if_idx
+        sw_if_index - VPP vhostuser  if_index
         """
         # Allowed mac_ip list to permit for DHCP request from 0.0.0.0
         allowed_mac_ips = [(mac_address, u'0.0.0.0')]
@@ -1582,6 +1808,7 @@ class EtcdListener(object):
         self.load_macip_acl_mapping()
 
         self.etcd_helper.clear_state(self.state_key_space)
+        self.secgroup_resynced = eventlet.event.Event()
 
         class PortWatcher(EtcdWatcher):
 
@@ -1592,10 +1819,53 @@ class EtcdListener(object):
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
-            def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
-                pass
+            def resync_start(self, etcd_results):
+                """Called at begining of resync.
+
+                params:
+                - etcd_results : list of EtcdResult, corresponding to
+                                 the whole tree read under port_key_space
+                """
+
+                if self.cold_resync:
+                    # On a warm resync, we're just missing a bit of
+                    # etcd history - our internal state
+                    # datastructures, however, will match what VPP has
+                    # configured.  We can trust them.
+
+                    # On a cold resync, we have absolutely no idea
+                    # what's in VPP.  These functions clear up
+                    # obviously insane configuration and tell us what
+                    # is left.
+                    self.cold_sync_networks = \
+                        self.data.vppf.find_and_fix_vpp_networks()
+                    self.cold_sync_ports = \
+                        self.data.vppf.find_and_fix_vpp_ports()
+
+                # At this point, VPP contains sane config on either a
+                # cold or warm restart.  If it's a cold restart, we
+                # have no data in our datastructures and cold_sync_*
+                # are used to recover what we care about.  If it's a
+                # warm restart, our data structures will match VPP
+                # state and it's just a matter of unbind/rebind to get
+                # up to date.  do_work() and resync_end deals with all
+                # that.
+
+            def resync_end(self):
+                """End of resync phase."""
+                LOG.info('End of agent resync phase for port binding')
+
+                if self.cold_resync:
+                    # Remove any ports found in VPP that are
+                    # not in use according to the Neutron-sourced
+                    # datastructures.
+
+                    for uuid, props in self.cold_sync_ports.items():
+                        self.data.vppf.clean_interface_from_vpp(
+                            uuid, props)
+
+                    self.cold_sync_networks = None
+                    self.cold_sync_ports = None
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
@@ -1603,9 +1873,14 @@ class EtcdListener(object):
 
                 if m:
                     port = m.group(1)
+                    data = json.loads(value)
 
                     if action == 'delete':
-                        # Removing key == desire to unbind
+                        # (delete never happens on a cold sync, all
+                        # keys are being added)
+
+                        # Removing key == desire
+                        # to unbind
                         self.data.unbind(port)
                         LOG.debug("port_watcher: known secgroup to acl "
                                   "mappings %s" % secgroups)
@@ -1618,10 +1893,65 @@ class EtcdListener(object):
                             # it's no problem
                             pass
                     else:
-                        # Create or update == bind
-                        # NB most things will not change on an update.
-                        # TODO(ijw): go through the cases.
-                        data = json.loads(value)
+                        # We may also have the wrong binding in place
+                        # at the moment.  This can happen if we missed
+                        # an unbind during a gap in history.
+
+                        binding_bad = False
+                        if self.cold_resync:
+                            vpp_state = self.cold_sync_ports.get(port)
+                        else:
+                            # In the case of a warm sync, The data is,
+                            # however, stored elsewhere.
+                            vpp_state = self.interfaces.get(port)
+
+                        if vpp_state is not None:
+                            # It may be that VPP has the remains
+                            # of the wrong type of binding.
+                            # bind() can't fix this, so we have to
+                            # clean this up.
+
+                            binding_bad = (
+                                (data['binding_type'] !=
+                                 vpp_state['bind_type']) or
+                                (data['mac_address'] != vpp_state['mac']))
+
+                        if binding_bad:
+                            # We have tried very hard not to delete
+                            # this VPP datatstructure in order to keep
+                            # the VM connected, but it's clear that
+                            # this is no longer where the VM is any
+                            # more.
+
+                            if self.cold_resync:
+                                # Unbind won't work because we have no
+                                # record of the binding in our data
+                                # structures, so unpick this by hand.
+
+                                self.data.vppf.clean_interface_from_vpp(
+                                    port, vpp_state)
+
+                                # Use cold_sync_ports to remember what
+                                # VPP-configured ports have been left
+                                # unused at the end of a cold restart
+                                del self.cold_sync_ports[port]
+                            else:
+                                self.unbind(port)
+
+                                # Just in case the subsequent bind
+                                # fails, make sure the state has gone.
+                                try:
+                                    self.etcd_client.delete(
+                                        self.data.state_key_space + '/%s'
+                                        % port)
+                                except etcd.EtcdKeyNotFound:
+                                    # Gone is fine; if we didn't delete it
+                                    # it's no problem
+                                    pass
+
+                        # Create or update == bind - NB most things
+                        # will not change on an update and the binding
+                        # is likely never affected.
                         props = self.data.bind(port,
                                                data['binding_type'],
                                                data['mac_address'],
@@ -1651,15 +1981,15 @@ class EtcdListener(object):
                             LOG.debug("port_watcher:Setting secgroups %s "
                                       "on sw_if_index %s for port %s" %
                                       (security_groups,
-                                       props['iface_idx'],
+                                       props['sw_if_index'],
                                        port))
                             self.data.set_acls_on_port(
                                 security_groups,
-                                props['iface_idx'])
+                                props['sw_if_index'])
                             LOG.debug("port_watcher: setting secgroups "
                                       "%s on sw_if_index %s for port %s " %
                                       (security_groups,
-                                       props['iface_idx'],
+                                       props['sw_if_index'],
                                        port))
                             # Set Allowed address pairs and mac-spoof filter
                             aa_pairs = data.get('allowed_address_pairs', [])
@@ -1668,19 +1998,19 @@ class EtcdListener(object):
                                       "sw_if_index %s" %
                                       (aa_pairs,
                                        port,
-                                       props['iface_idx']))
+                                       props['sw_if_index']))
                             self.data.set_mac_ip_acl_on_port(
                                 data['mac_address'],
                                 data.get('fixed_ips'),
                                 aa_pairs,
-                                props['iface_idx'])
+                                props['sw_if_index'])
                             LOG.debug("port_watcher: setting allowed-addr-"
                                       "pairs %s on sw_if_index %s for "
                                       "port %s" %
                                       (aa_pairs,
-                                       props['iface_idx'],
+                                       props['sw_if_index'],
                                        port))
-                        self.data.vppf.vpp.ifup(props['iface_idx'])
+                        self.data.vppf.vpp.ifup(props['sw_if_index'])
                         # Clear ACLs on vhostuser port if port_security
                         # is disabled
                         if (not data.get('port_security_enabled', True)
@@ -1688,7 +2018,7 @@ class EtcdListener(object):
                             LOG.debug("Removing port_security on "
                                       "port %s", port)
                             self.data.vppf.remove_acls_on_vpp_port(
-                                props['iface_idx'])
+                                props['sw_if_index'])
 
                 else:
                     LOG.warning('Unexpected key change in etcd '
@@ -1705,7 +2035,28 @@ class EtcdListener(object):
             def do_tick(self):
                 pass
 
-            def resync(self):
+            def resync_start(self, etcd_results):
+                """Resync for Security Groups.
+
+                - For startup and resync, we read all the current etcd
+                  and update the cache in do_work method
+                - Here, we only have to clean internal cache for SG
+                  if a SG uuid is unknown. Only usefull for resync case.
+                """
+                security_groups = []
+                re_sg = re.compile(self.data.secgroup_key_space + '/([^/]+)$')
+                for kv in etcd_results:
+                    m = re_sg.match(kv.key)
+                    if m:
+                        security_groups.append(m.group(1))
+
+                for sg in secgroups.keys():
+                    if sg not in security_groups:
+                        del secgroups[sg]
+
+            def resync_end(self):
+                LOG.info('End of agent resync phase for security groups')
+                self.data.secgroup_resynced.send()
                 pass
 
             def do_work(self, action, key, value):
