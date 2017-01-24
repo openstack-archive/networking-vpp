@@ -122,7 +122,15 @@ class EtcdWatcher(object):
 
                 # This appears as if all the keys have been updated -
                 # because we can't tell which have been and which haven't.
-                vals = rv.children
+
+                # We must replay the calls to the features in the
+                # same order they were called, so any dependency between
+                # features will be honored.
+                # eg: 1st comes the port creation, then the securitygroups.
+                # even if a key is modified, it should not update the
+                # 'createdIndex' value but the 'modifiedIndex' value.
+                vals = sorted([kv for kv in rv.children],
+                              key=lambda kv: kv.createdIndex)
 
                 self.resync()
 
