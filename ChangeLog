@@ -1,74 +1,120 @@
 CHANGES
 =======
 
-* Tox fixes
-* Remove outdated line from example config
-* Use a journal table
-* do not create vpp subintf if exists
-* etcd support, part 1
-* Added etcd comms channel
-* Major updates
-* More PEP8
-* Fix doc file in setup.cfg
-* Major updates
-* tox cleanups (mainly long lines)
-* typo
-* Break notifcation of Nova into own function
-* Correct doc file name
-* update delete_network_on_host
-* update network_on_host
-* update vpp get_interface
-* add tests
-* added tests
-* delete bridge on network delete
-* create bridge-pool
-* delete vpp bridge_domain on network delete
-* support arbitrary physical network names for flat n/w binding
-* create network
-* create network msg
-* prevent adding an existing bridge interface
-* remove agent auto-cleanup
-* devstack l3_agent prevent ovs cleanup fix
-* vif_type fix
-* dhcp fixes
-* vpp agent logging
-* DHCP fixes
-* updated agent filtering for messaging
-* updated agent messaging to include failure reporting
-* remove local settings from devstack/settings
-* comment
-* delete port_postcommit
-* add flat networking
-* Change qemu user/group to be config options. Also added default values for those for ubuntu and redhat
-* fix server.py bind logger format string error
-* fix server.py unbind logger debug
-* add host info to unbind data
-* delete port url update to remove host
-* delete port_postcommit with debug
-* delete port_postcommit
-* add debugs to vpp.py
-* Add support for defining settings in local.conf. We now first check if a setting is defined
-* Add centos 7 guide doc
-* Convert README to rst
-* send bind call without queuing
-* add hostname to ip lookup
-* unicast message
-* update agent list in devstack settings
-* update agent to listen on 0.0.0.0
-* add mech_vpp debugs
-* agent list split on comma
-* updated agent list in devstack settings
-* More fixes on comments, debug, deleting
-* changed socket group to libvirtd
-* added missing unbind call to agent in mech_vpp
-* added debug messages for bind and unbind requests
-* updated devstack/settings vlan trunk interface
-* fix bug attribute error
-* test
-* fixed return value error
-* fixed bug for checking return value
-* Added README with details of what work has been done to date
-* updated vpp api interface
-* First pass at agent, diags in driver
-* Initial commit: mechdriver that talks to an as-yet missing agent
+For 17.01:
+
+* Push out security group rules when a security group is created
+* Enable metadata request from VMs
+* Use embedded etcd client timeout
+* Convert icmp to icmp-v6 for IPv6 traffic
+* Remove deleted rules from a security group straight away
+* Add compatibility for Neutron versions with no PRECOMMIT
+* Let VPP use native threads
+* VPP lib: improve consistency when calling VPP APIs
+* Resolve issue with resyncing VPP ACL tags
+* Fix get_acl_tag
+* Make common functions for creating and analysing security group tags
+* Fix CentOS7 guide
+* Implement the port-security extension
+* Remove callback activity from within callback
+* Bring up the primary uplink interface for Vlan networking
+* Fix race condition on iface_connected
+* TAP timeout comparison was inverted
+* Add configuration for the command RX queue len of VPP
+* Fix background thread
+* Correct a typo: get_interfaces_in_bridge_domain*s*
+* agent: Move etcd mkdir to EtcdHelper class
+* Add utility methods to VPPInterface
+* Update for idempotency
+* Use a single thread for all TAP bindings
+* Tag uplink interfaces in VPP
+* Support mask length for ip addresses in allowed-address-pair
+* Forbid traffic for interfaces before security is in place
+* Fixes bug#1655455, vpp-agent:EtcdkeyNotFound:/networking-vpp/global
+* Prune info-level logs
+* Do something meaningful when physnets are misconfigured
+* Refactor etcd host configuration parsing
+* Fix translation functions
+* Fix get_secgroup_acl
+* QEMU version fixes on Centos 7
+* Write tap state on binding
+* Remove neutron dependency _i18n
+* Remove mitaka db migration folder for liberty backward compatibility
+* Fixes Liberty compatibility of the constants import
+* Update vpp installer for devstack
+* Make the secgroup code use the journal
+* Introduction of MAC aging feature implemented in VPP version 17.01-rc1
+* Fix typo in attribute returned from VPP API
+* Removes unnecessary utf-8 coding
+* Support for security-groups and allowed-address-pairs.
+* Use ifidx of uplink interface as bridge domain ID
+* Add VPP branch configuration
+* Rework interface-get code
+* Fix log message formatting
+* Adding support for neutron alembic db migration to Liberty
+* Test script to sanity check etcd content
+* Compatibility fixes
+* Fix Mitaka compatibility
+* VPP notification handling
+* Add vhostuser dir option
+* Bring backward compatibility work into one place
+* Remove NUMATopologyFilter setting
+* Address Liberty compatibility with neutron_lib import
+* Fix translator functions.
+* Add environment setup to Devstack scripts
+* Fix python-etcd version requirement
+* neutron_lib related updates
+* VPP Python API 1.3
+* Enhance vpp_agent to support multiple etcd format.
+* Add monkey patch to make bridge_lib to be Liberty compatible
+* Fixes the crash when vpp-agent doesn't take config file
+* tests/unit/*: Enhancing unit tests for ML2
+* Fix requirements for Mitaka
+* Fix bug with debug log message formatting
+* Ignore emacs temp editor files
+* More removal of '%' operator from log messages
+* Replace LOG.warn with LOG.warning
+* Modify variable's using method in Log Messages
+* Don't include openstack/common in flake8 exclude list
+* Clean imports in code
+* Remove duplicated requirement
+* Reformulate the etcd read/watch loop as common code
+* Fix the problem of constants move to neutron_lib.
+* Delay thread starting to post-worker-fork
+* Enable CI unit test
+* agent/server.py: Adding custom UnsupportedInterfaceException
+* Revert "Liberty DB migration compatibility."
+* Delete bridge and vlan sub interface on network deletion
+* Liberty DB migration compatibility.
+* Add HACKING for networking-vpp
+* Remove flask since networking-vpp doesn't use it currently
+* Enhance debug log in vpp agent
+* Remove physnet caching mechanism
+* Add upper constraints to tox.ini
+* Add link to VPP introduction
+* Fixed doc8 errors and added an install section to README
+* Provide a config option to control vpp restart by the agent
+* Remove port state in etcd on unbind
+* Catch the etcd client ReadTimeoutError exception
+* Fix Newton-specific backward compatibility code
+* Make devstack OVS-free
+* Reduce log severities in driver
+* Remove distro package dependency.
+* Upon Agent restart, restart VPP, clear existing port binding state and bind ports
+* Backward compatibility for liberty.
+* Recovers etcd watch keyspace index and updates the driver physnet data structure
+* VPP port cleanup before deletion
+* networking-vpp/tests: Initial commit for unit tests
+* devstack: set appropriate etcd conf variables
+* Reverse the polarity of the Neutron flow
+* Username/password for etcd auth and enable etcdclient reconnect
+* Add VPP VLAN tag rewrite to subinterfaces
+* Remove configuration variable 'agents'
+* Split physnets safetly at the agent
+* Fixes an infinite loop when deleting a missing key
+* Update db access to stick with schema
+* Flags belongs to vpe namespace
+* Add config options to the Etcd client
+* Fix initial migration for networking-vpp
+* Initial VPP ML2 network driver version
 * Added .gitreview
