@@ -2,9 +2,9 @@
 networking-vpp
 ==============
 
-ML2 Mechanism driver and small control plane for `OpenVPP forwarder`_
+ML2 Mechanism driver and small control plane for the `VPP forwarder`_
 
-This is a Neutron mechanism driver to bring the advantages of OpenVPP to
+This is a Neutron mechanism driver to bring the advantages of VPP to
 OpenStack deployments.
 
 It's been written to be as simple and readable as possible while offering
@@ -17,12 +17,9 @@ While the driver is not perfect, we're aiming for
  - testability - having failure cases covered is no good if you don't have
    a means to test the code that protects you from them
 
-As a general rule, everything is implemented in the simplest way,
-for two reasons: one is that we get to see it working faster, and
-the other is that it's much easier to replace a simple system with
-a more complex one than it is to change a complex one.  The current
-design will change, but the one that's there at the moment is small
-and easy to read, even if it makes you pull faces when you read it.
+As a general rule, everything is implemented in the simplest way, for
+three reasons: we get to see it working faster, we can test it, and
+anyone that wants to join the project can make sense of it.
 
 Your questions answered
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -31,24 +28,128 @@ How do I use it?
 ----------------
 
 There's a devstack plugin.  You can add this plugin to your local.conf
-and see it working. You'll want to get VPP and the VPP Python bindings
-set up on the host before you do that. Follow the steps in the How to
-install section below for more details.
+and see it working.  The devstack plugin now takes care of
+
+- installing the networking-vpp code
+- installing VPP itself (version 17.01)
+- installing etcd
+- using a QEMU version that supports vhostuser well
 
 To get the best performance, this will use vhostuser sockets to talk to
 VMs, which means you need a modern version of your OS (CentOS 7 and
-Ubuntu 16.04 look good).  It also means that you need to run your VMs
+Ubuntu 16.04 work).  It also means that you need to run your VMs
 with a special flavor that enables shared memory - basically, you
 need to set up hugepages for your VMs, as that's the only supported
 way Nova does this today.  Because you're using pinned shared memory
 you are going to find you can't overcommit memory on the target
-machine.
+machine.  The devstack plugin converts all the default flavours to use
+shared memory.
 
-I've tested this on Ubuntu 16.04.  Others have tried it with CentOS
-7.2. You may need to disable libvirt security for qemu, as libvirt
-doesn't play well with vhostuser sockets in its default setup.
-CentOS testing is ongoing. An initial CentOS 7 guide can be found
-at `<CENTOS_7-guide.rst>`_
+If you want to build from components yourself, you can certainly get
+this working with your own VPP build or with a newer QEMU version, but
+you may want to read the files in devstack/ to work out how we choose
+to configure the system.
+
+We've made some effort to make this backward-compatible so that it
+will work with older stable branches as well as the current master
+branch of Neutron.  You should find this will work with Newton, Mitaka
+and Liberty.
+
+How do I do devstack, then?
+---------------------------
+
+Before you start, add the following to your kernel options and reboot.
+
+    iommu=pt intel_iommu=on
+
+You will need to set some configuration items in your local.conf to get the
+system running.
+
+One of the important things you need to know before you start is that
+VPP is an entirely user-space forwarder.  It doesn't live in the
+kernel, it doesn't use kernel network devices; using DPDK, it steals
+NICs away from the kernel for its own nefarious uses.  So - to test
+VPP - you can do one of two things:
+
+- choose a device to give to VPP, remembering that it will not be
+  useful for anything else (so it's a *really* good idea not to use
+  the interface with the host IP address)
+- use a loopback or TAP interface in VPP to keep it quiet (perfect for one
+  node test systems).
+
+I recommend the following bits of configuration and use them when I'm
+testing.  Make a 'local.conf' in your devstack directory that looks
+something like this:
+
+    [[local|localrc]]
+    # We are going to use memory in the system for 2M hugepages.  Pick
+    # a number you can afford to lose.  Here we're taking 2500 pages
+    # (about 5GB of memory) which works well in my 8GB test VM.
+    NR_HUGEPAGES=2500
+
+    disable_service q-agt # we're not using OVS or LB
+    enable_plugin networking-vpp https://github.com/openstack/networking-vpp
+    Q_PLUGIN=ml2
+    Q_USE_SECGROUP=True
+    Q_ML2_PLUGIN_MECHANISM_DRIVERS=vpp
+    Q_ML2_PLUGIN_TYPE_DRIVERS=vlan,flat
+    Q_ML2_TENANT_NETWORK_TYPE=vlan
+    ML2_VLAN_RANGES=physnet:100:200
+    MECH_VPP_PHYSNETLIST=physnet:tap-0
+
+    [[post-config|$NOVA_CONF]]
+    [DEFAULT]
+    # VPP uses some memory internally.  reserved_huge_pages
+    # tells Nova that we cannot allocate the last 512 pages
+    # (1GB) of memory to VMs, because in practice it will be
+    # used already and those VMs won't start.  If you tweak
+    # the VPP options you can reduce this number, and 1GB is
+    # probably too much for a test VM, but it's the default
+    # for a 2 core machine.
+    reserved_huge_pages=node:0,size:2048,count:512
+
+Now, take note of that 'tap-0' up there.  VPP uses its own names for
+interfaces internally - you probably want to use one of the following:
+
+loop0 - this is a loopback device.  You can get things up and running,
+but you won't get access to the tenant networks from outside of VPP
+(though you can still use the 'ip netns exec' trick through router
+namespaces).  You can run two VMs and talk between them by logging in
+on the console, for instance.
+
+tap-0 - one easy thing to do is make a local TAP interface to use as
+your uplink device, which means your VMs can talk to your local
+machine.  Write a file 'vpp-startup.conf' containing:
+
+    tap connect uplink
+
+and add a line to the above local.conf in the [[localrc]] section saying 
+
+    VPP_STARTUP_CONFIG=/tmp/vpp-config
+
+VPP will make a kernel 'uplink' interface and internally will refer to
+it as 'tap-0'.  'uplink' is the trunk with all the Neutron tenant
+networks on it, and you can make VLAN subinterfaces to participate on
+any one of the networks.  Once devstack is running, 'ifconfig uplink'
+should work.
+
+GigabitEthernet2/2/0 - if you have a DPDK-compatible 1GbE network card
+port going spare, there's a good chance that this is the name of it
+when VPP took it over (at this point you probably need to go look at
+VPP's documentation at http://wiki.fd.io/ to work out how VPP chooses
+its interfaces and things about how its passthrough drivers work).
+Bridge this between any dedicated compute nodes you have in your system.
+
+Note: etcd keys can hang around after an unstack.  You will want to
+run a something like:
+
+    for f in $(etcdctl ls --recursive /networking-vpp); do etcdctl rm $f ; done 2>/dev/null
+    for f in $(etcdctl ls --recursive /networking-vpp | sort -r); do etcdctl rmdir $f ; done  2>/dev/null
+
+to reset etcd before you restack your devstack, so that it doesn't
+start making a whole bunch of idle ports.  If you forget, don't worry;
+it's totally harmless, it's just annoying when you're trying to
+make sense of what the system is doing.
 
 What overlays does it support?
 ------------------------------
@@ -58,57 +159,68 @@ Today, it supports VLANs and flat networks.
 How does it work?
 -----------------
 
-VPP has physical interface nominated as the physical networks.  In
-common with other Neutron drivers, each physical network can be
-used as a flat or VLAN network, for either fully virtual tenant
-networks or for provider networks.  When a VLAN-overlay network is
-needed on a host, we create a subinterface with the selected VLAN
-(the typedriver chooses the VLAN, we don't do anything clever about
-that).  For all networks, the agent makes a new bridge domain in
-VPP and puts the subinterface or host interface into it.  Binding
-a port involves putting the port into the same bridge domain.
+networking-vpp provides the glue from the Neutron server process to a
+set of agents that control, and the agents that turn Neutron's needs
+into specific instructions to VPP.
 
-How does it implement binding?
-------------------------------
+The glue is implemented using a very carefully designed system using
+etcd.  The mechanism driver, within Neutron's API server process,
+works out what the tenants are asking for and, using a special failure
+tolerant journalling mechanism, feeds that 'desired' state into a
+highly available consistent key-value store, etcd.  If a server
+process is reset, then the journal - in the Neutron database -
+contains all the records that still need writing to etcd.
 
-This mechanism driver takes two approaches.  It doesn't do anything
-at all until Neutron needs to drop traffic on a compute host, so
-the only thing it's really interested in is ports.  Making a network
-or a subnet doesn't do anything at all, so there are no entry points
-for the network and subnet operations.  And it mainly interests
-itself in the process of binding: the bind calls determine if it
-has work to do, and the port postcommit calls make sure that, when
-a binding takes, the VPP forwarders in the system get appropriately
-programmed to put the traffic where Nova expects it.
+etcd itself can be set up to be redundant (by forming a 3-node quorum,
+for instance, which tolerates a one node failure), which means that
+data stored in it will not be lost even in the event of a problem.
 
-There are a number of calls that a mechanism driver can implement.  The
-precommit calls determine if a create, update or delete is acceptable and
-stop it before it hits the database; they can also update additional
-database tables.  The postcommit calls allow you to act once the
-network change is permanently recorded.  These two calls, on ports,
-are what we use.
+The agents watch etcd, which means that they get told if any data they
+are interested in is updated.  They keep an eye out for any changes on
+their host - so, for instance, ports being bound and unbound - and on
+anything of related interest, like security groups.  If any of these
+things changes, the agent implements the desired state in VPP.  If the
+agent restarts, it reads the whole state and loads it into VPP.
 
-In our case, we add a write to a journal table to the DB commit
-from within the precommit.  This is not committed if the commit
-fails for other reasons.
+Can you walk me through port binding?
+-------------------------------------
 
-The postcommit calls are where you should trigger actions based on an
-update that's now been accepted and saved (you can't back down at
-that point) - but the tenant is still waiting for an answer, so
-it's wise to be quick.  In our case, we kick a background thread
-to push the journal log out, in order, to etcd.  etcd then contains
-the desired state of each host agent, and the agents monitor etcd
-for changes relevant to them and update their state.
+This mechanism driver doesn't do anything at all until Neutron needs
+to drop traffic on a compute host, so the only thing it's really
+interested in is ports.  Making a network or a subnet doesn't do
+anything at all.
 
-To ensure binding is done correctly, we send Nova a notification
-only when the agent has definitely created the structures in VPP
-necessary for the port to work.  This is generally a good idea but
-for vhost-user connections it's particularly important as QEMU goes
-into a funny state if you start it with vhost-user sockets that
-don't connect immediately.  This state tends to confuse libvirt and
-nova; for that reason, we recommend you make VIF plugging failures
-fatal with the relevant Nova config option, so that a VM is never
-started with ports that haven't been properly bound and configured.
+And it mainly interests itself in the process of binding: the bind
+calls called by ML2 determine if it has work to do, and the port
+postcommit calls push the data out to the agents once we're sure it's
+recorded in the DB.  (We do something similar with security group
+information.)
+
+In our case, we add a write to a journal table in the database during
+the same transaction that stores the state change from the API. That
+means that, if the user asked for something, Neutron has agreed to do
+it, and Neutron remembered to write all of the details down, it makes
+it to the journal; and if Neutron didn't finish saving it, it
+*doesn't* get recorded.  In this way we keep etcd in step with the
+Neutron database.
+
+The postcommit calls are where we need to push the data out to the
+agents - but the OpenStack user is still waiting for an answer, so
+it's wise to be quick.  In our case, we kick a background thread to
+push the journal out, in strict order, to etcd.  There's a little bit
+of a lag (it's tiny, in practice) before etcd gets updated, but this
+way if there are any issues within the cloud (a congested network, a
+bad connection) we don't keep the user waiting.
+
+Once it's in etcd, the agents will spot the change and change their
+state accordingly.
+
+To ensure binding is done correctly, we send Nova a notification only
+when the agent has definitely created the structures in VPP necessary
+for the port to work, and only when the VM has attached to VPP. In
+this way we know that even the very first packet from the VM will go
+where it's meant to go - kind of important when that packet's usually
+asking for an IP address.
 
 Additionally, there are some helper calls to determine if this
 mechanism driver, in conjunction with the other ones on the system,
@@ -119,69 +231,97 @@ port at all.
 How does it talk to VPP?
 ------------------------
 
-This uses the Python module Ole Troan added to VPP to interface with the
-forwarder.  VPP has an admin channel, implemented as a couple of shared
-memory queues, to exchange control messages with VPP.  The Python bindings
-are a very thin layer between that shared memory system and a set of Python
-APIs.
-
-Note that VPP runs as root and so the shared memory buffers are protected
-and need root credentials to access, so the agent also runs as root.  It
-rather inelegantly coredumps if it doesn't have root privileges.
+This uses the Python API module that comes with VPP (vpp_papi).  VPP
+has an admin channel, implemented in shared memory, to exchange
+control messages with whatever agent is running.  The Python bindings
+are a very thin layer between that shared memory system and a set of
+Python APIs.  We add our own internal layer of Python to turn vpp's
+low level communcations into something a little easier to work with.
 
 What does it support?
+---------------------
+
+For now, assume it moves packets to where they need to go. unless
+they're firewalled, in which case it doesn't.  It also integrates
+properly with stock ML2 L3, DHCP and Metadata functionality.
+
+What have you just done?
 ------------------------
 
-For now, assume it moves packets to where they need to go.  It also integrates
-properly with ML2 L3, DHCP and Metadata functionality.
+The most interesting improvement since last time is security -
+this is new with the ACL functionality added for VPP 17.01.  This
+includes security groups, the anti-spoof filters (including the holes
+for things like DHCP), the allowed address pair extension and the port
+security flag.
 
-The main notable absence at this point is security groups.
+Any known issues?
+-----------------
+
+In general, check the bugs at
+https://bugs.launchpad.net/networking-vpp - but worth noting:
+
+- Security groups don't yet support the remote_security_group_id
+  parameter.  If you use this they will ignore it and accept traffic
+  from any source.
+
+- Some failure cases (agent reset, VPP reset) leave the agent
+  wondering what state VPP is currently in.  For now, in these cases,
+  we take the coward's way out and reset the agent and VPP
+  simultaneously, recreating its state from what's in etcd.  This
+  works, and will not go wrong, but you'll see a pause in your VM
+  traffic as it happens.  At the moment, you'll most commonly see this
+  on software upgrades.  See below for what we're doing about this.
 
 What are you doing next?
 ------------------------
 
-Security groups - this requires some additional functionality in VPP to work,
-so we're currently waiting on that to be committed upstream.
+We also keep our job list in https://bugs.launchpad.net/networking-vpp
+anything starting 'RFE' is a 'request for enhancement'.
 
-We're considering how to add TAP-as-a-Service functionality
-to the system so that you can prove, to your own satisfaction, that
-the networking is operating correctly and your app is broken :)
+We are working towards more fault tolerance.  Our aim is to be
+tolerant of two other failure modes: the case where etcd is so busy
+that the updates expire before agents receive them, and the case where
+the agent restarts.  In both of these cases, we want to *resync* -
+reconfigure VPP just as much as necessary that it now has the right
+state, and ideally without disrupting the traffic for VMs that are
+already attached and whose ports are correctly configured.  This is
+work soon to come; you'll find the patch in the patch queue and you're
+welcome to pitch in and help.
 
-What else needs fixing?
------------------------
+We will be implementing L3 in VPP.  In this case, using the same etcd
+and agent and a Neutron L3 driver, you'll be able to use VPP to create
+Neutron routers complete with NAT and floating IPs.  There's also an
+early version in the patch queue.
 
-There are a long list of items where you can help.  If you want a slow
-introduction to the code, read it!  It's not very big and it has comments and
-everything.  Among those comments you'll find several TODO comments where we
-have opinions about shortcuts that we took that need revisiting; if you want
-a go at changing the code, those TODO statements are a really good place to
-start.
+We will be implementing an overlay using LISP GPE, which has better
+horizontal scale than VLAN based overlays.
 
-That aside, you could attempt to get VXLAN working, or you could
-look at tidying up the VPP API in the OpenVPP codebase, or you could add a
-working memory to the VPP agent (perhaps by adding user-data to the VPP API
-so that the agent could annotate the ports with its own information).
+There are more server threads running than absolutely necessary.  This is
+not likely to cause you any significant problems, but we'll be
+tuning up the performance a bit in the near future.
 
-Firewalling and security groups are a big area where it's lacking.
-If you're moving packets around fast and you're using secure components in
-your VMs they don't matter so much (and this is quite common in NFV scenarios)
-but to make this useful for everything the driver needs to implement basic
-anti-spoof firewalling, security groups, and also the allowed-address-pair
-and portsecurity extensions so that security can be turned down when the
-application needs something different.  VPP has ACLs, but the VPP team are
-looking at improving that functionality and we're currently waiting for the
-next version of the code and a hopefully more convenient API to use.
-If you do think of doing work on this, remember that when you change
-a security group you might be changing the firewalling on lots of
-ports - on lots of servers - all at the same time.
+We'll be dealing with a few of the minor details of a good Neutron
+network driver, like sorting out MTU configuration.
 
-Per above, VPP's comms channel with control planes is privileged, and
-so is the channel for making vhost-user connections (you need to know the
-credentials that libvirt uses).  If it weren't for those two things,
-the agent doesn't need any special system rights and could run as a
-normal user.  This could be fixed (by getting VPP to drop the privs on
-the shared memory and by using e.g. a setgid directory to talk
-to VPP,respectively).
+At the moment, the agent runs as root.  We want to lower its privilege
+to improve security.
+ 
+What can I do to help?
+----------------------
+
+At the least, just use it!  The more you try things out, the more we
+find out what we've done wrong and the better we can make it.
+
+If you have more time on your hands, review any changes you find in
+our gerrit backlog.  All feedback is welcome.
+
+And if you want to pitch in, please feel free to fix something - bug,
+typo, devstack fix, massive new feature, we will take anything.  Feel
+free to ask for help in #openstack-neutron or in the openstack-dev
+mailing list if you'd like a hand.  The bug list above is a good place
+to start, and there are TODO comments in the code, along with a
+handful of, er, 'deliberate' mistakes we put into the code to keep you
+interested (*ahem*).
 
 Why didn't you use the ML2 agent framework for this driver?
 -----------------------------------------------------------
@@ -205,177 +345,4 @@ The driver and agents should deal with disconnections across the
 board, and the agents know that they must resync themselves with
 the desired state when they completely lose track of what's happening.
 
-How to Install?
----------------
-
-1) CentOS(7.2) installation:
-    After completing the below installation steps for CentOS, skip the step #2
-    for Ubuntu installation and proceed from step #3
-
-    a) Install the VPP(16.09) RPM using the following base_url for the repo:https://nexus.fd.io/content/repositories/fd.io.centos7/
-
-       - sudo yum install vpp-16.09-release.x86_64
-
-    b) Install the python-API(16.09) RPM package for VPP
-
-       - sudo yum install https://github.com/vpp-dev/vpp/raw/1609-python/RPMs/vpp-python-api-16.09-release.x86_64.rpm
-
-    c) Install a newer qemu version.
-       The qemu package should be qemu-kvm-ev and the version should be
-       2.3.0-31.el7.16.1 or later
-
-       - sudo yum install -y centos-release-qemu-ev
-       - sudo yum update -y qemu-kvm-ev
-       - sudo yum remove -y qemu-system-x86 || true # remove in case you
-         had the old version
-
-    d) Install the etcd distributed key value store and start the service.
-       For more information on etcd refer to: https://coreos.com/etcd/docs/latest
-
-       - sudo yum -y install etcd
-       - sudo systemctl enable etcd
-       - sudo systemctl start etcd
-
-    e) Install the python client for etcd
-
-       - sudo pip install python-etcd
-
-
-2) Ubuntu(16.04) installation:
-    For Ubuntu, you will need to build VPP from source. For detailed
-    instructions refer to:
-    https://wiki.fd.io/view/VPP/Pulling,_Building,_Running,_Hacking_and_Pushing_VPP_Code
-
-    a) Here are the quick VPP installation steps for Ubuntu:
-
-       - git clone -b master https://gerrit.fd.io/r/vpp
-       - cd vpp  #This is the $VPPROOT directory
-       - make install-dep
-       - make build-release
-       - make build
-       - make build-vpp-api
-       - make pkg-deb    # make the debian pkgs
-       - cd build-root
-       - dpkg -i \*.deb  # install debian pkgs
-
-    b) After installing VPP, install the python api package for VPP.
-       This is required for the networking-vpp agent:
-
-       - cd $VPPROOT/vpp-api/python/
-       - sudo python setup.py install
-
-    c) Install the etcd distributed key value store and start the service.
-       For more information on etcd refer to: https://coreos.com/etcd/docs/latest
-
-       - sudo apt-get update
-       - sudo apt-get install etcd
-       - sudo service etcd start
-
-    d) Install the python client for etcd
-
-       - sudo pip install python-etcd
-
-  ::
-
-    # Note: Etcd keys hang around from previous runs and confuses matters
-    # Clean up the directory in etcd that we care about
-    for f in $(etcdctl ls --recursive /networking-vpp); do etcdctl rm $f ; done 2>/dev/null
-    for f in $(etcdctl ls --recursive /networking-vpp | sort -r); do etcdctl rmdir $f ; done  2>/dev/null
-
-3) Enable HugePages
-    The below command will use 4G of memory if you are using 2M
-    HugePage size; you're likely to want at least 8G in your system
-    for this to work happily. Nova doesn't respond to changes in hugepage
-    capacity. So it is recommended to restack after both setting the
-    number of huge pages and starting the VPP dataplane application
-    (which consumes some huge pages).
-
-    - sudo sysctl -w vm.nr_hugepages=2048
-
-4) Start the VPP service
-    VPP needs to be told what hugepages to use because we have to
-    tell the same number to OpenStack
-
-    - sudo sed -e '/dpdk /a socket-mem 512' -i /etc/vpp/startup.conf
-    - sudo service vpp restart (or)
-    - sudo systemctl enable vpp && sudo systemctl restart vpp
-
-5) Steps for devstack
-    We have tested our code against the Mitaka release and as a
-    result it is recommended to start with.
-
-    - git clone https://git.openstack.org/openstack-dev/devstack
-    - cd devstack
-    - git checkout stable/mitaka
-
-   Here's a sample local.conf with the settings we have tried. Ensure that
-   you update the below to match your environment.
-
-   ::
-
-     [[local|localrc]]
-     RABBIT_PASSWORD=password
-     DATABASE_PASSWORD=password
-     SERVICE_PASSWORD=password
-     ADMIN_PASSWORD=password
-
-     # Disable these services unless you need them
-     disable_service cinder c-sch c-api c-vol
-     disable_service tempest
-
-     # Standard settings for enabling Neutron
-     disable_service n-net
-     enable_service q-svc q-dhcp q-l3 q-meta
-
-     # The OVS/LB agent part of Neutron is not used
-     disable_service q-agt
-
-     #Enable networking-vpp plugin
-     enable_plugin networking-vpp https://github.com/openstack/networking-vpp
-
-     Q_PLUGIN=ml2
-     Q_ML2_PLUGIN_MECHANISM_DRIVERS=vpp
-     Q_ML2_PLUGIN_TYPE_DRIVERS=vlan,flat
-     Q_ML2_TENANT_NETWORK_TYPE=vlan
-     ML2_VLAN_RANGES=physnet1:100:200  # Set your correct Vlan ranges here
-     # Map physical networks to uplink trunk interfaces on VPP
-     # Find your uplink interfaces by using the command "sudo vppctl show int"
-     # Use local0 as the upstream interface if you are doing a one host deployment
-     # For a multi-node deployment make sure to use the correct uplink
-     interface in the local.conf file on each compute node. Separate multiple
-     interface mappings using a comma.
-     MECH_VPP_PHYSNETLIST=physnet1:GigabitEthernet2/2/0
-     # Etcd host to connect to
-     ETCD_HOST=X.X.X.X
-     # Etcd port to connect to
-     ETCD_PORT=2379
-
-   Stack it
-     ./stack.sh   #You may have to use FORCE=yes ./stack.sh on Ubuntu 16.04
-
-6) For VMs to run using vhostuser interfaces, they need hugepages
-    Enable hugepage support by setting the nova flavor key
-
-    - . ~/devstack/openrc admin admin
-    - nova flavor-key <flavor_name> set hw:mem_page_size=2048
-
-7) Now you have a working version of networking-vpp
-    Congrats!!
-
-8) Verification
-     Use the below commands as a starting point to confirm if things are okay
-
-   - sudo vppctl show bridge-domain # Examine the L2 bridge domains in VPP.
-       A bridge-domain is created in VPP for each neutron L2 network.
-
-   - sudo vppctl show bridge-domain <ID> detail # Examine the ports
-       The above command lists the ports belonging to a bridge domain. You
-       should see the VirtualEthernet interfaces of all the VMs and the tap
-       interfaces for any q-dhcp and q-router processes belonging to that
-       network.
-
-   - sudo vppctl show vhost-user # Examine the status of vhost-user ports
-       See if the memory regions have been mapped successfully
-
-
-.. _OpenVPP forwarder: https://wiki.fd.io/view/VPP/What_is_VPP%3F
+.. _VPP forwarder: https://wiki.fd.io/view/VPP/What_is_VPP%3F
