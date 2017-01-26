@@ -1115,11 +1115,11 @@ class VPPForwarder(object):
         LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
                   "for the current spoof filter", in_acl_idx, out_acl_idx)
         # Add the new spoof ACL to secgroups mapping if it is valid
-        if (spoof_acl.in_idx != 0xFFFFFFFF
-                and spoof_acl.out_idx != 0xFFFFFFFF and not spoof_acl):
+        if (in_acl_idx != 0xFFFFFFFF
+                and out_acl_idx != 0xFFFFFFFF and not spoof_acl):
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
-            LOG.debug("secgroup_watcher: adding spoof_acl %s to secgroup "
-                      "mapping %s", str(spoof_acl), secgroups)
+            LOG.debug("secgroup_watcher: adding a new spoof_acl %s to "
+                      "secgroups mapping %s", str(spoof_acl), secgroups)
             secgroups[COMMON_SPOOF_TAG] = spoof_acl
             LOG.debug("secgroup_watcher: current secgroup mapping: %s",
                       secgroups)
