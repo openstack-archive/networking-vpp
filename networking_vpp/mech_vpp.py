@@ -27,7 +27,10 @@ import re
 import six
 import time
 import traceback
+import uuid
 
+from agent.utils import EtcdHelper
+from etcdutils import EtcdElection
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
@@ -432,9 +435,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
+        self.election_key_space = LEADIN + '/election'
         self.do_etcd_mkdir(self.state_key_space)
         self.do_etcd_mkdir(self.port_key_space)
         self.do_etcd_mkdir(self.secgroup_key_space)
+        self.do_etcd_mkdir(self.election_key_space)
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
             self.register_secgroup_event_handler()
@@ -450,12 +455,17 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Newton and on
             ev = events.AFTER_CREATE
 
+        # Clear any previously elected master keys from the election key space
+        EtcdHelper(self.etcd_client).clear_state(self.election_key_space)
         registry.subscribe(self.start_threads, resources.PROCESS, ev)
 
     def start_threads(self, resource, event, trigger):
         LOG.debug('Starting background threads for Neutron worker')
-        self.return_thread = eventlet.spawn(self._return_worker)
-        self.forward_thread = eventlet.spawn(self._forward_worker)
+        # Assign a UUID to each worker thread to enable thread election
+        self.return_thread = eventlet.spawn(self._return_worker,
+                                            str(uuid.uuid4()))
+        self.forward_thread = eventlet.spawn(self._forward_worker,
+                                             str(uuid.uuid4()))
 
     def find_physnets(self):
         physical_networks = set()
@@ -873,12 +883,18 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Thrown when the directory already exists, which is fine
             pass
 
-    def _forward_worker(self):
+    def _forward_worker(self, thread_id):
         LOG.debug('forward worker begun')
 
         session = neutron_db_api.get_session()
+        etcd_election = EtcdElection(self.etcd_client, 'forward_worker',
+                                     self.election_key_space, thread_id,
+                                     wait_until_elected=True,
+                                     recovery_time=3)
         while True:
             try:
+                etcd_election.wait_until_elected()
+
                 def work(k, v):
                     LOG.debug('forward worker updating etcd key %s', k)
                     if self.do_etcd_update(k, v):
@@ -890,6 +906,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         return False
 
                 LOG.debug('forward worker reading journal')
+                # TODO(najoy): Limit the journal read entries processed
+                # by a worker thread to a finite number, say 50.
+                # This will ensure that one thread does not run forever.
+                # The re-election process will wake up one of the sleeping
+                # threads after the specified recovery_time of 3 seconds
+                # and will get a chance to split the available work
                 while db.journal_read(session, work):
                     pass
                 LOG.debug('forward worker has emptied journal')
@@ -926,7 +948,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     ######################################################################
 
-    def _return_worker(self):
+    def _return_worker(self, thread_id):
         """The thread that manages data returned from agents via etcd."""
 
         # TODO(ijw): this should begin by syncing state, particularly
@@ -981,4 +1003,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                     'etcd port feedback: %s', key)
 
         ReturnWatcher(self.etcd_client, 'return_worker',
-                      self.state_key_space, data=self).watch_forever()
+                      self.state_key_space, self.election_key_space,
+                      thread_id, wait_until_elected=True,
+                      recovery_time=3, data=self).watch_forever()
