@@ -23,6 +23,7 @@ import json
 import os
 from oslo_config import cfg
 from oslo_log import log as logging
+import random
 import re
 import six
 import time
@@ -432,9 +433,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
+        self.election_key_space = LEADIN + '/global/election'
         self.do_etcd_mkdir(self.state_key_space)
         self.do_etcd_mkdir(self.port_key_space)
         self.do_etcd_mkdir(self.secgroup_key_space)
+        self.do_etcd_mkdir(self.election_key_space)
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
             self.register_secgroup_event_handler()
@@ -449,13 +452,99 @@ class EtcdAgentCommunicator(AgentCommunicator):
         except Exception:
             # Newton and on
             ev = events.AFTER_CREATE
-
+        # Clear any stale master ID's present in the election key space
+        self.clear_election_key_space()
         registry.subscribe(self.start_threads, resources.PROCESS, ev)
+
+    def clear_election_key_space(self):
+        try:
+            for result in self.etcd_client.read(self.election_key_space,
+                                                recursive=True).children:
+                self.etcd_client.delete(result.key)
+        # Thrown when an attempt is made to delete the directory. This
+        # occurs when the election_key_space is empty
+        except etcd.EtcdNotFile:
+            pass
+        # rare: The TTL may have expired and the key is not present
+        # when we deleted the key
+        except etcd.EtcdKeyNotFound:
+            pass
 
     def start_threads(self, resource, event, trigger):
         LOG.debug('Starting background threads for Neutron worker')
-        self.return_thread = eventlet.spawn(self._return_worker)
-        self.forward_thread = eventlet.spawn(self._forward_worker)
+        # Assign an ID to each worker to facilitate a master thread election
+        self.return_thread = eventlet.spawn(self._return_worker,
+                                            random.randint(1, 10000))
+        self.forward_thread = eventlet.spawn(self._forward_worker,
+                                             random.randint(1, 10000))
+
+    def do_elect(self, name, thread_id, heartbeat=60):
+        """Elect a master thread among a group of worker threads.
+
+        Election Algorithm:-
+        1) Each worker thread is assigned a unique thread_id at launch time.
+        2) All threads start the election process by running this method.
+        3) An etcd master key, whose value equals its thread_id, with a TTL
+           equal to 2 * heartbeat, controls who becomes the master thread.
+        3) The thread that first succeeds in atomically writing its ID
+           to the etcd master key, becomes the master. The
+           remaining threads and go to sleep after a master has been elected.
+        4) The master thread then breaks out of the election loop and
+           starts doing work. It periodically refreshes the TTL value
+           of its key in etcd to let other threads know that it is alive.
+        5) The sleeping threads periodically wake up every to see if the
+           master key-value is present in etcd. If the key is absent,
+           they trigger a re-election and elect a new master, which begins
+           doing the work and continues from step 4 above.
+
+        Arguments:
+        name - A common thread name for the group of threads
+               that need to elect a master. For e.g.: forward_worker
+        thread_id - A unique thread id assigned to each thread in the group
+        heartbeat - Controls the master-key TTL and how often the re-election
+                    of master is triggered i.e. thread sleep-time
+        """
+        # Set a master key in etcd for forward and reverse workers
+        master_key = self.election_key_space + "/master_%s" % name
+        while True:
+            try:
+                LOG.debug("%s thread ID=%s reading master key %s "
+                          "from etcd", name, thread_id, master_key)
+                master_node = self.etcd_client.read(master_key)
+                LOG.debug("%s thread ID=%s master ID is %s",
+                          name, thread_id, master_node.value)
+                # refresh TTL if we are the master
+                if int(master_node.value) == thread_id:
+                    LOG.debug("%s master thread, has ID=%s", name, thread_id)
+                    LOG.debug("%s refreshing TTL for master thread ID=%s",
+                              name, thread_id)
+                    # Refresh the TTL by atomic compare and swap if we are
+                    # the master and then break to start watching
+                    self.etcd_client.write(master_key,
+                                           thread_id,
+                                           prevValue=thread_id,
+                                           ttl=2 * heartbeat)
+                    # The elected master breaks to start working, the other
+                    # threads go to sleep
+                    break
+                else:
+                    LOG.debug("%s my thread ID=%s, "
+                              "current master thread ID=%s",
+                              name, thread_id, master_node.value)
+                    LOG.debug("%s thread ID=%s sleeping for %s seconds",
+                              name, thread_id, 2 * heartbeat)
+                    eventlet.sleep(2 * heartbeat)
+            except etcd.EtcdKeyNotFound:
+                # Atomic write as master if the key does not exist
+                # with ttl = 2*heartbeat. The thread that writes the key
+                # first will become the master
+                LOG.debug("A master thread is not present")
+                LOG.debug("%s thread ID=%s is trying to become the master",
+                          name, thread_id)
+                self.etcd_client.write(master_key,
+                                       thread_id,
+                                       prevExist=False,
+                                       ttl=2 * heartbeat)
 
     def find_physnets(self):
         physical_networks = set()
@@ -873,12 +962,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Thrown when the directory already exists, which is fine
             pass
 
-    def _forward_worker(self):
+    def _forward_worker(self, thread_id):
         LOG.debug('forward worker begun')
 
         session = neutron_db_api.get_session()
         while True:
             try:
+                self.do_elect("forward_worker", thread_id, 60)
+
                 def work(k, v):
                     LOG.debug('forward worker updating etcd key %s', k)
                     if self.do_etcd_update(k, v):
@@ -926,7 +1017,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     ######################################################################
 
-    def _return_worker(self):
+    def _return_worker(self, thread_id):
         """The thread that manages data returned from agents via etcd."""
 
         # TODO(ijw): this should begin by syncing state, particularly
@@ -946,6 +1037,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # Agent deaths in this time will not be logged, so
                 # make this clear
                 LOG.debug('Sync lost, resetting agent liveness')
+
+            def do_elect(self, name, thread_id, heartbeat):
+                self.data.do_elect(name, thread_id, heartbeat)
 
             def do_work(self, action, key, value):
                 # Matches a port key, gets host and uuid
@@ -981,4 +1075,5 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                     'etcd port feedback: %s', key)
 
         ReturnWatcher(self.etcd_client, 'return_worker',
-                      self.state_key_space, data=self).watch_forever()
+                      self.state_key_space, thread_id,
+                      data=self).watch_forever()

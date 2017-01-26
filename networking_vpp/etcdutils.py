@@ -36,13 +36,15 @@ class EtcdWatcher(object):
     # eater.
     DANGER_PAUSE = 2
 
-    def __init__(self, etcd_client, name, watch_path, data=None, heartbeat=60):
+    def __init__(self, etcd_client, name, watch_path, thread_id=None,
+                 data=None, heartbeat=60):
         self.etcd_client = etcd_client
         self.tick = None
         self.name = name
         self.watch_path = watch_path
         self.data = data
         self.heartbeat = heartbeat
+        self.thread_id = thread_id
         pass
 
     @abstractmethod
@@ -57,6 +59,9 @@ class EtcdWatcher(object):
         # override me!
         pass
 
+    def do_elect(self, name, thread_id, heartbeat):
+        pass
+
     def watch_forever(self):
         """Watch a keyspace forevermore
 
@@ -67,6 +72,7 @@ class EtcdWatcher(object):
         while True:
             try:
                 self.do_tick()
+                self.do_elect(self.name, self.thread_id, self.heartbeat)
                 self.do_watch()
             except Exception as e:
                 LOG.warning('%s: etcd threw exception %s',
