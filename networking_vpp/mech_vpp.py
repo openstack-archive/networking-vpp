@@ -31,6 +31,7 @@ import traceback
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
+from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp.etcdutils import EtcdWatcher
@@ -39,7 +40,6 @@ from neutron.callbacks import registry
 from neutron.callbacks import resources
 from neutron import context as n_context
 from neutron.db import api as neutron_db_api
-from neutron.extensions import portbindings
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 
