@@ -1,0 +1,4 @@
+[run]
+omit =
+  networking_vpp/tests/*
+  */__init__.py
