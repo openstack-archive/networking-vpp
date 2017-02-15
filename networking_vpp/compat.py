@@ -35,6 +35,14 @@ except ImportError:
     n_exec = neutron.common.exceptions
 
 try:
+    n_const.UUID_PATTERN
+except AttributeError:
+    HEX_ELEM = '[0-9A-Fa-f]'
+    n_const.UUID_PATTERN = '-'.join([HEX_ELEM + '{8}', HEX_ELEM + '{4}',
+                                     HEX_ELEM + '{4}', HEX_ELEM + '{4}',
+                                     HEX_ELEM + '{12}'])
+
+try:
     # Newton+
     import neutron_lib.db.model_base
     import neutron_lib.plugins.directory
