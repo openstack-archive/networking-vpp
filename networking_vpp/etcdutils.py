@@ -18,6 +18,7 @@ from abc import abstractmethod
 import atexit
 import etcd
 import eventlet
+import eventlet.semaphore
 from oslo_log import log as logging
 import six
 import time
@@ -198,7 +199,7 @@ class EtcdWatcher(object):
         self.data = data
         self.heartbeat = heartbeat
 
-        # The _wait_until_elected is a switch that controls whether the
+        # The wait_until_elected is a switch that controls whether the
         # threads need to wait to do work until elected. Note that the agent
         # watcher threads do not require waiting for an election and as a
         # result, the this is set to False
@@ -211,17 +212,67 @@ class EtcdWatcher(object):
         else:
             self.etcd_elector = None
 
-    @abstractmethod
-    def resync(self):
-        pass
+        # Explicitly a semaphore, because we don't monkey patch 'threading'
+        # in the agent and can't use threading.Lock
+        self.etcd_data_lock = eventlet.semaphore.Semaphore()
+        self.etcd_data = None
+
+        # Get the initial state of etcd.
+        self.read_all_data()
+
+    def do_work(self, action, key, value):
+        """Process an indiviudal update received in a watch
+
+        Override this if you can deal with individual updates given
+        their location.  Leave it if all updates involve rereading all
+        downloaded data.
+
+        etcd_data is current when called and will not change during
+        the call.
+        """
+        self.do_all_work()
 
     @abstractmethod
-    def do_work(self, action, key, value):
+    def do_all_work(self, action, results=None):
+        """Process all updates from a refreshing read or a watch
+
+        This may happen on startup, on lost history or if the reader has no
+        better way to behave than checking all data.
+
+        etcd_data is current when called and will not change during
+        the call.
+        """
         pass
 
     def do_tick(self):
-        # override me!
+        """Do background tasks that can happen between etcd updates.
+
+        Will be called once per (heartbeat + result processing time)
+        """
         pass
+
+    def read_all_data(self):
+        """Load the entirety of the data we're watching from etcd.
+
+        This is used on initialisation.
+        """
+
+        LOG.debug("%s: resyncing in full", self.name)
+        rv = self.etcd_client.read(self.watch_path,
+                                   recursive=True)
+
+        with self.etcd_data_lock:
+            self.etcd_data = {}
+            for f in rv.children:
+                self.etcd_data[f.key] = f.value
+
+            self.do_all_work()
+
+        # TODO(ijw): there's a better number to use here
+        self.tick = rv.modifiedIndex + 1
+
+        LOG.debug("%s watch index recovered: %s",
+                  self.name, rv.modifiedIndex)
 
     def watch_forever(self):
         """Watch a keyspace forevermore
@@ -276,46 +327,39 @@ class EtcdWatcher(object):
                                                 index=self.tick,
                                                 timeout=self.heartbeat)
 
-                vals = [rv]
+                with self.etcd_data_lock:
 
-                next_tick = rv.modifiedIndex + 1
+                    # The processing function is entitled to check all etcd
+                    # data.  Update it before we call the processor.
+                    if rv.action == 'delete':
+                        del self.etcd_data[rv.key]
+                    else:
+                        self.etcd_data[rv.key] = rv.value
+
+                    # We can, in the case of a watch, hint at where the
+                    # update went.
+
+                    try:
+                        self.do_work(rv.action, rv.key, rv.value)
+                    except Exception:
+                        LOG.exception(('%s key %s value %s could'
+                                      'not be processed')
+                                      % (rv.action, rv.key, rv.value))
+                        # TODO(ijw) raise or not raise?  This is probably
+                        # fatal and incurable, because we will only repeat
+                        # the action on the next round.
+                        raise
+
+                # Update the tick only when all the above completes so that
+                # exceptions don't cause the count to skip before the data
+                # is processed
+                self.tick = rv.modifiedIndex + 1
 
             except etcd.EtcdEventIndexCleared:
                 # We can't follow etcd history in teaspoons, so
-                # grab the current state and implement it.
+                # grab the current state in its entirety.
 
-                LOG.debug("%s: resyncing in full", self.name)
-                rv = self.etcd_client.read(self.watch_path,
-                                           recursive=True)
-
-                # This appears as if all the keys have been updated -
-                # because we can't tell which have been and which haven't.
-                vals = rv.children
-
-                self.resync()
-
-                next_tick = rv.etcd_index + 1
-
-                LOG.debug("%s watch index recovered: %s",
-                          self.name, str(next_tick))
-
-            for kv in vals:
-
-                LOG.debug("%s: active, key %s", self.name, kv.key)
-
-                try:
-                    self.do_work(kv.action, kv.key, kv.value)
-                except Exception:
-                    LOG.exception('%s key %s value %s could not be processed'
-                                  % (kv.action, kv.key, kv.value))
-                    # TODO(ijw) raise or not raise?  This is probably
-                    # fatal and incurable.
-                    raise
-
-            # Update the tick only when all the above completes so that
-            # exceptions don't cause the count to skip before the data
-            # is processed
-            self.tick = next_tick
+                self.read_all_data()
 
         except (etcd.EtcdWatchTimedOut, UrllibTimeoutError, eventlet.Timeout):
             # This is normal behaviour, indicating either a watch timeout
@@ -324,3 +368,71 @@ class EtcdWatcher(object):
 
         # Other exceptions are thrown further, but a sensible background
         # thread probably catches them rather than terminating.
+
+
+@six.add_metaclass(ABCMeta)
+class EtcdChangeWatcher(EtcdWatcher):
+    """An etcd watcher framework that notifies only discrete changes
+
+    This deals with the start/resync/watch dilemmas and makes a single
+    'this key has changed' call regardless of what prompts it.
+    It does this by remembering what it's notified (via key_changed) in
+    the past, and avoiding any notification that amounts to 'this key has
+    changed to the same value'.  However, when we have to do a full resync
+    the ordering of key updates is not guaranteed.
+    """
+
+    def __init__(self, etcd_client, name, watch_path, election_path=None,
+                 thread_id=None, wait_until_elected=False, recovery_time=5,
+                 data=None, heartbeat=60):
+        self.implemented_state = {}
+
+        super(EtcdChangeWatcher, self).__init__(
+            etcd_client, name, watch_path, election_path,
+            thread_id, wait_until_elected, recovery_time,
+            data, heartbeat)
+
+    def do_all_work(self):
+        """Reimplement etcd state pending a change of some of it
+
+        Some undefined quantity of etcd's data has changed.
+        Work out what we've implemented, and re-implement the
+        remainder.
+        """
+
+        # First, spot keys that went away
+
+        in_keys = set(self.etcd_data.keys())
+        impl_keys = set(self.implemented_state.keys())
+
+        deleted_keys = impl_keys - in_keys
+        new_keys = in_keys - impl_keys
+        existing_keys = in_keys & impl_keys
+
+        for k in deleted_keys:
+            # Note: this will change implemented_state
+            self.do_work('delete', k, None)
+
+        for k in new_keys:
+            self.do_work('add', k, self.etcd_data[k])
+
+        for k in existing_keys:
+            if self.implemented_state[k] != \
+               self.etcd_data[k]:
+                self.do_work('change', k, self.etcd_data[k])
+
+    def do_work(self, action, key, value):
+        """Implement etcd state when it changes
+
+        This implements the state in VPP and notes the key/value
+        that VPP has implemented in self.implemented_state.
+        """
+        self.key_change(action, key, value)
+        if action == 'delete':
+            del self.implemented_state[key]
+        else:
+            self.implemented_state[key] = value
+
+    @abstractmethod
+    def key_change(self, action, key, value):
+        pass
