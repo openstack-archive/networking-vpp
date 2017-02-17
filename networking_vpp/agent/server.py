@@ -47,7 +47,7 @@ from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
-from networking_vpp.etcdutils import EtcdWatcher
+from networking_vpp.etcdutils import EtcdChangeWatcher
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
 from neutron.agent.linux import bridge_lib
@@ -1594,21 +1594,25 @@ class EtcdListener(object):
 
         self.etcd_helper.clear_state(self.state_key_space)
 
-        class PortWatcher(EtcdWatcher):
+        class PortWatcher(EtcdChangeWatcher):
 
             def do_tick(self):
                 # The key that indicates to people that we're alive
                 # (not that they care)
+                # TODO(ijw): use refresh after the create to avoid the
+                # notification
                 self.etcd_client.write(LEADIN + '/state/%s/alive' %
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
-            def resync(self):
-                # TODO(ijw): Need to do something here to prompt
-                # appropriate unbind/rebind behaviour
-                pass
+            def key_change(self, action, key, value):
+                """Implement etcd state when it changes
 
-            def do_work(self, action, key, value):
+                This implements the state in VPP and notes the key/value
+                that VPP has implemented in self.implemented_state.
+                """
+                LOG.warn('Key change: %s', key)
+
                 # Matches a port key, gets host and uuid
                 m = re.match(self.data.port_key_space + '/([^/]+)$', key)
 
@@ -1705,21 +1709,12 @@ class EtcdListener(object):
                     LOG.warning('Unexpected key change in etcd '
                                 'port feedback, key %s', key)
 
-        LOG.debug("Spawning port_watcher")
-        self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
-                                    self.port_key_space,
-                                    heartbeat=self.AGENT_HEARTBEAT,
-                                    data=self).watch_forever)
-
-        class SecGroupWatcher(EtcdWatcher):
+        class SecGroupWatcher(EtcdChangeWatcher):
 
             def do_tick(self):
                 pass
 
-            def resync(self):
-                pass
-
-            def do_work(self, action, key, value):
+            def key_change(self, action, key, value):
                 # Matches a security group key and does work
                 LOG.debug("secgroup_watcher: doing work for %s %s %s" %
                           (action, key, value))
@@ -1764,6 +1759,17 @@ class EtcdListener(object):
                                             self.secgroup_key_space,
                                             heartbeat=self.AGENT_HEARTBEAT,
                                             data=self).watch_forever)
+
+        # The security group watcher will load the secgroups before
+        # this point (before the thread is spawned) - that's helpful,
+        # because it means that the ports will be immediately createable
+        # as the secgroups are already available.
+        LOG.debug("Spawning port_watcher")
+        self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
+                                    self.port_key_space,
+                                    heartbeat=self.AGENT_HEARTBEAT,
+                                    data=self).watch_forever)
+
         self.pool.waitall()
 
 
