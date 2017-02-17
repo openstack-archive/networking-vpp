@@ -14,9 +14,6 @@
 
 from networking_vpp.db import models
 
-from oslo_log import log as logging
-LOG = logging.getLogger(__name__)
-
 
 def journal_read(session, func):
     """Read, process and delete (if successful) the oldest journal row.
