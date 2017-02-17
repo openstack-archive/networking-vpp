@@ -461,11 +461,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def start_threads(self, resource, event, trigger):
         LOG.debug('Starting background threads for Neutron worker')
-        # Assign a UUID to each worker thread to enable thread election
-        self.return_thread = eventlet.spawn(self._return_worker,
-                                            str(uuid.uuid4()))
-        self.forward_thread = eventlet.spawn(self._forward_worker,
-                                             str(uuid.uuid4()))
+        self.return_thread = self.make_return_worker()
+        self.forward_thread = self.make_forward_worker()
 
     def find_physnets(self):
         physical_networks = set()
@@ -883,12 +880,17 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Thrown when the directory already exists, which is fine
             pass
 
-    def _forward_worker(self, thread_id):
+    def make_forward_worker(self):
+        # Assign a UUID to each worker thread to enable thread election
+        return eventlet.spawn(self._forward_worker)
+
+    def _forward_worker(self):
         LOG.debug('forward worker begun')
 
         session = neutron_db_api.get_session()
         etcd_election = EtcdElection(self.etcd_client, 'forward_worker',
-                                     self.election_key_space, thread_id,
+                                     self.election_key_space,
+                                     str(uuid.uuid4()),
                                      wait_until_elected=True,
                                      recovery_time=3)
         while True:
@@ -948,28 +950,26 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     ######################################################################
 
+<<<<<<< HEAD
     def _return_worker(self, thread_id):
+=======
+    def make_return_worker(self):
+>>>>>>> 6aae894... Add new etcd watcher model
         """The thread that manages data returned from agents via etcd."""
 
-        # TODO(ijw): this should begin by syncing state, particularly
-        # of agents but also of any notifications for which we missed
-        # the watch event.
+        # TODO(ijw): agents and physnets should be checked before a bind
+        # is accepted
 
-        # TODO(ijw): agents
-        # TODO(ijw): notifications
+        # Note that the initial load is done before spawning the background
+        # watcher - this means that we're prepared with the information
+        # to accept bind requests.
 
-        class ReturnWatcher(EtcdWatcher):
+        class ReturnWatcher(EtcdChangeWatcher):
 
-            def resync(self):
-                # Ports may have been bound.  do_work will send an
-                # additional 'bound' notification for every port,
-                # which is harmless
-
-                # Agent deaths in this time will not be logged, so
-                # make this clear
-                LOG.debug('Sync lost, resetting agent liveness')
-
-            def do_work(self, action, key, value):
+            # Every key changes on a restart, which has the
+            # useful effect of resending all Nova notifications
+            # for 'port bound' events based on existing state.
+            def key_changed(self, action, key, value):
                 # Matches a port key, gets host and uuid
                 m = re.match(self.data.state_key_space +
                              '/([^/]+)/ports/([^/]+)$',
@@ -1002,7 +1002,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         LOG.warning('Unexpected key change in '
                                     'etcd port feedback: %s', key)
 
-        ReturnWatcher(self.etcd_client, 'return_worker',
-                      self.state_key_space, self.election_key_space,
-                      thread_id, wait_until_elected=True,
-                      recovery_time=3, data=self).watch_forever()
+        # Assign a UUID to each worker thread to enable thread election
+        return eventlet.spawn(
+            ReturnWatcher(self.etcd_client, 'return_worker',
+                          str(uuid.uuid4()), wait_until_elected=True,
+                          recovery_time=3,
+                          self.state_key_space, data=self).watch_forever)
