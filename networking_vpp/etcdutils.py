@@ -29,6 +29,7 @@ LOG = logging.getLogger(__name__)
 class EtcdElection(object):
     def __init__(self, etcd_client, name, election_path=None,
                  thread_id=None,
+                 wait_until_elected=False,
                  recovery_time=5):
         self.etcd_client = etcd_client
         self.name = name
@@ -38,6 +39,11 @@ class EtcdElection(object):
         # check if a master is alive and one of them will become the master
         # if the current master key has expired
         self.recovery_time = recovery_time
+        # The _wait_until_elected is a switch that controls whether the
+        # threads need to wait to do work until elected. Note that the agent
+        # watcher threads do not require waiting for an election and as a
+        # result, the this is set to False
+        self._wait_until_elected = wait_until_elected
         if election_path:
             self.master_key = election_path + "/master_%s" % self.name
 
@@ -71,32 +77,33 @@ class EtcdElection(object):
                         health of master is checked by the worker threads
         """
         # Start the election
-        while True:
-            try:
-                # Attempt to become master
-                self.etcd_client.write(self.master_key,
-                                       self.thread_id,
-                                       prevExist=False,
-                                       ttl=self.recovery_time)
-                LOG.debug("current master for %s threads is thread_id %s",
-                          self.name, self.thread_id)
-                # if successful, the master breaks to start doing work
-                break
-            # An etcdException means some other thread has already become
-            # the master
-            except etcd.EtcdException:
+        if self._wait_until_elected:
+            while True:
                 try:
-                    # Refresh TTL if master == us, then break to do work
+                    # Attempt to become master
                     self.etcd_client.write(self.master_key,
                                            self.thread_id,
-                                           prevValue=self.thread_id,
+                                           prevExist=False,
                                            ttl=self.recovery_time)
+                    LOG.debug("current master for %s threads is thread_id %s",
+                              self.name, self.thread_id)
+                    # if successful, the master breaks to start doing work
                     break
-                # All non-master threads will end up here, sleep for
-                # recovery_time and become master if the current master
-                # is dead
+                # An etcdException means some other thread has already become
+                # the master
                 except etcd.EtcdException:
-                    eventlet.sleep(self.recovery_time)
+                    try:
+                        # Refresh TTL if master == us, then break to do work
+                        self.etcd_client.write(self.master_key,
+                                               self.thread_id,
+                                               prevValue=self.thread_id,
+                                               ttl=self.recovery_time)
+                        break
+                    # All non-master threads will end up here, sleep for
+                    # recovery_time and become master if the current master
+                    # is dead
+                    except etcd.EtcdException:
+                        eventlet.sleep(self.recovery_time)
 
 
 @six.add_metaclass(ABCMeta)
@@ -118,6 +125,7 @@ class EtcdWatcher(EtcdElection):
                  data=None, heartbeat=60):
         super(EtcdWatcher, self).__init__(etcd_client, name, election_path,
                                           thread_id,
+                                          wait_until_elected,
                                           recovery_time)
         self.etcd_client = etcd_client
         self.tick = None
@@ -125,11 +133,6 @@ class EtcdWatcher(EtcdElection):
         self.watch_path = watch_path
         self.data = data
         self.heartbeat = heartbeat
-        # The _wait_until_elected is a switch that controls whether the
-        # threads need to wait to do work until elected. Note that the agent
-        # watcher threads do not require waiting for an election and as a
-        # result, the this is set to False
-        self._wait_until_elected = wait_until_elected
 
     @abstractmethod
     def resync(self):
@@ -153,8 +156,7 @@ class EtcdWatcher(EtcdElection):
         while True:
             try:
                 self.do_tick()
-                if self._wait_until_elected:
-                    self.wait_until_elected()
+                self.wait_until_elected()
                 self.do_watch()
             except Exception as e:
                 LOG.warning('%s: etcd threw exception %s',
