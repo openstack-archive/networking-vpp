@@ -22,9 +22,15 @@
 # that work was not repeated here where the aim was to get the APIs
 # worked out.  The two codebases will merge in the future.
 
+# eventlet must be monkey patched early or we confuse urllib3.
+import eventlet
+
+# We actually need to co-operate with a threaded callback in VPP, so
+# don't monkey patch the thread operations.
+eventlet.monkey_patch(thread=False)
+
 import binascii
 import etcd
-import eventlet
 import json
 import os
 import re
@@ -52,10 +58,6 @@ from oslo_log import log as logging
 
 
 LOG = logging.getLogger(__name__)
-
-# We actually need to co-operate with a threaded callback in VPP, so
-# don't monkey patch the thread operations.
-eventlet.monkey_patch(thread=False)
 
 # A model of a bi-directional VPP ACL corresponding to a secgroup
 VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
