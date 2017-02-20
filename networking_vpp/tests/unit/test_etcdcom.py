@@ -105,11 +105,6 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         assert (self.etcd_client._port_path(host, port) ==
                 "/networking-vpp/nodes/vpp0/ports/1234-5678-9012-3456")
 
-    def test_kick(self):
-        self.etcd_client.db_q_ev.ready.return_value = False
-        self.etcd_client.kick()
-        self.etcd_client.db_q_ev.send.assert_called_once_with(1)
-
     def given_port_context(self):
         from neutron.plugins.ml2 import driver_context as ctx
 

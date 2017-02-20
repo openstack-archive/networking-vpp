@@ -27,9 +27,7 @@ import re
 import six
 import time
 import traceback
-import uuid
 
-from agent.utils import EtcdHelper
 from etcdutils import EtcdElection
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import directory
@@ -436,6 +434,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
         self.election_key_space = LEADIN + '/election'
+        self.journal_kick_key = self.election_key_space + '/kick-journal'
         self.do_etcd_mkdir(self.state_key_space)
         self.do_etcd_mkdir(self.port_key_space)
         self.do_etcd_mkdir(self.secgroup_key_space)
@@ -447,7 +446,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
 
-        self.db_q_ev = eventlet.event.Event()
         try:
             # Liberty, Mitaka
             ev = events.AFTER_INIT
@@ -455,17 +453,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Newton and on
             ev = events.AFTER_CREATE
 
-        # Clear any previously elected master keys from the election key space
-        EtcdHelper(self.etcd_client).clear_state(self.election_key_space)
         registry.subscribe(self.start_threads, resources.PROCESS, ev)
 
     def start_threads(self, resource, event, trigger):
         LOG.debug('Starting background threads for Neutron worker')
         # Assign a UUID to each worker thread to enable thread election
-        self.return_thread = eventlet.spawn(self._return_worker,
-                                            str(uuid.uuid4()))
-        self.forward_thread = eventlet.spawn(self._forward_worker,
-                                             str(uuid.uuid4()))
+        self.return_thread = eventlet.spawn(self._return_worker)
+        self.forward_thread = eventlet.spawn(self._forward_worker)
 
     def find_physnets(self):
         physical_networks = set()
@@ -812,18 +806,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
     # succeed (so is a bad candidate for calling within or after a
     # transaction).
 
-    kick_count = 0
-
     def kick(self):
-        if not self.db_q_ev.ready():
-            self.kick_count = self.kick_count + 1
-            try:
-                self.db_q_ev.send(self.kick_count)
-            except AssertionError:
-                # We send even on triggered events (which is fine: it's a
-                # wakeup signal and harmless to send repeatedly), but
-                # we need to ignore the error
-                pass
+        # A thread in one Neutron process - possibly not this one -
+        # is waiting to send updates from the DB to etcd.  Wake it.
+        try:
+            self.etcd_client.write(self.journal_kick_key, '')
+        except etcd.EtcdException:
+            # A failed wake is not the end of the world.
+            pass
 
     def bind(self, session, port, segment, host, binding_type):
         # NB segmentation_id is not optional in the wireline protocol,
@@ -883,13 +873,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Thrown when the directory already exists, which is fine
             pass
 
-    def _forward_worker(self, thread_id):
+    def _forward_worker(self):
         LOG.debug('forward worker begun')
 
         session = neutron_db_api.get_session()
         etcd_election = EtcdElection(self.etcd_client, 'forward_worker',
-                                     self.election_key_space, thread_id,
-                                     wait_until_elected=True,
+                                     self.election_key_space,
+                                     work_time=PARANOIA_TIME + 3,
                                      recovery_time=3)
         while True:
             try:
@@ -910,8 +900,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # by a worker thread to a finite number, say 50.
                 # This will ensure that one thread does not run forever.
                 # The re-election process will wake up one of the sleeping
-                # threads after the specified recovery_time of 3 seconds
-                # and will get a chance to split the available work
+                # threads after the specified wait_time
+                # if this runs too long
                 while db.journal_read(session, work):
                     pass
                 LOG.debug('forward worker has emptied journal')
@@ -924,14 +914,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # work and failed to process it
                 try:
                     with eventlet.Timeout(PARANOIA_TIME):
-                        # Wait for kick
-                        dummy = self.db_q_ev.wait()
-                        # Clear the event - we will now process till
-                        # we've run out of things in the backlog
-                        # so any trigger lost in this gap is harmless
-                        self.db_q_ev.reset()
-                        LOG.debug("ML2_VPP(%s): worker thread kicked: %s"
-                                  % (self.__class__.__name__, str(dummy)))
+                        try:
+                            self.etcd_client.watch(self.journal_kick_key,
+                                                   timeout=PARANOIA_TIME - 5)
+                        except etcd.EtcdException:
+                            # Check the DB queue now, anyway
+                            pass
+
+                        LOG.debug("ML2_VPP(%s): worker thread kicked",
+                                  (self.__class__.__name__))
                 except eventlet.Timeout:
                     LOG.debug("ML2_VPP(%s): worker thread suspicious of "
                               "a long pause"
@@ -948,7 +939,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     ######################################################################
 
-    def _return_worker(self, thread_id):
+    def _return_worker(self):
         """The thread that manages data returned from agents via etcd."""
 
         # TODO(ijw): this should begin by syncing state, particularly
@@ -959,6 +950,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # TODO(ijw): notifications
 
         class ReturnWatcher(EtcdWatcher):
+
+            def __init__(self, etcd_client, name, watch_path,
+                         election_path=None, data=None):
+                super(ReturnWatcher, self).__init__(etcd_client,
+                                                    name, watch_path,
+                                                    election_path,
+                                                    wait_until_elected=True,
+                                                    data=data)
 
             def resync(self):
                 # Ports may have been bound.  do_work will send an
@@ -1004,5 +1003,4 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         ReturnWatcher(self.etcd_client, 'return_worker',
                       self.state_key_space, self.election_key_space,
-                      thread_id, wait_until_elected=True,
-                      recovery_time=3, data=self).watch_forever()
+                      data=self).watch_forever()
