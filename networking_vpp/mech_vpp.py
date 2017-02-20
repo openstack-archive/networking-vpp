@@ -889,7 +889,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         session = neutron_db_api.get_session()
         etcd_election = EtcdElection(self.etcd_client, 'forward_worker',
                                      self.election_key_space, thread_id,
-                                     wait_until_elected=True,
                                      recovery_time=3)
         while True:
             try:
