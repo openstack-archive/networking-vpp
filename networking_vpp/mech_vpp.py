@@ -29,7 +29,6 @@ import time
 import traceback
 import uuid
 
-from agent.utils import EtcdHelper
 from etcdutils import EtcdElection
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import directory
@@ -455,8 +454,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Newton and on
             ev = events.AFTER_CREATE
 
-        # Clear any previously elected master keys from the election key space
-        EtcdHelper(self.etcd_client).clear_state(self.election_key_space)
         registry.subscribe(self.start_threads, resources.PROCESS, ev)
 
     def start_threads(self, resource, event, trigger):
@@ -889,7 +886,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         session = neutron_db_api.get_session()
         etcd_election = EtcdElection(self.etcd_client, 'forward_worker',
                                      self.election_key_space, thread_id,
-                                     wait_until_elected=True,
+                                     work_time=PARANOIA_TIME + 3,
                                      recovery_time=3)
         while True:
             try:
@@ -960,6 +957,15 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         class ReturnWatcher(EtcdWatcher):
 
+            def __init__(self, etcd_client, name, watch_path,
+                         election_path=None, thread_id=None, data=None):
+                super(ReturnWatcher, self).__init__(etcd_client,
+                                                    name, watch_path,
+                                                    election_path,
+                                                    thread_id,
+                                                    wait_until_elected=True,
+                                                    data=data)
+
             def resync(self):
                 # Ports may have been bound.  do_work will send an
                 # additional 'bound' notification for every port,
@@ -1004,5 +1010,4 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         ReturnWatcher(self.etcd_client, 'return_worker',
                       self.state_key_space, self.election_key_space,
-                      thread_id, wait_until_elected=True,
-                      recovery_time=3, data=self).watch_forever()
+                      thread_id, data=self).watch_forever()
