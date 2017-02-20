@@ -27,8 +27,9 @@ LOG = logging.getLogger(__name__)
 
 
 class EtcdElection(object):
-    def __init__(self, etcd_client, name, election_path=None,
-                 thread_id=None,
+    def __init__(self, etcd_client, name, election_path,
+                 thread_id,
+                 work_time,
                  recovery_time=5):
         self.etcd_client = etcd_client
         self.name = name
@@ -38,8 +39,16 @@ class EtcdElection(object):
         # check if a master is alive and one of them will become the master
         # if the current master key has expired
         self.recovery_time = recovery_time
-        if election_path:
-            self.master_key = election_path + "/master_%s" % self.name
+
+        # Threads hold the lock for this lng because this is the most
+        # work they will do.
+        self.work_time = work_time
+        self.master_key = election_path + "/master_%s" % self.name
+
+        # We recommend you configure these log levels
+        # etcd_log = logging.getLogger('etcd.client')
+        # etcd_log.setLevel(logging.logging.WARNING)
+        # LOG.setLevel(logging.logging.INFO)
 
     def wait_until_elected(self):
         """Elect a master thread among a group of worker threads.
@@ -48,7 +57,7 @@ class EtcdElection(object):
         1) Each worker thread is assigned a unique thread_id at launch time.
         2) All threads start the election process by running this method.
         3) An etcd master key, whose value equals its thread_id, with a TTL
-           equal to the recovery_time, controls the master election process.
+           equal to the work_time, controls the master election process.
         3) The thread that first succeeds in atomically writing its ID
            to the etcd master key, becomes the master. The
            remaining threads and go to sleep after a master has been elected.
@@ -64,20 +73,19 @@ class EtcdElection(object):
            in etcd, they trigger a re-election and elect a new master,
            which begins doing the work.
 
-        name - A common thread name for the group of threads
-               that need to elect a master. For e.g.: forward_worker
-        thread_id - A unique thread id assigned to each thread in the group
-        recovery_time - Controls the master-key TTL and how often the
-                        health of master is checked by the worker threads
         """
         # Start the election
+        attempt = 0
         while True:
+            attempt = attempt + 1
+            LOG.debug('Thread %s attempting to get elected for %s, try %d',
+                      self.thread_id, self.name, attempt)
             try:
                 # Attempt to become master
                 self.etcd_client.write(self.master_key,
                                        self.thread_id,
                                        prevExist=False,
-                                       ttl=self.recovery_time)
+                                       ttl=self.work_time)
                 LOG.debug("current master for %s threads is thread_id %s",
                           self.name, self.thread_id)
                 # if successful, the master breaks to start doing work
@@ -86,21 +94,29 @@ class EtcdElection(object):
             # the master
             except etcd.EtcdException:
                 try:
+                    LOG.debug('Thread %s refreshing master for %s, try %d',
+                              self.thread_id, self.name, attempt)
                     # Refresh TTL if master == us, then break to do work
                     self.etcd_client.write(self.master_key,
                                            self.thread_id,
                                            prevValue=self.thread_id,
-                                           ttl=self.recovery_time)
+                                           ttl=self.work_time)
+                    LOG.debug('Thread %s refreshed master for %s, try %d',
+                              self.thread_id, self.name, attempt)
                     break
                 # All non-master threads will end up here, sleep for
                 # recovery_time and become master if the current master
                 # is dead
                 except etcd.EtcdException:
+                    LOG.debug('Thread %s failed to elect and is '
+                              'sleeping for %d secs, group %s, try %d',
+                              self.thread_id, self.recovery_time,
+                              self.name, attempt)
                     eventlet.sleep(self.recovery_time)
 
 
 @six.add_metaclass(ABCMeta)
-class EtcdWatcher(EtcdElection):
+class EtcdWatcher(object):
     # There's a thread election here because we want to keep the number
     # of equivalent watcher threads down as we are generally running
     # with multiple processes.
@@ -116,20 +132,32 @@ class EtcdWatcher(EtcdElection):
     def __init__(self, etcd_client, name, watch_path, election_path=None,
                  thread_id=None, wait_until_elected=False, recovery_time=5,
                  data=None, heartbeat=60):
-        super(EtcdWatcher, self).__init__(etcd_client, name, election_path,
-                                          thread_id,
-                                          recovery_time)
+
+        # NB: heartbeat + 5 + DANGER_PAUSE + whatever work you do is
+        # the loop total time.  This is important if we're going to
+        # do elections and we need to allow this quantity of time
+        # before the election lapses.
+
         self.etcd_client = etcd_client
         self.tick = None
         self.name = name
         self.watch_path = watch_path
         self.data = data
         self.heartbeat = heartbeat
+
         # The _wait_until_elected is a switch that controls whether the
         # threads need to wait to do work until elected. Note that the agent
         # watcher threads do not require waiting for an election and as a
         # result, the this is set to False
-        self._wait_until_elected = wait_until_elected
+        if wait_until_elected:
+            work_time = heartbeat + 5 + self.DANGER_PAUSE + self.recovery_time
+
+            self.etcd_elector = EtcdElection(etcd_client, name, election_path,
+                                             thread_id,
+                                             work_time=work_time,
+                                             recovery_time=recovery_time)
+        else:
+            self.etcd_elector = None
 
     @abstractmethod
     def resync(self):
@@ -153,8 +181,8 @@ class EtcdWatcher(EtcdElection):
         while True:
             try:
                 self.do_tick()
-                if self._wait_until_elected:
-                    self.wait_until_elected()
+                if self.etcd_elector:
+                    self.etcd_elector.wait_until_elected()
                 self.do_watch()
             except Exception as e:
                 LOG.warning('%s: etcd threw exception %s',
