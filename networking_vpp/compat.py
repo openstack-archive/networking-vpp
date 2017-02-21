@@ -67,23 +67,25 @@ except ImportError:
     model_base = neutron.db.model_base
 
 import os
+import re
 
 from neutron.agent.linux import bridge_lib
+from neutron.agent.linux import ip_lib
 
 
 def monkey_patch():
-    """Add backward compatibility to networking-vpp for Liberty
+    """Add backward compatibility to networking-vpp for Liberty.
 
     This monkey-patches a couple of bits of Neutron
     to enable compatibility with Liberty.
     """
-
     if 'owns_interface' not in dir(bridge_lib.BridgeDevice):
-        BRIDGE_INTERFACE_FS = "/sys/class/net/%(bridge)s/brif/%(interface)s"
 
         def owns_interface(self, interface):
+            bridge_interface_fs = \
+                "/sys/class/net/%(bridge)s/brif/%(interface)s"
             return os.path.exists(
-                BRIDGE_INTERFACE_FS % {'bridge': self.name,
+                bridge_interface_fs % {'bridge': self.name,
                                        'interface': interface})
 
         bridge_lib.BridgeDevice.owns_interface = owns_interface
@@ -108,3 +110,20 @@ def monkey_patch():
                 self.set_log_fail_as_error(orig_log_fail_as_error)
 
         bridge_lib.BridgeDevice.exists = exists
+
+    if 'disable_ipv6' not in dir(bridge_lib.BridgeDevice):
+
+        def disable_ipv6(self):
+            sysctl_name = re.sub(r'\.', '/', self.name)
+            cmd = 'net.ipv6.conf.%s.disable_ipv6=1' % sysctl_name
+            wrapper = ip_lib.IPWrapper(namespace=self.namespace)
+            try:
+                wrapper.netns.execute(
+                    ['sysctl', '-w', cmd],
+                    run_as_root=True,
+                    log_fail_as_error=self.log_fail_as_error)
+            except RuntimeError:
+                return 1
+            return 0
+
+        bridge_lib.BridgeDevice.disable_ipv6 = disable_ipv6

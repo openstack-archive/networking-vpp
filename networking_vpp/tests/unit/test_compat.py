@@ -27,3 +27,5 @@ class TestMonkeyPatch(base.BaseTestCase):
         self.assertTrue('exists' in dir(bridge_lib.BridgeDevice))
         self.assertTrue(
             'get_log_fail_as_error' in dir(bridge_lib.BridgeDevice))
+        self.assertTrue(
+            'disable_ipv6' in dir(bridge_lib.BridgeDevice))
