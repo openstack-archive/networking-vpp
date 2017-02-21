@@ -543,7 +543,7 @@ class VPPForwarder(object):
         if not br.owns_interface(int_tap_name):
             br.addif(int_tap_name)
 
-    def ensure_interface_on_host(self, if_type, uuid, mac):
+    def ensure_interface_on_host(self, if_type, uuid, mac, mtu):
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
             pass
@@ -599,6 +599,9 @@ class VPPForwarder(object):
                 elif if_type == 'vhostuser':
                     iface_idx = self.vpp.create_vhostuser(path, mac, tag)
 
+                if mtu is not None:
+                    pass #self.vpp.set_mtu(iface_idx, mtu)
+
             if if_type == 'plugtap':
                 # Plugtap interfaces belong in a kernel bridge, and we need
                 # to monitor for the other side attaching.
@@ -648,7 +651,10 @@ class VPPForwarder(object):
             # side of a failed binding in the caller.
             return None
         net_br_idx = net_data['bridge_domain_id']
-        props = self.ensure_interface_on_host(if_type, uuid, mac)
+
+        mtu = net_data.get('mtu', 1500)
+
+        props = self.ensure_interface_on_host(if_type, uuid, mac, mtu)
         iface_idx = props['iface_idx']
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
         props['net_data'] = net_data

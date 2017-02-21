@@ -161,6 +161,11 @@ class VPPInterface(object):
 
     ########################################
 
+    def set_mtu(self, if_idx, mtu):
+        self.call_vpp('sw_interface_set_mtu', sw_if_index=if_idx, mtu=mtu)
+
+    ########################################
+
     def __init__(self, log, vpp_cmd_queue_len=None):
         self.LOG = log
         jsonfiles = []
