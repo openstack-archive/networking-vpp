@@ -26,6 +26,9 @@ from threading import Lock
 import time
 import vpp_papi
 
+from networking_vpp._i18n import _LE
+from networking_vpp._i18n import _LI
+
 L2_VTR_POP_1 = 3
 
 
@@ -211,7 +214,7 @@ class VPPInterface(object):
         # flag that we can make use of to confirm success.
         # This isn't possible with multivalue calls, though.
         if getattr(t, 'retval', 0) != 0:
-            self.LOG.error('Failed VPP call: retval here is %s', t.retval)
+            self.LOG.error(_LE('Failed VPP call: retval here is %s'), t.retval)
             sys.exit(1)
 
         return t
@@ -285,7 +288,7 @@ class VPPInterface(object):
 
     def register_for_events(self, event, target):
         if target in self.registered_callbacks[event]:
-            raise Exception('Target %s already registered for Event %s',
+            raise Exception(_('Target {1} already registered for Event {2}'),
                             str(target), str(event))
         self.registered_callbacks[event].append(target)
         if len(self.registered_callbacks[event]) == 1:
@@ -295,7 +298,7 @@ class VPPInterface(object):
 
     def unregister_for_event(self, event, target):
         if target not in self.registered_callbacks[event]:
-            raise Exception('Target %s not registered for Event %s',
+            raise Exception(_('Target {1} not registered for Event {2}'),
                             str(target), str(event))
         self.registered_callbacks[event].remove(target)
         if len(self.registered_callbacks[event]) == 0:
@@ -346,7 +349,7 @@ class VPPInterface(object):
                     # nothing much happening and pause before rechecking
                     time.sleep(1)
             except Exception:
-                self.LOG.exception('Exception in vpp watcher thread')
+                self.LOG.exception(_LE('Exception in vpp watcher thread'))
 
     ########################################
 
@@ -503,7 +506,8 @@ class VPPInterface(object):
                           push_dot1q=push_dot1q,
                           tag1=tag1,
                           tag2=tag2)
-        self.LOG.info("Set subinterface vlan tag pop response: %s", str(t))
+        self.LOG.info(_LI("Set subinterface vlan tag pop response: %s"),
+                      str(t))
 
     def add_to_bridge(self, bridx, *ifidxes):
         for ifidx in ifidxes:

@@ -20,8 +20,9 @@ import eventlet
 from oslo_log import log as logging
 import six
 import time
-import traceback
 from urllib3.exceptions import TimeoutError as UrllibTimeoutError
+
+from networking_vpp._i18n import _LE
 
 LOG = logging.getLogger(__name__)
 
@@ -156,9 +157,9 @@ class EtcdWatcher(EtcdElection):
                 if self._wait_until_elected:
                     self.wait_until_elected()
                 self.do_watch()
-            except Exception as e:
-                LOG.warning('%s: etcd threw exception %s',
-                            self.name, traceback.format_exc(e))
+            except Exception:
+                LOG.exception(_LE('%s: etcd threw exception'),
+                              self.name)
                 # In case of a dead etcd causing continuous
                 # exceptions, the pause here avoids eating all the
                 # CPU
@@ -226,8 +227,9 @@ class EtcdWatcher(EtcdElection):
                 try:
                     self.do_work(kv.action, kv.key, kv.value)
                 except Exception:
-                    LOG.exception('%s key %s value %s could not be processed'
-                                  % (kv.action, kv.key, kv.value))
+                    LOG.exception(_LE('{1} key {2} value {3} could '
+                                      'not be processed'),
+                                  kv.action, kv.key, kv.value)
                     # TODO(ijw) raise or not raise?  This is probably
                     # fatal and incurable.
                     raise

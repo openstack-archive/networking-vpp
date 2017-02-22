@@ -31,12 +31,16 @@ eventlet.monkey_patch(thread=False)
 
 import binascii
 import etcd
-import json
+import jsonutils
 import os
 import re
 import sys
 import time
 import vpp
+
+from networking_vpp._i18n import _LC
+from networking_vpp._i18n import _LE
+from networking_vpp._i18n import _LW
 
 from collections import defaultdict
 from collections import namedtuple
@@ -323,13 +327,13 @@ class VPPForwarder(object):
     def get_if_for_physnet(self, physnet):
         ifname = self.physnets.get(physnet, None)
         if ifname is None:
-            LOG.error('Physnet %s requested but not in config',
+            LOG.error(_LE('Physnet %s requested but not in config'),
                       physnet)
             return None, None
         ifidx = self.vpp.get_ifidx_by_name(ifname)
         if ifidx is None:
-            LOG.error('Physnet %s interface %s does not '
-                      'exist in VPP', physnet, ifname)
+            LOG.error(_LE('Physnet {1} interface {2} does not '
+                          'exist in VPP'), physnet, ifname)
             return None, None
         return ifname, ifidx
 
@@ -355,8 +359,8 @@ class VPPForwarder(object):
 
         intf, ifidx = self.get_if_for_physnet(physnet)
         if intf is None:
-            LOG.error('Cannot create network because physnet'
-                      '%s config is broken', physnet)
+            LOG.error(_LE('Cannot create network because physnet'
+                          '%s config is broken'), physnet)
             return None
 
         # TODO(ijw): bridge domains have no distinguishing marks.
@@ -388,7 +392,7 @@ class VPPForwarder(object):
         #                                            self.vxlan_bcast_addr,
         #                                            seg_id)
         else:
-            raise Exception('network type %s not supported', net_type)
+            raise Exception(_('network type %s not supported'), net_type)
 
         # Mark this interface so that we can spot it on resync
         self.vpp.set_interface_tag(if_upstream,
@@ -421,7 +425,7 @@ class VPPForwarder(object):
 
             self.networks.pop((physnet, net_type, seg_id))
         else:
-            LOG.warning("Delete Network: network is unknown to agent")
+            LOG.warning(_LW("Delete Network: network is unknown to agent"))
 
     ########################################
     # stolen from LB driver
@@ -508,7 +512,7 @@ class VPPForwarder(object):
                 if _is_tap_configured(dev_name, bridge, br_name):
                     pending_taps.remove(tap)
                 elif time.time() > tap_timeout:
-                    LOG.warning("Timeout for tap %s", dev_name)
+                    LOG.warning(_LW("Timeout for tap %s"), dev_name)
                     pending_taps.remove(tap)
 
             # If we have more work, go for it straight away, otherwise
@@ -571,7 +575,7 @@ class VPPForwarder(object):
                 props = {'path': path}
             else:
                 raise UnsupportedInterfaceException(
-                    'unsupported interface type')
+                    _('unsupported interface type'))
 
             tag = port_tag(uuid)
 
@@ -642,8 +646,8 @@ class VPPForwarder(object):
 
         net_data = self.ensure_network_on_host(physnet, net_type, seg_id)
         if net_data is None:
-            LOG.error('port bind is not possible as physnet '
-                      'could not be configured')
+            LOG.error(_LE('port bind is not possible as physnet '
+                          'could not be configured'))
             # Returning None allows us to deal with the uplink
             # side of a failed binding in the caller.
             return None
@@ -714,7 +718,7 @@ class VPPForwarder(object):
                         except Exception as exc:
                             LOG.debug(exc)
             else:
-                LOG.error('Unknown port type %s during unbind',
+                LOG.error(_LE('Unknown port type %s during unbind'),
                           props['bind_type'])
             self.interfaces.pop(uuid)
 
@@ -818,7 +822,7 @@ class VPPForwarder(object):
                 acl_rule['dst_ip_addr'] = r['src_ip_addr']
                 acl_rule['dst_ip_prefix_len'] = r['src_ip_prefix_len']
             else:
-                LOG.error("Invalid rule %s to be reversed" % r)
+                LOG.error(_LE("Invalid rule %s to be reversed"), r)
                 return {}
             # Swap port range values
             acl_rule['srcport_or_icmptype_first'] = r[
@@ -905,10 +909,10 @@ class VPPForwarder(object):
             LOG.debug("secgroup_watcher: current secgroup mapping: %s"
                       % secgroups)
         except KeyError:
-            LOG.error("secgroup_watcher: received request to delete "
-                      "an unknown security group %s" % secgroup)
-        except Exception as e:
-            LOG.error("Exception while deleting ACL %s" % e)
+            LOG.error(_LE("secgroup_watcher: received request to delete "
+                          "an unknown security group %s"), secgroup)
+        except Exception:
+            LOG.exception(_LE("Exception while deleting ACL"))
 
     def get_secgroup_acl_map(self):
         """Read VPP ACL tag data, construct and return an acl_map
@@ -933,8 +937,8 @@ class VPPForwarder(object):
 
             LOG.debug("secgroup_watcher: created acl_map %s from "
                       "vpp acl tags" % acl_map)
-        except Exception as e:
-            LOG.error("Exception getting acl_map from vpp acl tags %s" % e)
+        except Exception:
+            LOG.exception(_LE("Exception getting acl_map from vpp acl tags"))
             raise
         return acl_map
 
@@ -1334,7 +1338,7 @@ class EtcdListener(object):
         LOG.debug('marking index %s as ready', str(sw_if_index))
         (port, props) = self.iface_state[sw_if_index]
         self.etcd_client.write(self.state_key_space + '/%s' % port,
-                               json.dumps(props))
+                               jsonutils.dumps(props))
 
     def acl_add_replace(self, secgroup, data):
         """Add or replace a VPP ACL.
@@ -1513,16 +1517,18 @@ class EtcdListener(object):
                                   "secgroup %s" % (acl, secgroup_id))
                         vpp_acls.append(acl)
                 else:
-                    LOG.error("port_watcher: Unable to locate a valid VPP ACL"
-                              "for secgroup %s in secgroups mapping %s after "
-                              "waiting several seconds for the mapping to "
-                              "populate" % (secgroup_id, secgroups))
-                    raise ACLNotFoundError("Could not find an ACL for "
-                                           "Secgroup %s" % secgroup_id)
+                    LOG.error(_LE("port_watcher: Unable to locate a valid VPP"
+                                  "ACL for secgroup {1} in secgroups mapping "
+                                  "{2} after waiting several seconds for the "
+                                  "mapping to populate"),
+                              secgroup_id, secgroups)
+                    raise ACLNotFoundError(_("Could not find an ACL for "
+                                             "Secgroup %s") % secgroup_id)
             except (ACLNotFoundError, Exception) as e:
-                LOG.error("port_watcher: ran into an exception while "
-                          "setting secgroup_ids %s on vpp port %s "
-                          "- details %s" % (secgroup_ids, sw_if_index, e))
+                LOG.error(_LE("port_watcher: ran into an exception while "
+                              "setting secgroup_ids {1} on vpp port {2} "
+                              "- details {3}"),
+                          secgroup_ids, sw_if_index, e)
         LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
                   "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
         self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
@@ -1632,7 +1638,7 @@ class EtcdListener(object):
                         # Create or update == bind
                         # NB most things will not change on an update.
                         # TODO(ijw): go through the cases.
-                        data = json.loads(value)
+                        data = jsonutils.loads(value)
                         props = self.data.bind(port,
                                                data['binding_type'],
                                                data['mac_address'],
@@ -1702,8 +1708,8 @@ class EtcdListener(object):
                                 props['iface_idx'])
 
                 else:
-                    LOG.warning('Unexpected key change in etcd '
-                                'port feedback, key %s', key)
+                    LOG.warning(_LW('Unexpected key change in etcd '
+                                    'port feedback, key %s'), key)
 
         LOG.debug("Spawning port_watcher")
         self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
@@ -1741,15 +1747,15 @@ class EtcdListener(object):
                             pass
                     else:
                         # create or update a secgroup == add_replace vpp acl
-                        data = json.loads(value)
+                        data = jsonutils.loads(value)
                         LOG.debug("secgroup_watcher: add_replace secgroup %s"
                                   % secgroup)
                         self.data.acl_add_replace(secgroup, data)
                         LOG.debug("secgroup_watcher: known secgroup to acl "
                                   "mappings %s" % secgroups)
                 else:
-                    LOG.warning('secgroup_watcher: Unexpected change in '
-                                'etcd secgroup feedback for key %s' % key)
+                    LOG.warning(_LW('secgroup_watcher: Unexpected change in '
+                                    'etcd secgroup feedback for key %s'), key)
 
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
@@ -1790,7 +1796,7 @@ def main():
         VPPRestart().wait()
 
     if not cfg.CONF.ml2_vpp.physnets:
-        LOG.error("Missing physnets config. Exiting...")
+        LOG.critical(_LC("Missing physnets config. Exiting..."))
         sys.exit(1)
 
     physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
@@ -1801,11 +1807,11 @@ def main():
                 (k, v) = f.split(':')
                 physnets[k] = v
             except Exception:
-                LOG.error("Could not parse physnet to interface mapping "
-                          "check the format in the config file: "
-                          "physnets = physnet1:<interface1>, "
-                          "physnet2:<interface>"
-                          )
+                LOG.error(_LE("Could not parse physnet to interface mapping "
+                              "check the format in the config file: "
+                              "physnets = physnet1:<interface1>, "
+                              "physnet2:<interface>"
+                              ))
                 sys.exit(1)
     vppf = VPPForwarder(physnets,
                         mac_age=cfg.CONF.ml2_vpp.mac_age,

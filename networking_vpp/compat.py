@@ -18,6 +18,11 @@
 # backwards-compatibility with stable/mitaka this will act as a translator
 # that passes constants and functions according to version number.
 
+# neutron_lib has a bunch of hacking checks explicitly to ensure that
+# newer versions of mech drivers don't go loading Neutron files.
+# Obviously, since we're trying to achieve backward compatibility, we
+# do precisely that - but that should only happen in this file.  The
+# no-qa comments are to allow that to work.
 
 try:
     # Ocata+
@@ -25,7 +30,7 @@ try:
     portbindings = neutron_lib.api.definitions.portbindings
 
 except ImportError:
-    import neutron.extensions.portbindings
+    import neutron.extensions.portbindings  # flake8: noqa: N530
     portbindings = neutron.extensions.portbindings
 
 try:
@@ -37,8 +42,8 @@ try:
     n_exec = neutron_lib.exceptions
 
 except ImportError:
-    import neutron.common.constants
-    import neutron.common.exceptions
+    import neutron.common.constants  # noqa: N530
+    import neutron.common.exceptions  # noqa: N530
 
     n_const = neutron.common.constants
     n_exec = neutron.common.exceptions
@@ -60,8 +65,8 @@ try:
     directory = neutron_lib.plugins.directory
 
 except ImportError:
-    import neutron.db.model_base
-    import neutron.manager
+    import neutron.db.model_base  # noqa: N530
+    import neutron.manager  # noqa: N530
 
     directory = neutron.manager.NeutronManager
     model_base = neutron.db.model_base
@@ -69,8 +74,9 @@ except ImportError:
 import os
 import re
 
-from neutron.agent.linux import bridge_lib
-from neutron.agent.linux import ip_lib
+# TODO(ijw): should be in neutron_lib
+from neutron.agent.linux import bridge_lib  # noqa: N530
+from neutron.agent.linux import ip_lib  # noqa: N530
 
 
 def monkey_patch():

@@ -19,15 +19,18 @@ from collections import namedtuple
 import etcd
 import eventlet
 import eventlet.event
-import json
+import jsonutils
 import os
 from oslo_config import cfg
 from oslo_log import log as logging
 import re
 import six
 import time
-import traceback
 import uuid
+
+from networking_vpp._i18n import _LE
+from networking_vpp._i18n import _LI
+from networking_vpp._i18n import _LW
 
 from agent.utils import EtcdHelper
 from etcdutils import EtcdElection
@@ -367,7 +370,7 @@ class AgentCommunicator(object):
             # TODO(ijw) wants a more permanent fix, because this only
             # happens due to the threading model.  We should be
             # spotting relevant changes in postcommit.
-            LOG.warning('ML2_VPP: recursion check hit on activating port')
+            LOG.warning(_LW('ML2_VPP: recursion check hit on activating port'))
         else:
             self.recursive = True
             plugin.update_port_status(context, port_id,
@@ -488,7 +491,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         remind the worker thread it may have work to do).
         """
 
-        LOG.info("ML2_VPP: Security groups feature is enabled")
+        LOG.info(_LI("ML2_VPP: Security groups feature is enabled"))
         # Liberty is not capable of trapping precommits, so we can't
         # register for them in that circumstance.
         try:
@@ -617,7 +620,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                  changed_sgids,
                                  deleted_rules=deleted_rules)
 
-    def send_sg_updates(self, context, sgids, deleted_rules=[]):
+    def send_sg_updates(self, context, sgids, deleted_rules=None):
         """Called when security group rules are updated
 
         Arguments:
@@ -629,6 +632,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         2. Build security group objects from their rules
         3. Write secgroup to the secgroup_key_space in etcd
         """
+
+        if deleted_rules is None:
+            deleted_rules = []
+
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
                   "updates for groups %s to etcd" % sgids)
         plugin = directory.get_plugin()
@@ -721,9 +728,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                                  ].split('/')
         # TODO(najoy): Add support for remote_group_id in sec-group-rules
         if rule['remote_group_id']:
-            LOG.warning("ML2_VPP: A remote-group-id value is specified in "
-                        "rule %s. Setting a remote_group_id in rules is "
-                        "not supported" % rule)
+            LOG.warning(_LW("ML2_VPP: A remote-group-id value is specified in "
+                            "rule %s. Setting a remote_group_id in rules is "
+                            "not supported"), rule)
         # Neutron uses -1 or None to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
@@ -871,7 +878,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     pass
             else:
                 LOG.debug('writing key %s', k)
-                self.etcd_client.write(k, json.dumps(v))
+                self.etcd_client.write(k, jsonutils.dumps(v))
             return True
         except Exception:       # TODO(ijw) select your exceptions
             return False
@@ -939,10 +946,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     pass
                 LOG.debug("ML2_VPP(%s): worker thread active"
                           % self.__class__.__name__)
-            except Exception as e:
+            except Exception:
                 # TODO(ijw): log exception properly
-                LOG.error("problems in forward worker: %s", e)
-                LOG.error(traceback.format_exc())
+                LOG.exception(_LE("problems in forward worker"))
                 # never quit
                 pass
 
@@ -995,12 +1001,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         host = m.group(1)
 
                         if action == 'delete':
-                            LOG.info('host %s has died', host)
+                            LOG.info(_LI('host %s has died'), host)
                         else:
-                            LOG.info('host %s is alive', host)
+                            LOG.info(_LI('host %s is alive'), host)
                     else:
-                        LOG.warning('Unexpected key change in '
-                                    'etcd port feedback: %s', key)
+                        LOG.warning(_LW('Unexpected key change in '
+                                    'etcd port feedback: %s'), key)
 
         ReturnWatcher(self.etcd_client, 'return_worker',
                       self.state_key_space, self.election_key_space,

@@ -15,7 +15,7 @@
 #    under the License.
 
 import etcd
-import json
+import jsonutils
 import pprint
 import re
 
@@ -56,7 +56,7 @@ for port in conn.network.ports():
                 "physnet": network.provider_physical_network,
                 "binding_type": port.binding_vif_type
             }
-            etcd_value = json.loads(port_in_etcd.value)
+            etcd_value = jsonutils.loads(port_in_etcd.value)
             problems = []
             for f in sorted(expected_data.keys()):
                 if f in etcd_value:
