@@ -19,7 +19,7 @@ from collections import namedtuple
 import etcd
 import eventlet
 import eventlet.event
-import json
+import jsonutils
 import os
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -279,8 +279,9 @@ class VPPMechanismDriver(api.MechanismDriver):
 
                 # TODO(ijw): for some reason this has an original host
                 # in here so we can't spot the first binding
-                LOG.error('host = %s orig = %s',
-                          port_context.host, port_context.original_host)
+                LOG.error('host = %(host)s orig = %(orig)s',
+                          host=port_context.host,
+                          orig=port_context.original_host)
 
                 # TODO(ijW): The agent driver checks for a change of
                 # host, but we're oddly seeing that the orig_host is
@@ -676,7 +677,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                  changed_sgids,
                                  deleted_rules=deleted_rules)
 
-    def send_sg_updates(self, context, sgids, deleted_rules=[]):
+    def send_sg_updates(self, context, sgids, deleted_rules=None):
         """Called when security group rules are updated
 
         Arguments:
@@ -688,6 +689,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         2. Build security group objects from their rules
         3. Write secgroup to the secgroup_key_space in etcd
         """
+
+        if deleted_rules is None:
+            deleted_rules = []
+
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
                   "updates for groups %s to etcd" % sgids)
         plugin = directory.get_plugin()
@@ -784,7 +789,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if rule['remote_group_id']:
             LOG.warning("ML2_VPP: A remote-group-id value is specified in "
                         "rule %s. Setting a remote_group_id in rules is "
-                        "not supported" % rule)
+                        "not supported", rule)
         # Neutron uses -1 or None to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
@@ -925,7 +930,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     pass
             else:
                 LOG.debug('writing key %s', k)
-                etcd_client.write(k, json.dumps(v))
+                etcd_client.write(k, jsonutils.dumps(v))
             return True
 
         except Exception:       # TODO(ijw) select your exceptions

@@ -23,7 +23,6 @@ from oslo_log import log as logging
 import re
 import six
 import time
-import traceback
 from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 import uuid
 
@@ -360,9 +359,9 @@ class EtcdWatcher(object):
                 if self.etcd_elector:
                     self.etcd_elector.wait_until_elected()
                 self.do_watch()
-            except Exception as e:
-                LOG.warning('%s: etcd threw exception %s',
-                            self.name, traceback.format_exc(e))
+            except Exception:
+                LOG.exception('%s: etcd threw exception',
+                              self.name)
                 # In case of a dead etcd causing continuous
                 # exceptions, the pause here avoids eating all the
                 # CPU
