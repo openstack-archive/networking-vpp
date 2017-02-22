@@ -15,7 +15,7 @@
 #    under the License.
 
 import etcd
-import json
+import jsonutils
 import re
 
 
@@ -61,7 +61,7 @@ for port in conn.network.ports():
             if port.ip_address is not None:
                 expected_data["ip_address"] = port.ip_address,
 
-            etcd_value = json.loads(port_in_etcd.value)
+            etcd_value = jsonutils.loads(port_in_etcd.value)
             problems = []
             for f in sorted(expected_data.keys()):
                 if f in etcd_value:
