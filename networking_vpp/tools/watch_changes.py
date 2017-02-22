@@ -15,9 +15,10 @@
 #    under the License.
 
 import etcd
-import json
 import re
 import time
+
+from oslo_serialization import jsonutils
 
 
 def dump_result(w):
@@ -27,8 +28,8 @@ def dump_result(w):
            ('ttl = %s ' % str(w.ttl) if w.ttl is not None else ''),
            w.modifiedIndex))
     try:
-        val = json.loads(w.value)
-        out = json.dumps(val, indent=4)
+        val = jsonutils.loads(w.value)
+        out = jsonutils.dumps(val, indent=4)
         print(' > ', re.sub("\n", "\n >  ", out))
     except Exception:
         print(' > ', w.value)

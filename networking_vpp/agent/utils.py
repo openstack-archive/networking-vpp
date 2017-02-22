@@ -14,9 +14,10 @@
 #    under the License.
 
 import etcd
+from oslo_log import log as logging
+
 from networking_vpp.agent import exceptions as vpp_agent_exec
 from networking_vpp.exceptions import InvalidEtcdCAConfig
-from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
 
