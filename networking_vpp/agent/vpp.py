@@ -211,7 +211,7 @@ class VPPInterface(object):
         # flag that we can make use of to confirm success.
         # This isn't possible with multivalue calls, though.
         if getattr(t, 'retval', 0) != 0:
-            self.LOG.error('Failed VPP call: retval here is %s', t.retval)
+            self.LOG.error('Failed VPP call to %s: retval is %s', func, t.retval)
             sys.exit(1)
 
         return t
