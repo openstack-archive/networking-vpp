@@ -14,9 +14,11 @@
 #    under the License.
 
 import etcd
+from oslo_log import log as logging
+
+from networking_vpp._i18n import _LW
 from networking_vpp.agent import exceptions as vpp_agent_exec
 from networking_vpp.exceptions import InvalidEtcdCAConfig
-from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
 
@@ -114,7 +116,7 @@ class EtcdClientFactory(object):
             self.etcd_args['ca_cert'] = ml2_vpp_conf.etcd_ca_cert
 
         else:
-            LOG.warning("etcd is not using HTTPS, insecure setting")
+            LOG.warning(_LW("etcd is not using HTTPS, insecure setting"))
 
     def client(self):
         etcd_client = etcd.Client(**self.etcd_args)

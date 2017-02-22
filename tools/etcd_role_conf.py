@@ -15,10 +15,12 @@
 #    under the License.
 
 import click
-import json
+import jsonutils
 import os
 import subprocess
 import sys
+
+from networking_vpp._i18n import _
 
 
 ETCDCTL_PATH = "etcdctl"
@@ -51,12 +53,12 @@ def check_output_input(*args, **kwargs):
         return subprocess.check_output(*args, **kwargs)
     else:
         if 'stdout' in kwargs:
-            raise ValueError('stdout argument not allowed, '
-                             'it will be overridden.')
+            raise ValueError(_('stdout argument not allowed, '
+                               'it will be overridden.'))
         if 'input' in kwargs:
             if 'stdin' in kwargs:
-                raise ValueError('stdin and input arguments '
-                                 'may not both be used.')
+                raise ValueError(_('stdin and input arguments '
+                                   'may not both be used.'))
             inputdata = kwargs['input']
             del kwargs['input']
             kwargs['stdin'] = subprocess.PIPE
@@ -155,7 +157,7 @@ def enable_authentication():
 @click.argument('conf', click.Path(exists=True))
 def smart_config(conf):
     # list existing compute nodes
-    json_conf = json.load(open(conf))
+    json_conf = jsonutils.load(open(conf))
 
     compute_nodes = json_conf['compute']
     network_controllers = json_conf['network']

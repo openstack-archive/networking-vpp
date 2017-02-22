@@ -19,7 +19,7 @@ from collections import namedtuple
 import etcd
 import eventlet
 import eventlet.event
-import json
+import jsonutils
 import os
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -27,6 +27,9 @@ import re
 import six
 import time
 
+from networking_vpp._i18n import _LE
+from networking_vpp._i18n import _LI
+from networking_vpp._i18n import _LW
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
@@ -279,8 +282,9 @@ class VPPMechanismDriver(api.MechanismDriver):
 
                 # TODO(ijw): for some reason this has an original host
                 # in here so we can't spot the first binding
-                LOG.error('host = %s orig = %s',
-                          port_context.host, port_context.original_host)
+                LOG.error(_LE('host = %(host)s orig = %(orig)s'),
+                          host=port_context.host,
+                          orig=port_context.original_host)
 
                 # TODO(ijW): The agent driver checks for a change of
                 # host, but we're oddly seeing that the orig_host is
@@ -519,7 +523,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         remind the worker thread it may have work to do).
         """
 
-        LOG.info("ML2_VPP: Security groups feature is enabled")
+        LOG.info(_LI("ML2_VPP: Security groups feature is enabled"))
 
         # NB security group rules cannot be updated, and security
         # groups themselves have no forwarder state in them, so we
@@ -676,7 +680,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                  changed_sgids,
                                  deleted_rules=deleted_rules)
 
-    def send_sg_updates(self, context, sgids, deleted_rules=[]):
+    def send_sg_updates(self, context, sgids, deleted_rules=None):
         """Called when security group rules are updated
 
         Arguments:
@@ -688,6 +692,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         2. Build security group objects from their rules
         3. Write secgroup to the secgroup_key_space in etcd
         """
+
+        if deleted_rules is None:
+            deleted_rules = []
+
         LOG.debug("ML2_VPP: etcd_communicator sending security group "
                   "updates for groups %s to etcd" % sgids)
         plugin = directory.get_plugin()
@@ -782,9 +790,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                                  ].split('/')
         # TODO(najoy): Add support for remote_group_id in sec-group-rules
         if rule['remote_group_id']:
-            LOG.warning("ML2_VPP: A remote-group-id value is specified in "
-                        "rule %s. Setting a remote_group_id in rules is "
-                        "not supported" % rule)
+            LOG.warning(_LW("ML2_VPP: A remote-group-id value is specified in "
+                            "rule %s. Setting a remote_group_id in rules is "
+                            "not supported"), rule)
         # Neutron uses -1 or None to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
@@ -925,7 +933,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     pass
             else:
                 LOG.debug('writing key %s', k)
-                etcd_client.write(k, json.dumps(v))
+                etcd_client.write(k, jsonutils.dumps(v))
             return True
 
         except Exception:       # TODO(ijw) select your exceptions
@@ -986,7 +994,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
             except Exception:
                 # TODO(ijw): log exception properly
-                LOG.exception("problems in forward worker - ignoring")
+                LOG.exception(_LE("problems in forward worker - ignoring"))
                 # never quit
                 pass
 
@@ -1048,7 +1056,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     # table.
                     host = m.group(1)
 
-                    LOG.info('host %s has died', host)
+                    LOG.info(_LI('host %s has died'), host)
 
         # Assign a UUID to each worker thread to enable thread election
         return eventlet.spawn(

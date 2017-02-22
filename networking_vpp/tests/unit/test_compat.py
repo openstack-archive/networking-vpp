@@ -15,8 +15,8 @@
 
 from networking_vpp import compat
 
-from neutron.agent.linux import bridge_lib
-from neutron.tests import base
+from neutron.agent.linux import bridge_lib  # flake8: noqa: N530
+from neutron.tests import base  # flake8: noqa: N530
 
 
 class TestMonkeyPatch(base.BaseTestCase):
