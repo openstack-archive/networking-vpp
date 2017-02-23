@@ -154,16 +154,16 @@ class EtcdElection(object):
                     #           'waiting for %d secs, group %s, try %d',
                     #           self.thread_id, self.recovery_time,
                     #           self.name, attempt)
-
-                    try:
-                        with eventlet.Timeout(self.recovery_time + 5):
+                    with eventlet.Timeout(self.recovery_time + 5, False):
+                        try:
                             self.etcd_client.watch(
                                 self.master_key,
                                 timeout=self.recovery_time)
-                    except (etcd.EtcdWatchTimedOut, eventlet.Timeout):
-                        pass
-                    except etcd.EtcdException:
-                        eventlet.sleep(self.recovery_time)
+                        except (etcd.EtcdWatchTimedOut, UrllibTimeoutError,
+                                eventlet.Timeout):
+                            pass
+                        except etcd.EtcdException:
+                            eventlet.sleep(self.recovery_time)
 
     def clean(self):
         """Release the election lock if we're currently elected.
