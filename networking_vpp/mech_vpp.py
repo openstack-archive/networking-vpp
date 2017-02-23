@@ -915,28 +915,16 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # Wait to be kicked, or (in case of emergency) run every
                 # few seconds in case another thread or process dumped
                 # work and failed to process it
-                try:
-                    with eventlet.Timeout(PARANOIA_TIME):
-                        try:
-                            self.etcd_client.watch(self.journal_kick_key,
-                                                   timeout=PARANOIA_TIME - 5)
-                        except etcd.EtcdException:
-                            # Check the DB queue now, anyway
-                            pass
+                with eventlet.Timeout(PARANOIA_TIME, False):
+                    try:
+                        self.etcd_client.watch(self.journal_kick_key,
+                                               timeout=PARANOIA_TIME - 5)
+                    except etcd.EtcdException:
+                        # Check the DB queue now, anyway
+                        pass
 
-                        LOG.debug("ML2_VPP(%s): worker thread kicked",
-                                  (self.__class__.__name__))
-                except eventlet.Timeout:
-                    LOG.debug("ML2_VPP(%s): worker thread suspicious of "
-                              "a long pause"
-                              % self.__class__.__name__)
-                    pass
-                LOG.debug("ML2_VPP(%s): worker thread active"
-                          % self.__class__.__name__)
             except Exception as e:
-                # TODO(ijw): log exception properly
-                LOG.error("problems in forward worker: %s", e)
-                LOG.error(traceback.format_exc())
+                LOG.exception("problems in forward worker")
                 # never quit
                 pass
 
