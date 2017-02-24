@@ -1728,12 +1728,6 @@ class EtcdListener(object):
                         self.data.acl_delete(secgroup)
                         LOG.debug("secgroup watcher: known secgroup to acl "
                                   "mappings %s" % secgroups)
-                        try:
-                            self.etcd_client.delete(
-                                self.data.secgroup_key_space + '/%s'
-                                % secgroup)
-                        except etcd.EtcdKeyNotFound:
-                            pass
                     else:
                         # create or update a secgroup == add_replace vpp acl
                         data = json.loads(value)
