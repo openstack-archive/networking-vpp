@@ -57,13 +57,15 @@ except ImportError:
 try:
     CREATE_COMMIT_TIME = events.PRECOMMIT_CREATE
     UPDATE_COMMIT_TIME = events.PRECOMMIT_UPDATE
-    DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
+    SECURITYGROUP_DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
+    SECURITYGROUP_RULE_DELETE_COMMIT_TIME = events.PRECOMMIT_DELETE
     PRECOMMIT = True
 except AttributeError:
     # Liberty fallbacks:
     CREATE_COMMIT_TIME = events.AFTER_CREATE
     UPDATE_COMMIT_TIME = events.AFTER_UPDATE
-    DELETE_COMMIT_TIME = events.AFTER_DELETE
+    SECURITYGROUP_DELETE_COMMIT_TIME = events.AFTER_DELETE
+    SECURITYGROUP_RULE_DELETE_COMMIT_TIME = events.BEFORE_DELETE
     PRECOMMIT = False
 
 LOG = logging.getLogger(__name__)
@@ -505,6 +507,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
             registry.subscribe(self.process_secgroup_commit,
                                resources.SECURITY_GROUP_RULE,
                                events.PRECOMMIT_DELETE)
+        else:
+            # if not pre commit events, need to subscripe
+            # before commit event for security group rule
+            registry.subscribe(self.process_secgroup_after,
+                               resources.SECURITY_GROUP_RULE,
+                               events.BEFORE_DELETE)
 
         # register post-commit events
         # security group post commit events
@@ -569,7 +577,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         deleted_rules = []
 
         if resource == resources.SECURITY_GROUP:
-            if event == DELETE_COMMIT_TIME:
+            if event == SECURITYGROUP_DELETE_COMMIT_TIME:
                 self.delete_secgroup_from_etcd(kwargs['security_group_id'])
             elif event == CREATE_COMMIT_TIME:
                 # When Neutron creates a security group it also
@@ -593,7 +601,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # rule and update its entire data.
             # NB: rules are never updated.
 
-            if event == DELETE_COMMIT_TIME:
+            if event == SECURITYGROUP_RULE_DELETE_COMMIT_TIME:
                 rule = self.get_secgroup_rule(res_id, context)
                 LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
                           (rule, res_id))
