@@ -26,7 +26,6 @@ from oslo_log import log as logging
 import re
 import six
 import time
-import traceback
 
 from etcdutils import EtcdElection
 from networking_vpp.agent import utils as nwvpp_utils
@@ -431,6 +430,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                        username=cfg.CONF.ml2_vpp.etcd_user,
                                        password=cfg.CONF.ml2_vpp.etcd_pass,
                                        allow_reconnect=True)
+
+        # For Liberty support, we have to have a memory between notifications
+        self.deleted_rule_secgroup_id = {}
+
         # We need certain directories to exist
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
@@ -522,8 +525,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
                            resources.SECURITY_GROUP_RULE,
                            events.AFTER_DELETE)
 
+        if not PRECOMMIT:
+            # Liberty requires a BEFORE_DELETE hack
+            registry.subscribe(self.process_secgroup_commit,
+                               resources.SECURITY_GROUP_RULE,
+                               events.BEFORE_DELETE)
+
     def process_secgroup_after(self, resource, event, trigger, **kwargs):
-        """Callback for handling security group commit-complete events
+        """Callback for handling security group/rule commit-complete events
 
         This is when we should tell other things that a change has
         happened and has been recorded permanently in the DB.
@@ -546,7 +555,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.kick()
 
     def process_secgroup_commit(self, resource, event, trigger, **kwargs):
-        """Callback for handling security group commit events
+        """Callback for handling security group/rule  commit events
 
         This is the time at which we should be committing any of our
         own auxiliary changes to the DB.
@@ -592,13 +601,34 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # rules.  So in this case we track down the affected
             # rule and update its entire data.
             # NB: rules are never updated.
+            if event == events.BEFORE_DELETE:
+                # This is a nasty little hack to add required information
+                # so that the AFTER_DELETE trigger can have it
+                # Fortunately the events described are all called from the
+                # one DB function and we will see all of them in the one
+                # process.  We use a dict in case multiple threads are
+                # working.  Only one of them will get to the AFTER if they're
+                # working on the one rule.
+                # This is ugly.  Liberty support is ugly.
+                rule = self.get_secgroup_rule(res_id, context)
+                self.deleted_rule_secgroup_id[res_id] = \
+                    rule['security_group_id']
 
             if event == DELETE_COMMIT_TIME:
-                rule = self.get_secgroup_rule(res_id, context)
-                LOG.debug("ML2_VPP: Fetched rule %s for rule_id %s" %
-                          (rule, res_id))
+
+                if PRECOMMIT:
+                    # This works for PRECOMMIT triggers, where the rule
+                    # is in the DB still
+                    rule = self.get_secgroup_rule(res_id, context)
+                    changed_sgids = [rule['security_group_id']]
+                else:
+                    # This works for AFTER_DELETE triggers (Liberty)
+                    # but only because we saved it in BEFORE_DELETE
+                    changed_sgids = [self.deleted_rule_secgroup_id[res_id]]
+                    # Clean up to keep the dict size down
+                    del self.deleted_rule_secgroup_id[res_id]
+
                 deleted_rules.append(res_id)
-                changed_sgids = [rule['security_group_id']]
 
             elif event == CREATE_COMMIT_TIME:
                 # Groups don't have the same UUID problem - we're not
@@ -618,7 +648,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         sgs - A list of one or more security group IDs
         context - The plugin context i.e. neutron.context.Context object
-        deleted-rules - An optional list of deleted rules
+        deleted_rules - An optional list of deleted rules
 
         1. Read security group rules from neutron DB
         2. Build security group objects from their rules
@@ -633,9 +663,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     context, filters={'security_group_id': [sgid]}
                     )
                 LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s", rules)
+
+                # If we're in the precommit part, we may have deleted
+                # rules in this list and we should exclude them
+                rules = (r for r in rules if r['id'] not in deleted_rules)
+
                 # Get the full details of the secgroup in exchange format
-                secgroup = self.get_secgroup_from_rules(sgid, rules,
-                                                        deleted_rules)
+                secgroup = self.get_secgroup_from_rules(sgid, rules)
+
                 # Write security group data to etcd
                 self.send_secgroup_to_agents(context.session, secgroup)
 
@@ -646,7 +681,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         with context.session.begin(subtransactions=True):
             return plugin.get_security_group_rule(context, rule_id)
 
-    def get_secgroup_from_rules(self, sgid, rules, deleted_rules):
+    def get_secgroup_from_rules(self, sgid, rules):
         """Build and return a security group namedtuple object.
 
         This object is the format with which we exchange data with
@@ -655,9 +690,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         sgid - ID of the security group
         rules - A list of security group rules as returned from the DB
-        deleted_rules - A set of rule IDs that have been deleted (and
-        which sometimes turn up in 'rules' because they're not gone from
-        memory yet)
 
         1. Filter rules using the input param: sgid to ensure that rules
         belong to that group
@@ -666,7 +698,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
         # A generator object of security group rules for sgid
         sg_rules = (r for r in rules if r['security_group_id'] == sgid)
-        sg_rules = (r for r in sg_rules if r['id'] not in deleted_rules)
+
         # A list of ingress and egress namedtuple rule objects
         ingress_rules = []
         egress_rules = []
@@ -935,10 +967,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     pass
                 LOG.debug("ML2_VPP(%s): worker thread active"
                           % self.__class__.__name__)
-            except Exception as e:
+            except Exception:
                 # TODO(ijw): log exception properly
-                LOG.error("problems in forward worker: %s", e)
-                LOG.error(traceback.format_exc())
+                LOG.exception("problems in forward worker - ignoring")
                 # never quit
                 pass
 
