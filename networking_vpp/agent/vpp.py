@@ -27,7 +27,7 @@ import time
 import vpp_papi
 
 L2_VTR_POP_1 = 3
-
+L2_VTR_DISABLED = 0
 
 def mac_to_bytes(mac):
     return str(''.join(chr(int(x, base=16)) for x in mac.split(':')))
@@ -115,6 +115,12 @@ class VPPInterface(object):
                           custom_dev_instance=0,
                           tag=tag)
 
+        if t >= 0:
+            # TODO(ijw): This is a temporary fix to a 17.01 bug where new
+            # interfaces sometimes come up with VLAN rewrites set on them.
+            # It breaks atomicity of this call and it should be removed.
+            self.disable_vlan_rewrite(t.sw_if_index)
+
         return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
     def delete_tap(self, idx):
@@ -152,6 +158,12 @@ class VPPInterface(object):
             gid = grp.getgrnam(qemu_group).gr_gid
             os.chown(ifpath, uid, gid)
             os.chmod(ifpath, 0o770)
+
+        if t >= 0:
+            # TODO(ijw): This is a temporary fix to a 17.01 bug where new
+            # interfaces sometimes come up with VLAN rewrites set on them.
+            # It breaks atomicity of this call and it should be removed.
+            self.disable_vlan_rewrite(t.sw_if_index)
 
         return t.sw_if_index
 
@@ -496,6 +508,9 @@ class VPPInterface(object):
 
     def set_vlan_remove(self, if_id):
         self.set_vlan_tag_rewrite(if_id, L2_VTR_POP_1, 0, 0, 0)
+
+    def disable_vlan_rewrite(self, if_id):
+        self.set_vlan_tag_rewrite(if_id, L2_VTR_DISABLED, 0, 0, 0)
 
     def set_vlan_tag_rewrite(self, if_id, vtr_op, push_dot1q, tag1, tag2):
         t = self.call_vpp('l2_interface_vlan_tag_rewrite',
