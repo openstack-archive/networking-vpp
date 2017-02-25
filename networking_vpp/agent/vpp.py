@@ -27,6 +27,7 @@ import time
 import vpp_papi
 
 L2_VTR_POP_1 = 3
+L2_VTR_DISABLED = 0
 
 
 def mac_to_bytes(mac):
@@ -152,6 +153,8 @@ class VPPInterface(object):
             gid = grp.getgrnam(qemu_group).gr_gid
             os.chown(ifpath, uid, gid)
             os.chmod(ifpath, 0o770)
+
+        self.set_vlan_tag_rewrite(t.sw_if_index, L2_VTR_DISABLED, 0, 0, 0)
 
         return t.sw_if_index
 
