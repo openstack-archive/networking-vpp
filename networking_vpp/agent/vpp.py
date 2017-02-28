@@ -14,6 +14,7 @@
 #    under the License.
 
 
+import binascii
 import collections
 import enum
 import eventlet
@@ -36,6 +37,16 @@ def mac_to_bytes(mac):
 
 def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
+
+
+def bytes_to_mac(mbytes):
+    mac_str = binascii.hexlify(mbytes)[:12]
+    # list of mac hex values
+    mac_hex = []
+    for i in xrange(6):
+        mac_hex.append(mac_str[:2])
+        mac_str = mac_str[2:]
+    return ":".join(mac_hex)
 
 
 def singleton(cls):
@@ -564,3 +575,136 @@ class VPPInterface(object):
                           admin_up_down=0,
                           link_up_down=0,
                           deleted=0)
+
+    def is_lisp_enabled(self):
+        t = self.call_vpp('show_lisp_status')
+        self.LOG.info("is_lisp_enabled response: %s", str(t))
+        return t.gpe_status
+
+    def get_bridge_domains(self):
+        t = self.call_vpp('bridge_domain_dump', bd_id=0xffffffff)
+        return set([bd.bd_id for bd in t])
+
+    def get_eid_map(self):
+        t = self.call_vpp('lisp_eid_table_map_dump', is_l2=1)
+        return [(eid_map.vni, eid_map.dp_table) for eid_map in t]
+
+    def lisp_enable_disable(self, is_en):
+        t = self.call_vpp('lisp_enable_disable',
+                          is_en=is_en)
+        self.LOG.info("lisp_enable_disable response: %s", str(t))
+
+    def lisp_eid_table_add_del_map(self, is_add, vni, dp_table, is_l2):
+        t = self.call_vpp('lisp_eid_table_add_del_map',
+                          is_add=is_add,
+                          vni=vni,
+                          dp_table=dp_table,
+                          is_l2=is_l2)
+        self.LOG.info("lisp_eid_table_add_del_map response: %s", str(t))
+
+    def set_interface_add_del_address(self, sw_if_index, is_add, is_ipv6,
+                                      del_all, address_length, address):
+        t = self.call_vpp('sw_interface_add_del_address',
+                          sw_if_index=sw_if_index,
+                          is_add=is_add,
+                          is_ipv6=is_ipv6,
+                          del_all=False,
+                          address_length=address_length,
+                          address=address)
+        self.LOG.info("set_interface_add_del_address response: %s", str(t))
+
+    def lisp_add_del_local_eid(self, is_add, eid_type, eid, prefix_len,
+                               locator_set_name, vni):
+        t = self.call_vpp('lisp_add_del_local_eid',
+                          is_add=is_add,
+                          eid_type=eid_type,
+                          eid=eid,
+                          prefix_len=prefix_len,
+                          locator_set_name=locator_set_name,
+                          vni=vni)
+        self.LOG.info("lisp_add_del_local_eid response: %s", str(t))
+
+    def lisp_add_del_locator_set(self, is_add, locator_set_name,
+                                 locator_num=0,
+                                 locators=[]):
+        t = self.call_vpp('lisp_add_del_locator_set',
+                          is_add=is_add,
+                          locator_set_name=locator_set_name,
+                          locator_num=locator_num,
+                          locators=locators)
+        self.LOG.info("lisp_add_del_locator_set response: %s", str(t))
+        return t.ls_index
+
+    def lisp_add_del_locator(self, is_add, locator_set_name, sw_if_index,
+                             priority, weight):
+        t = self.call_vpp('lisp_add_del_locator',
+                          is_add=is_add,
+                          locator_set_name=locator_set_name,
+                          sw_if_index=sw_if_index,
+                          priority=priority,
+                          weight=weight)
+        self.LOG.info("lisp_add_del_locator response: %s", str(t))
+
+    def get_lisp_local_locators(self, name):
+        """Get the lisp local locator interface indices for a locator set.
+
+        arguments:-
+        name: Locator set name
+        """
+        locators = []
+        # filter=1 for local locators
+        t = self.call_vpp('lisp_locator_set_dump', filter=1)
+        for ls in t:
+            ls_set_name = fix_string(ls.ls_name)
+            if ls_set_name == name:
+                locators.append({'locator_set_name': ls_set_name,
+                                 'locator_set_index': ls.ls_index,
+                                 'sw_if_indxs': [intf.sw_if_index for
+                                                 intf in self.call_vpp(
+                                                     'lisp_locator_dump',
+                                                     ls_name=str(ls_set_name))
+                                                 ]
+                                 }
+                                )
+        return locators
+
+    def get_lisp_locator_ip(self, locator_index):
+        """Get the IP address of the locator from its index"""
+        t = self.call_vpp('lisp_locator_dump',
+                          ls_index=locator_index,
+                          is_index_set=1)
+        self.LOG.info("lisp_locator_dump for locator_index %s response: %s",
+                      locator_index, str(t))
+        for locator in t:
+            return {'ip_bytes': locator.ip_address,
+                    'is_ipv6': locator.is_ipv6}
+
+    def get_lisp_eid_table(self):
+        t = self.call_vpp('lisp_eid_table_dump')
+        return [{'is_local': val.is_local,
+                 'locator_set_index': val.locator_set_index,
+                 'mac': bytes_to_mac(val.eid),
+                 'vni': val.vni
+                 }
+                for val in t]
+
+    def add_del_remote_mapping(self, is_add, vni, mac, remote_locator=[]):
+        """Add a gpe remote mapping entry
+
+        arguments:-
+        is_add - 1 for adding and 0 for deleting the mapping
+        vni - virtual network identifier
+        mac - remote mac_address
+        remote_locator - [{"is_ip4": <value>, "priority": 1, "weight": 1,
+                           "addr": <binary IPv4 or IPv6 address>}])
+        """
+        t = self.call_vpp('lisp_add_del_remote_mapping',
+                          is_add=is_add,
+                          vni=vni,
+                          eid_type=2,
+                          eid=binascii.unhexlify(mac.replace(':', '')),
+                          rlocs=remote_locator,
+                          rloc_num=len(remote_locator),
+                          is_src_dst=0
+                          )
+        self.LOG.info("lisp_add_del_remote_mapping response: %s", str(t))

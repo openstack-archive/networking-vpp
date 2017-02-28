@@ -21,7 +21,14 @@ vpp_opts = [
                help=_("Comma-separated list of net-name:interface-name for "
                       "physical connections")),
     cfg.StrOpt('vxlan_src_addr',
-               help=_("Source address used for VXLAN tunnel packets.")),
+               help=_("source_ip_address/mask used for "
+                      "VXLAN tunnel packets.")),
+    cfg.StrOpt('gpe_locator_iface',
+               help=_("The underlay locator interface used for GPE within "
+                      "VPP. The agent will configure this interface with "
+                      "the vxlan source ip address and will assume it has "
+                      "Layer3 reachability with all locator interfaces "
+                      "on compute and network nodes.")),
     cfg.StrOpt('vxlan_bcast_addr',
                help=_("Broadcast address used to set up VXLAN tunnels.")),
     cfg.StrOpt('vxlan_vrf',
