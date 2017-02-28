@@ -33,6 +33,13 @@ ETCD_CA_CERT=${ETCD_CA_CERT:-}
 #Enable VPP restart by the Agent
 ENABLE_VPP_RESTART=${ENABLE_VPP_RESTART:-False}
 
+#Settings for GPE Overlay
+#Source IPv4 or IPv6 ip_address/mask for the GPE uplink interface
+GPE_SRC_CIDR=${GPE_SRC_CIDR:-}
+#The name(s) of the physnet interface used by GPE for uplink
+#In the current version, only one physnet name is supported
+GPE_LOCATORS=${GPE_LOCATORS:-}
+
 #VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 #VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
 #VXLAN_VRF=${VXLAN_VRF:-1}
