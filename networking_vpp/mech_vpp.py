@@ -236,14 +236,14 @@ class VPPMechanismDriver(api.MechanismDriver):
         # way we always send it out and it's the far end's job to
         # ignore it.  Doing less work is nevertheless good, so we
         # should in future avoid the send.
+        if port_context.original_binding_levels is None:
+            prev_bind = None
+        else:
+            prev_bind = port_context.original_binding_levels[-1]
 
+        # bind port to new host
         if port_context.binding_levels is not None:
             current_bind = port_context.binding_levels[-1]
-            if port_context.original_binding_levels is None:
-                prev_bind = None
-            else:
-                prev_bind = port_context.original_binding_levels[-1]
-
             binding_type = self.get_vif_type(port_context)
 
             if (current_bind is not None and
@@ -255,12 +255,13 @@ class VPPMechanismDriver(api.MechanismDriver):
                                        current_bind[api.BOUND_SEGMENT],
                                        port_context.host,
                                        binding_type)
-            elif (prev_bind is not None and
-                  prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
-                # If we were the last binder of this port but are no longer
-                self.communicator.unbind(port_context._plugin_context.session,
-                                         port_context.current,
-                                         port_context.original_host)
+        # unbind port from old host
+        if (prev_bind is not None and
+                prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME and
+                port_context.host != port_context.original_host):
+            self.communicator.unbind(port_context._plugin_context.session,
+                                     port_context.original,
+                                     port_context.original_host)
 
     def update_port_postcommit(self, port_context):
         """Work to do, post-DB commit, when updating a port
@@ -296,9 +297,10 @@ class VPPMechanismDriver(api.MechanismDriver):
     def delete_port_precommit(self, port_context):
         port = port_context.current
         host = port_context.host
-        LOG.debug('ML2_VPP: delete_port_postcommit, port is %s', str(port))
-        self.communicator.unbind(port_context._plugin_context.session,
-                                 port, host)
+        if host:
+            LOG.debug('ML2_VPP: delete_port_postcommit, port is %s', str(port))
+            self.communicator.unbind(port_context._plugin_context.session,
+                                     port, host)
 
     def delete_port_postcommit(self, port_context):
         self.communicator.kick()
@@ -840,6 +842,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.kick()
 
     def unbind(self, session, port, host):
+        LOG.debug("ML2_VPP: Queueing unbind request for port:%s, host:%s.",
+                  port, host)
         db.journal_write(session, self._port_path(host, port), None)
         self.kick()
 
