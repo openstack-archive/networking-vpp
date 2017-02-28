@@ -188,12 +188,23 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
             current_bind[api.BOUND_SEGMENT],
             port_context.host,
             'vhostuser')
-        port_context.binding_levels = [None]
-        self.mech.update_port_precommit(port_context)
         self.mech.communicator.unbind.assert_called_once_with(
             port_context._plugin_context.session,
-            port_context.current,
+            port_context.original,
             port_context.original_host)
+        # reset mocks and set the original host the same with host
+        self.mech.communicator.bind.reset_mock()
+        self.mech.communicator.unbind.reset_mock()
+        port_context.original_host = "hostA"
+        port_context.host = "hostA"
+        self.mech.update_port_precommit(port_context)
+        self.mech.communicator.bind.assert_called_once_with(
+            port_context._plugin_context.session,
+            port_context.current,
+            current_bind[api.BOUND_SEGMENT],
+            port_context.host,
+            'vhostuser')
+        self.mech.communicator.unbind.assert_not_called()
 
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.kick')
     def test_update_port_postcommit(self, m_kick):
