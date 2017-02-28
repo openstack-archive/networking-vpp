@@ -33,6 +33,12 @@ ETCD_CA_CERT=${ETCD_CA_CERT:-}
 #Enable VPP restart by the Agent
 ENABLE_VPP_RESTART=${ENABLE_VPP_RESTART:-False}
 
+#Settings for GPE Overlay
+#Source IPv4 or IPv6 CIDR (e.g.10.1.1.1/24) for the GPE underlay intf.
+GPE_SRC_CIDR=${GPE_SRC_CIDR:-}
+#Underlay interface used for the GPE overlay
+GPE_LOCATOR_IFACE=${GPE_LOCATOR_IFACE:-}
+
 #VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 #VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
 #VXLAN_VRF=${VXLAN_VRF:-1}

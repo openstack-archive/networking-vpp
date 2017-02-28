@@ -53,7 +53,7 @@ from networking_vpp.mech_vpp import SecurityGroupRule
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
-from neutron.conf.agent import securitygroups_rpc
+from neutron.plugins.ml2 import config
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -69,13 +69,10 @@ VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
 # VPP does not maintain any session states
 reflexive_acls = True
 
-# Register security group option
-securitygroups_rpc.register_securitygroups_opts()
-
-# config_opts is required to configure the options within it, but
+# config_opts and config are required to configure the options within it, but
 # not referenced from here, so shut up tox:
 assert config_opts
-
+assert config
 
 # Apply monkey patch if necessary
 compat.monkey_patch()
@@ -227,6 +224,11 @@ def decode_secgroup_tag(tag):
     return None, None
 
 ######################################################################
+# GPE constants
+# A name for a GPE locator-set, which is a set of underlay interface indexes
+gpe_lset_name = 'net-vpp-gpe-lset-1'
+
+#######################################################################
 
 
 class UnsupportedInterfaceException(Exception):
@@ -246,9 +248,11 @@ class VPPForwarder(object):
                  mac_age,
                  tap_wait_time,
                  vpp_cmd_queue_len=None,
+                 gpe_src_cidr=None,
                  vxlan_src_addr=None,
                  vxlan_bcast_addr=None,
-                 vxlan_vrf=None):
+                 vxlan_vrf=None,
+                 gpe_locator_iface=None):
         self.vpp = vpp.VPPInterface(LOG, vpp_cmd_queue_len)
 
         self.physnets = physnets
@@ -262,7 +266,12 @@ class VPPForwarder(object):
         # vxlan packets
         self.vxlan_bcast_addr = vxlan_bcast_addr
         self.vxlan_src_addr = vxlan_src_addr
+        # GPE underlay IP address/mask
+        self.gpe_src_cidr = gpe_src_cidr
         self.vxlan_vrf = vxlan_vrf
+        # GPE uplink and its address
+        self.gpe_locator_iface = gpe_locator_iface
+        self.gpe_underlay_addr = None
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
@@ -271,7 +280,8 @@ class VPPForwarder(object):
         # so we can easily lookup the ACLs associated with the interface idx
         # sw_if_index: {"l34": [l34_acl_indxs], "l23": l23_acl_index }
         self.port_vpp_acls = defaultdict(dict)
-
+        # keeps track of gpe locators and mapping info
+        self.gpe_map = {'remote_map': {}}
         # key: sw if index in VPP; present when vhost-user is
         # connected and removed when we delete things.  May accumulate
         # any other VPP interfaces too, but that's harmless.
@@ -361,12 +371,13 @@ class VPPForwarder(object):
         This will use anything it finds that looks like it
         relates to this network, so is idempotent.
         """
-
-        intf, ifidx = self.get_if_for_physnet(physnet)
-        if intf is None:
-            LOG.error('Cannot create network because physnet'
-                      '%s config is broken', physnet)
-            return None
+        # physnet is not a valid setting for a GPE/vxlan network type
+        if net_type != 'vxlan':
+            intf, ifidx = self.get_if_for_physnet(physnet)
+            if intf is None:
+                LOG.error('Cannot create network because physnet'
+                          '%s config is broken', physnet)
+                return None
 
         # TODO(ijw): bridge domains have no distinguishing marks.
         # VPP needs to allow us to name or label them so that we
@@ -378,6 +389,8 @@ class VPPForwarder(object):
 
             LOG.debug('Adding upstream interface-idx:%s-%s to bridge '
                       'for flat networking', intf, if_upstream)
+            self.ensure_interface_in_vpp_bridge(if_upstream, if_upstream)
+            bridge_idx = if_upstream
 
         elif net_type == 'vlan':
             LOG.debug('Adding upstream interface %s vlan %s '
@@ -388,29 +401,34 @@ class VPPForwarder(object):
             if_upstream = self.vpp.get_vlan_subif(intf, seg_id)
             if if_upstream is None:
                 if_upstream = self.vpp.create_vlan_subif(ifidx, seg_id)
+            # Our bridge IDs have one upstream interface in so we simply use
+            # that ID as their domain ID
+            # This means we can find them on resync from the tagged interface
+            self.ensure_interface_in_vpp_bridge(if_upstream, if_upstream)
+            bridge_idx = if_upstream
 
-        # elif net_type == 'vxlan':
-        #     # NB physnet not really used here
-        #     if_upstream = \
-        #         self.vpp.create_srcrep_vxlan_subif(self, self.vxlan_vrf,
-        #                                            self.vxlan_src_addr,
-        #                                            self.vxlan_bcast_addr,
-        #                                            seg_id)
+        elif net_type == 'vxlan':
+            intf, ifidx = self.ensure_gpe_uplink()
+            bridge_idx = self.bridge_idx_for_lisp_segment(seg_id)
+            if_upstream = ifidx
+            self.ensure_bridge_domain_in_vpp(bridge_idx)
+            self.ensure_gpe_vni_to_bridge_mapping(seg_id, bridge_idx)
+
         else:
             raise Exception('network type %s not supported', net_type)
 
         # Mark this interface so that we can spot it on resync
-        self.vpp.set_interface_tag(if_upstream,
-                                   uplink_tag(net_type, seg_id))
-
-        # Our bridge IDs have one upstream interface in so we simply use
-        # that ID as their domain ID
-        # This means we can find them on resync from the tagged interface
-        self.ensure_interface_in_vpp_bridge(if_upstream, if_upstream)
+        # Flat and GPE networks, we have just one uplink, without a seg_id
+        if net_type == 'vlan':
+            self.vpp.set_interface_tag(if_upstream,
+                                       uplink_tag(net_type, seg_id))
+        else:
+            self.vpp.set_interface_tag(if_upstream,
+                                       uplink_tag(net_type, 0))
         self.vpp.ifup(if_upstream)
 
         return {
-            'bridge_domain_id': if_upstream,
+            'bridge_domain_id': bridge_idx,
             'if_upstream': intf,
             'if_upstream_idx': if_upstream,
             'network_type': net_type,
@@ -427,6 +445,16 @@ class VPPForwarder(object):
                 ifidx = self.vpp.get_ifidx_by_name(net['if_upstream']
                                                    + '.' + str(seg_id))
                 self.vpp.delete_vlan_subif(ifidx)
+            elif net['network_type'] == 'vxlan':
+                LOG.debug("Deleting vni %s from GPE map", seg_id)
+                self.gpe_map[gpe_lset_name]['vnis'].remove(seg_id)
+                # Delete all remote mappings corresponding to this VNI
+                self.clear_remote_gpe_mappings(seg_id)
+                # Delete VNI to bridge domain mapping
+                self.delete_gpe_vni_to_bridge_mapping(seg_id,
+                                                      net['bridge_domain_id']
+                                                      )
+                LOG.debug('Current gpe mapping %s', self.gpe_map)
 
             self.networks.pop((physnet, net_type, seg_id))
         else:
@@ -620,11 +648,15 @@ class VPPForwarder(object):
         return self.interfaces[uuid]
 
     def ensure_interface_in_vpp_bridge(self, net_br_idx, iface_idx):
-        if net_br_idx not in self.vpp.get_ifaces_in_bridge_domains():
-            self.vpp.create_bridge_domain(net_br_idx, self.mac_age)
+        self.ensure_bridge_domain_in_vpp(net_br_idx)
         # Adding an interface to a bridge does nothing if it's
         # already in there
         self.vpp.add_to_bridge(net_br_idx, iface_idx)
+
+    def ensure_bridge_domain_in_vpp(self, bridge_idx):
+        if bridge_idx not in self.vpp.get_bridge_domains():
+            LOG.debug('Creating vpp bridge domain %s', bridge_idx)
+            self.vpp.create_bridge_domain(bridge_idx, self.mac_age)
 
     def bind_interface_on_host(self, if_type, uuid, mac, physnet,
                                net_type, seg_id):
@@ -660,6 +692,10 @@ class VPPForwarder(object):
         props = self.ensure_interface_on_host(if_type, uuid, mac)
         iface_idx = props['iface_idx']
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
+        # Ensure local mac to VNI mapping for GPE
+        if net_type == 'vxlan':
+            self.add_local_gpe_mapping(seg_id, mac)
+            LOG.debug('Current gpe mapping %s', self.gpe_map)
         props['net_data'] = net_data
         LOG.debug('Bound vpp interface with sw_idx:%s on '
                   'bridge domain:%s',
@@ -739,6 +775,12 @@ class VPPForwarder(object):
         else:
             LOG.error('Unknown port type %s during unbind',
                       props['bind_type'])
+        # If network_type=vxlan delete local vni to mac gpe mapping
+        if props['net_data']['network_type'] == 'vxlan':
+            mac = props['mac']
+            seg_id = props['net_data']['segmentation_id']
+            self.delete_local_gpe_mapping(seg_id, mac)
+            LOG.debug('Current gpe mapping %s', self.gpe_map)
         self.interfaces.pop(uuid)
 
     def _to_acl_rule(self, r, d, a=2):
@@ -1412,6 +1454,208 @@ class VPPForwarder(object):
         """Get a dump of macip ACLs on the node"""
         return self.vpp.get_macip_acl_dump()
 
+# ################## BEGIN LISP GPE Methods #################################
+    def bridge_idx_for_lisp_segment(self, seg_id):
+        """Generate a bridge domain index for GPE overlay networking
+
+        Use the 65K namespace for GPE bridge-domains to avoid conflicts
+        with other bridge domains and return a unique BD per network segment
+        """
+        return 65000 + seg_id
+
+    def ensure_gpe_vni_to_bridge_mapping(self, seg_id, bridge_idx):
+        # Add eid table mapping: vni to bridge-domain
+        if (seg_id, bridge_idx) not in self.vpp.get_lisp_vni_to_bd_mappings():
+            LOG.debug("Adding GPE VNI-BD mapping for vni %s and bridge-"
+                      "domain %s", seg_id, bridge_idx)
+            self.vpp.add_lisp_vni_to_bd_mapping(vni=seg_id,
+                                                bridge_domain=bridge_idx)
+
+    def delete_gpe_vni_to_bridge_mapping(self, seg_id, bridge_idx):
+        # Remove vni to bridge-domain mapping in VPP if present
+        if (seg_id, bridge_idx) in self.vpp.get_lisp_vni_to_bd_mappings():
+            LOG.debug("Deleting vni %s to bridge-domain %s GPE mapping",
+                      seg_id, bridge_idx)
+            self.vpp.del_lisp_vni_to_bd_mapping(vni=seg_id,
+                                                bridge_domain=bridge_idx)
+
+    def add_remote_gpe_mapping(self, vni, mac, remote_ip):
+        """Add a remote GPE mapping
+
+        A remote GPE mapping contains a remote mac-address, vni and the
+        underlay ip address of the remote node (i.e. remote_ip)
+        """
+        if (mac, vni) not in self.gpe_map['remote_map']:
+            LOG.debug("Adding remote gpe mapping for mac:%s, vni:%s to "
+                      "remote underlay ip: %s", mac, vni, remote_ip)
+            is_ip4 = 1 if ip_network(unicode(remote_ip)).version == 4 else 0
+            remote_locator = {"is_ip4": is_ip4,
+                              "priority": 1,
+                              "weight": 1,
+                              "addr": self._pack_address(remote_ip)
+                              }
+            self.vpp.add_lisp_remote_mac(mac, vni, remote_locator)
+            self.gpe_map['remote_map'][(mac, vni)] = remote_ip
+
+    def delete_remote_gpe_mapping(self, vni, mac):
+        """Delete a remote GPE vni to mac mapping."""
+        if (mac, vni) in self.gpe_map['remote_map']:
+            LOG.debug("Deleting remote gpe mapping for mac:%s, vni:%s to "
+                      "remote underlay ip: %s", mac, vni,
+                      self.gpe_map['remote_map'][(mac, vni)])
+            self.vpp.del_lisp_remote_mac(mac, vni)
+            del self.gpe_map['remote_map'][(mac, vni)]
+
+    def add_local_gpe_mapping(self, vni, mac):
+        """Add a local GPE mapping between a mac and vni."""
+        lset_mapping = self.gpe_map[gpe_lset_name]
+        LOG.debug('Adding vni %s to gpe_map', vni)
+        lset_mapping['vnis'].add(vni)
+        if mac not in lset_mapping['local_map']:
+            LOG.debug('Adding a local gpe mapping for mac:%s & vni:%s in '
+                      'locator_set %s', mac, vni, gpe_lset_name)
+            self.vpp.add_lisp_local_mac(mac, vni, gpe_lset_name)
+            lset_mapping['local_map'][mac] = vni
+
+    def delete_local_gpe_mapping(self, vni, mac):
+        LOG.debug('Deleting a local gpe mapping in locator set %s for '
+                  'mac: %s and vni %s', gpe_lset_name, mac, vni)
+        lset_mapping = self.gpe_map[gpe_lset_name]
+        if mac in lset_mapping['local_map']:
+            self.vpp.del_lisp_local_mac(mac, vni, gpe_lset_name)
+            del self.gpe_map[gpe_lset_name]['local_map'][mac]
+
+    def clear_remote_gpe_mappings(self, segmentation_id):
+        """Clear all GPE mac to seg_id remote mappings for the seg_id.
+
+        When a segment is unbound from a host, all remote GPE mappings for
+        that segment are cleared.
+        """
+        LOG.debug("Clearing all gpe remote mappings for VNI:%s",
+                  segmentation_id)
+        for mac_vni_tpl in self.gpe_map['remote_map'].keys():
+            mac, vni = mac_vni_tpl
+            if segmentation_id == vni:
+                self.delete_remote_gpe_mapping(vni, mac)
+
+    def ensure_gpe_uplink(self):
+        """Ensures that the GPE uplink interface is present and configured.
+
+        Returns:-
+        The software_if_index of the GPE uplink functioning as the underlay
+        """
+        intf = self.gpe_locator_iface
+        LOG.debug('Setting vxlan gpe underlay attachment interface: %s',
+                  intf)
+        if_upstream = self.vpp.get_ifidx_by_name(intf)
+        if if_upstream is None:
+            LOG.error('Cannot create vxlan gpe network because the gpe_'
+                      'locator_iface config value:%s is broken',
+                      intf)
+            sys.exit(1)
+        self.vpp.ifup(if_upstream)
+        # Set the underlay IP address using the gpe_src_cidr config option
+        # setting in the config file
+        LOG.debug('Configuring GPE underlay ip address %s on '
+                  'interface %s', self.gpe_src_cidr, intf)
+        (self.gpe_underlay_addr,
+         self.gpe_underlay_mask) = self.gpe_src_cidr.split('/')
+        self.vpp.set_interface_address(
+            sw_if_index=if_upstream,
+            is_ipv6=1 if ip_network(unicode(self.gpe_underlay_addr)
+                                    ).version == 6 else 0,
+            address_length=int(self.gpe_underlay_mask),
+            address=self._pack_address(self.gpe_underlay_addr)
+            )
+        return (intf, if_upstream)
+
+    def ensure_gpe_underlay(self):
+        """Ensures that the GPE locator and locator sets are present in VPP
+
+        A locator interface in GPE functions as the underlay attachment point
+        This method will ensure that the underlay is programmed correctly for
+        GPE to function properly
+
+        Returns :- A list of locator sets
+        [{'locator_set_name': <ls_set_name>,
+         'locator_set_index': <ls_index>,
+         'sw_if_idxs': []
+        }]
+        """
+        # Check if any exsiting GPE underlay (a.k.a locator) is present in VPP
+        # Read existing loctor-sets and locators in VPP by name
+        locators = self.vpp.get_lisp_local_locators(gpe_lset_name)
+        # Create a new GPE locator set if the locator does not exist
+        if not locators:
+            LOG.debug('Creating GPE locator set %s', gpe_lset_name)
+            self.vpp.add_lisp_locator_set(gpe_lset_name)
+        _, if_upstream = self.ensure_gpe_uplink()
+        # Add the underlay interface to the locator set
+        LOG.debug('Adding GPE locator for interface %s to locator-'
+                  'set %s', if_upstream, gpe_lset_name)
+        # Remove any stale locators from the locator set, which may
+        # be due to a configuration change
+        locator_indices = locators[0]['sw_if_idxs'] if locators else []
+        LOG.debug("Current gpe locator indices: %s", locator_indices)
+        for sw_if_index in locator_indices:
+            if sw_if_index != if_upstream:
+                self.vpp.del_lisp_locator(
+                    locator_set_name=gpe_lset_name,
+                    sw_if_index=sw_if_index)
+        # Add the locator interface to the locator set if not present
+        if not locators or if_upstream not in locator_indices:
+            self.vpp.add_lisp_locator(
+                locator_set_name=gpe_lset_name,
+                sw_if_index=if_upstream
+                )
+        return self.vpp.get_lisp_local_locators(gpe_lset_name)
+
+    def load_gpe_mappings(self):
+        """Construct GPE locator mapping data structure in the VPP Forwarder.
+
+        Read the locator and EID table mapping data from VPP and construct
+        a gpe mapping for all existing local and remote end-point identifiers
+
+        gpe_map: {'<locator_set_name>': {'locator_set_index': <index>,
+                                              'sw_if_idxs' : set([<index>]),
+                                              'vnis' : set([<vni>]),
+                                              'local_map' : {<mac>: <vni>},
+                        'remote_map' :  {<(mac, vni)> : <remote_ip>}
+                       }
+        """
+        # First enable lisp
+        LOG.debug("Enabling LISP GPE within VPP")
+        self.vpp.lisp_enable()
+        LOG.debug("Querying VPP to create a LISP GPE lookup map")
+        # Ensure that GPE underlay locators are present and configured
+        locators = self.ensure_gpe_underlay()
+        LOG.debug('GPE locators %s for locator set %s',
+                  locators, gpe_lset_name)
+        # [ {'is_local':<>, 'locator_set_index':<>, 'mac':<>, 'vni':<>},.. ]
+        # Load any existing MAC to VNI mappings
+        eids = self.vpp.get_lisp_eid_table()
+        LOG.debug('GPE eid table %s', eids)
+        # Construct the GPE map from existing locators and mappings within VPP
+        for locator in locators:
+            data = {'locator_set_index': locator['locator_set_index'],
+                    'sw_if_idxs': set(locator['sw_if_idxs']),
+                    'vnis': set([val['vni'] for val in eids if
+                                val['locator_set_index'] == locator[
+                                    'locator_set_index']]),
+                    'local_map': {val['mac']: val['vni'] for val
+                                  in eids if val['is_local'] and
+                                  val['locator_set_index'] == locator[
+                                      'locator_set_index']}
+                    }
+            self.gpe_map[locator['locator_set_name']] = data
+        # Create the remote GPE: mac-address to underlay lookup mapping
+        self.gpe_map['remote_map'] = {
+            (val['mac'], val['vni']): self.vpp.get_lisp_locator_ip(val[
+                'locator_set_index']) for val in eids if not val['is_local']
+            }
+        LOG.debug('Successfully created a GPE lookup map by querying vpp %s',
+                  self.gpe_map)
+
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
@@ -1461,6 +1705,11 @@ class EtcdListener(object):
         interface.
         """
         # args['binding_type'] in ('vhostuser', 'plugtap'):
+        # For GPE, fetch remote mappings from etcd for any "new" network
+        # segments we will be binding to so we are aware of all the remote
+        # overlay (mac) to underlay (IP) values
+        if network_type == 'vxlan':
+            self.ensure_gpe_remote_mappings(segmentation_id)
         props = self.vppf.bind_interface_on_host(binding_type,
                                                  id,
                                                  mac_address,
@@ -1471,7 +1720,6 @@ class EtcdListener(object):
             # Problems with the binding
             # We will never notify anyone this port is ready.
             return None
-
         # Store the binding information.  We put this into
         # etcd when the interface comes up to show that things
         # are ready and expose it to curious operators, who may
@@ -1732,6 +1980,56 @@ class EtcdListener(object):
         except AttributeError:
             pass   # cannot reference acl attribute - pass and exit
 
+# #################### LISP GPE Methods ###############################
+    def is_valid_remote_map(self, vni, host):
+        """Return True if the remote map is valid else False.
+
+        A remote mapping is valid only if we bind a port on the vni
+        Ignore all the other remote mappings as the host doesn't care
+        """
+        if host != self.host and vni in self.vppf.gpe_map[gpe_lset_name][
+            'vnis']:
+            return True
+        else:
+            return False
+
+    def fetch_remote_gpe_mappings(self, vni):
+        """Fetch and add all remote mappings from etcd for the vni"""
+        key_space = self.gpe_key_space + "/%s" % vni
+        LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
+        rv = self.client_factory.client().read(key_space, recursive=True)
+        for child in rv.children:
+            m = re.match(key_space + '/([^/]+)' + '/([^/]+)', child.key)
+            if m:
+                hostname = m.group(1)
+                mac = m.group(2)
+                if self.is_valid_remote_map(vni, hostname):
+                    self.vppf.add_remote_gpe_mapping(vni, mac, child.value)
+
+    def ensure_gpe_remote_mappings(self, segmentation_id):
+        """Ensure all the remote GPE mappings are present in VPP
+
+        Ensures the following:
+        1) The bridge domain exists for the segmentation_id
+        2) A segmentation_id to bridge-domain mapping is present
+        3) All remote overlay to underlay mappings are fetched from etcd and
+        added corresponding to this segmentation_id
+
+        Arguments:-
+        segmentation_id :- The VNI for which all remote overlay (MAC) to
+        underlay mappings are fetched from etcd and ensured in VPP
+        """
+        lset_data = self.vppf.gpe_map[gpe_lset_name]
+        # Fetch and add remote mappings only for "new" segments that we do
+        # not yet know of, but will be binding to shortly
+        if segmentation_id not in lset_data['vnis']:
+            lset_data['vnis'].add(segmentation_id)
+            bridge_idx = self.vppf.bridge_idx_for_lisp_segment(segmentation_id)
+            self.vppf.ensure_bridge_domain_in_vpp(bridge_idx)
+            self.vppf.ensure_gpe_vni_to_bridge_mapping(segmentation_id,
+                                                       bridge_idx)
+            self.fetch_remote_gpe_mappings(segmentation_id)
+
     AGENT_HEARTBEAT = 60  # seconds
 
     def process_ops(self):
@@ -1744,6 +2042,7 @@ class EtcdListener(object):
         self.secgroup_key_space = LEADIN + "/global/secgroups"
         self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
+        self.gpe_key_space = LEADIN + "/global/networks/gpe"
 
         etcd_client = self.client_factory.client()
         etcd_helper = nwvpp_utils.EtcdHelper(etcd_client)
@@ -1754,6 +2053,7 @@ class EtcdListener(object):
         etcd_helper.ensure_dir(self.state_key_space)
         etcd_helper.ensure_dir(self.physnet_key_space)
         etcd_helper.ensure_dir(self.router_key_space)
+        etcd_helper.ensure_dir(self.gpe_key_space)
 
         etcd_helper.clear_state(self.state_key_space)
 
@@ -1769,6 +2069,8 @@ class EtcdListener(object):
 
         # load sw_if_index to macip acl index mappings
         self.load_macip_acl_mapping()
+        if 'vxlan' in cfg.CONF.ml2.type_drivers:
+            self.vppf.load_gpe_mappings()
 
         self.binder = BindNotifier(self.client_factory, self.state_key_space)
         self.pool.spawn(self.binder.run)
@@ -1786,6 +2088,10 @@ class EtcdListener(object):
 
             def removed(self, port):
                 # Removing key == desire to unbind
+                # Get seg_id and mac to delete any gpe mappings
+                seg_id = self.data.vppf.interfaces[port]['net_data'][
+                    'segmentation_id']
+                mac = self.data.vppf.interfaces[port]['mac']
                 self.data.unbind(port)
 
                 # Unlike bindings, unbindings are immediate.
@@ -1794,6 +2100,9 @@ class EtcdListener(object):
                     self.etcd_client.delete(
                         self.data.state_key_space + '/%s'
                         % port)
+                    self.etcd_client.delete(
+                        self.data.gpe_key_space + '/%s/%s/%s'
+                        % (seg_id, self.data.host, mac))
                 except etcd.EtcdKeyNotFound:
                     # Gone is fine; if we didn't delete it
                     # it's no problem
@@ -1822,6 +2131,21 @@ class EtcdListener(object):
                 # While the bind might fail for one reason or another,
                 # we have nothing we can do at this point.  We simply
                 # decline to notify Nova the port is ready.
+
+                # For vxlan networks,
+                # write the remote mapping data to etcd to
+                # propagate the mac to underlay mapping to all
+                # agents that bind this segment using GPE
+                if data['network_type'] == 'vxlan':
+                    host_ip = self.data.vppf.gpe_underlay_addr
+                    gpe_key = self.data.gpe_key_space + '/%s/%s/%s' % (
+                        data['segmentation_id'],
+                        self.data.host,
+                        data['mac_address'])
+                    LOG.debug('Writing gpe key %s with vxlan mapping '
+                              'to underlay IP address %s',
+                              gpe_key, host_ip)
+                    self.etcd_client.write(gpe_key, host_ip)
 
         class RouterWatcher(EtcdChangeWatcher):
             """Start an etcd watcher for router operations.
@@ -1885,6 +2209,40 @@ class EtcdListener(object):
 
                 self.data.reconsider_port_secgroups()
 
+        class GpeWatcher(EtcdChangeWatcher):
+
+            def do_tick(self):
+                pass
+
+            def parse_key(self, gpe_key):
+                m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)', gpe_key)
+                vni, hostname, mac = None, None, None
+                if m:
+                    vni = int(m.group(1))
+                    hostname = m.group(2)
+                    mac = m.group(3)
+                return (vni, hostname, mac)
+
+            def added(self, gpe_key, value):
+                # gpe_key format is "vni/hostname/mac"
+                vni, hostname, mac = self.parse_key(gpe_key)
+                if (vni and hostname and mac and
+                        self.data.is_valid_remote_map(vni, hostname)):
+                    self.data.vppf.add_remote_gpe_mapping(
+                        vni=vni,
+                        mac=mac,
+                        remote_ip=value)
+                    LOG.debug("Current gpe map %s",
+                              self.data.vppf.gpe_map)
+
+            def removed(self, gpe_key):
+                vni, hostname, mac = self.parse_key(gpe_key)
+                if (vni and hostname and mac and
+                        self.data.is_valid_remote_map(vni, hostname)):
+                    self.data.vppf.delete_remote_gpe_mapping(
+                        vni=vni,
+                        mac=mac)
+
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
                       "performing secgroup_watcher lookups")
@@ -1909,7 +2267,14 @@ class EtcdListener(object):
                                     self.port_key_space,
                                     heartbeat=self.AGENT_HEARTBEAT,
                                     data=self).watch_forever)
-
+        # Spawn GPE watcher for vxlan tenant networks
+        if 'vxlan' in cfg.CONF.ml2.type_drivers:
+            LOG.debug("Spawning gpe_watcher")
+            self.pool.spawn(GpeWatcher(self.client_factory.client(),
+                                       'gpe_watcher',
+                                       self.gpe_key_space,
+                                       heartbeat=self.AGENT_HEARTBEAT,
+                                       data=self).watch_forever)
         self.pool.waitall()
 
 
@@ -2009,9 +2374,12 @@ def main():
                         mac_age=mac_age_min,
                         tap_wait_time=cfg.CONF.ml2_vpp.tap_wait_time,
                         vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,
+                        gpe_src_cidr=cfg.CONF.ml2_vpp.gpe_src_cidr,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
                         vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
-                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf)
+                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf,
+                        gpe_locator_iface=cfg.CONF.ml2_vpp.gpe_locator_iface,
+                        )
 
     LOG.debug("Using etcd host:%s port:%s user:%s password:***",
               cfg.CONF.ml2_vpp.etcd_host,

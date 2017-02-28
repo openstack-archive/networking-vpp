@@ -74,6 +74,20 @@ except ImportError:
     directory = neutron.manager.NeutronManager
     model_base = neutron.db.model_base
 
+# Register security group option
+# Mitaka compatibility
+try:
+    from neutron.conf.agent import securitygroups_rpc
+    securitygroups_rpc.register_securitygroups_opts()
+except ImportError:
+    from oslo_config import cfg
+    security_group_opts = [
+        cfg.BoolOpt(
+            'enable_security_group', default=True,
+            help=_('Controls whether neutron security groups is enabled '
+                   'Set it to false to disable security groups')), ]
+    cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
+
 import os
 import re
 
