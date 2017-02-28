@@ -20,8 +20,19 @@ vpp_opts = [
     cfg.StrOpt('physnets',
                help=_("Comma-separated list of net-name:interface-name for "
                       "physical connections")),
-    cfg.StrOpt('vxlan_src_addr',
+    cfg.StrOpt('vxlan_src_addr', default=None,
                help=_("Source address used for VXLAN tunnel packets.")),
+    cfg.StrOpt('gpe_src_cidr', default=None,
+               help=_("The source_IP/Mask used for GPE tunnel packets. ")),
+    cfg.StrOpt('gpe_locators', default=None,
+               help=_("The physnet name(s) used as the underlay "
+                      "(i.e. locator) interface by GPE. The agent will "
+                      "program the GPE source CIDR on this interface "
+                      "and will assume that it has Layer3 reachability "
+                      "with all other GPE locator interfaces "
+                      "specified on compute and network nodes. In the "
+                      "current implementation only a single locator "
+                      "is supported.")),
     cfg.StrOpt('vxlan_bcast_addr',
                help=_("Broadcast address used to set up VXLAN tunnels.")),
     cfg.StrOpt('vxlan_vrf',

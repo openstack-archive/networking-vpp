@@ -65,13 +65,12 @@ class VPPForwarderTestCase(base.BaseTestCase):
         assert (len(server.port_tag(uuid)) <= 64), 'TAG len must be <= 64'
 
     def test_uplink_tag_len(self):
-        assert (len(server.uplink_tag('flat', 0)) <= 64), \
+        assert (len(server.uplink_tag('flat', 'physnet1')) <= 64), \
             'TAG len for flat networks  must be <= 64'
         max_vlan_id = 4095
         assert (len(server.uplink_tag('vlan', max_vlan_id)) <= 64), \
             'TAG len for vlan overlays must be <= 64'
-        max_vxlan_id = 16777215
-        assert (len(server.uplink_tag('vxlan', max_vxlan_id)) <= 64), \
+        assert (len(server.uplink_tag('vxlan', 'physnet2')) <= 64), \
             'TAG len for vxlan overlays must be <= 64'
 
     def test_decode_port_tag(self):
@@ -112,10 +111,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     def test_flat_ensure_network_on_host(self):
         net_length = len(self.vpp.networks)
-        self.vpp.ensure_network_on_host('test_net', 'flat', '1')
+        self.vpp.ensure_network_on_host('test_net', 'flat', '0')
         self.vpp.vpp.ifup.assert_called_once_with(720)
         self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            720, 'net-vpp.uplink:flat.1')
+            720, 'net-vpp.uplink:flat.test_net')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -651,3 +650,150 @@ class VPPForwarderTestCase(base.BaseTestCase):
             floatingip_dict['floating_ip_address'],
             is_add=0)
         self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
+
+    def test_ensure_gpe_network_on_host(self):
+        self.vpp.networks = {}
+        self.vpp.mac_age = 300
+        gpe_tag = "net-vpp.uplink:vxlan"
+        self.vpp.gpe_locators = "uplink"
+        physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
+        self.vpp.physnets = {"uplink": "test_iface"}
+        self.vpp.gpe_src_cidr = "10.1.1.1/24"
+        self.vpp.vpp.get_bridge_domains.return_value = []
+        self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = []
+        ret_val = self.vpp.ensure_network_on_host(physnet, net_type, seg_id)
+        self.vpp.vpp.create_bridge_domain.assert_called_once_with(
+            70000, 300)
+        self.vpp.vpp.add_lisp_vni_to_bd_mapping.assert_called_once_with(
+            vni=5000, bridge_domain=70000)
+        self.vpp.vpp.set_interface_address.assert_called_once_with(
+            sw_if_index=720, is_ipv6=0,
+            address_length=24, address=self.vpp._pack_address("10.1.1.1"))
+        self.vpp.vpp.set_interface_tag.assert_called_once_with(
+            720, gpe_tag + ".uplink")
+        network_data = self.vpp.networks[('uplink', 'vxlan', 5000)]
+        expected_val = {'bridge_domain_id': 70000,
+                        'if_upstream': "test_iface",
+                        'if_upstream_idx': 720,
+                        'network_type': 'vxlan',
+                        'segmentation_id': 5000,
+                        'physnet': 'uplink'}
+        assert (network_data == expected_val)
+        assert (ret_val == expected_val)
+
+    def test_delete_gpe_network_on_host(self):
+        self.vpp.networks = {}
+        self.vpp.gpe_map = {}
+        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        self.vpp.gpe_locators = "uplink"
+        self.vpp.physnets = {"uplink": "test_iface"}
+        physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
+        mock_data = {'bridge_domain_id': 70000,
+                     'if_upstream': "test_iface",
+                     'if_upstream_idx': 720,
+                     'network_type': 'vxlan',
+                     'segmentation_id': 5000,
+                     'physnet': "uplink"}
+        mock_gpe_local_map_data = {'vnis': set([5000])}
+        mock_gpe_remote_map_data = {('fake-mac1', 5000): 'fake-remote-ip1',
+                                    ('fake-mac2', 5000): 'fake-remote-ip1',
+                                    ('fake-mac3', 5001): 'fake-remote-ip2'
+                                    }
+        self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = [(5000,
+                                                                  70000)]
+        self.vpp.gpe_map[gpe_lset_name] = mock_gpe_local_map_data
+        self.vpp.gpe_map['remote_map'] = mock_gpe_remote_map_data
+        self.vpp.networks[(physnet, net_type, seg_id)] = mock_data
+        self.vpp.delete_network_on_host(physnet, net_type, seg_id)
+        self.vpp.vpp.del_lisp_vni_to_bd_mapping.assert_called_once_with(
+            vni=5000, bridge_domain=70000)
+        assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] == set([]))
+        self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
+            'fake-mac1', 5000)
+        self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
+            'fake-mac2', 5000)
+        assert (self.vpp.gpe_map['remote_map'] == {
+            ('fake-mac3', 5001): 'fake-remote-ip2'})
+        assert (self.vpp.networks == {})
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.' +
+        'ensure_interface_in_vpp_bridge')
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_interface_on_host')
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_bind_gpe_interface_on_host(self,
+                                        mock_ensure_net_on_host,
+                                        mock_ensure_int_on_host,
+                                        mock_ensure_int_in_bridge):
+        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        self.vpp.gpe_locators = "uplink"
+        self.vpp.physnets = {"uplink": "test_iface"}
+        mock_net_data = {'bridge_domain_id': 70000,
+                         'if_upstream': "test_iface",
+                         'if_upstream_idx': 720,
+                         'network_type': 'vxlan',
+                         'segmentation_id': 5000,
+                         'physnet': 'uplink'}
+        mock_props = {'iface_idx': 10,
+                      'bind_type': 'vhostuser',
+                      'mac': '11:11:11:11:11:11',
+                      'path': '/tmp/fake-path'}
+        mock_gpe_map = {'vnis': set([]),
+                        'sw_if_idxs': set([]),
+                        'local_map': {}}
+        self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
+        mock_ensure_net_on_host.return_value = mock_net_data
+        mock_ensure_int_on_host.return_value = mock_props
+        self.vpp.bind_interface_on_host('vhostuser', 'fake-uuid',
+                                        mock_props['mac'], 'uplink', 'vxlan',
+                                        5000)
+        mock_ensure_int_in_bridge.assert_called_once_with(70000, 10)
+        assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] ==
+                set([5000]))
+        self.vpp.vpp.add_lisp_local_mac.assert_called_once_with(
+            mock_props['mac'], 5000, gpe_lset_name)
+        assert (self.vpp.gpe_map[gpe_lset_name]['local_map']
+                [mock_props['mac']] == 5000)
+
+    def test_unbind_gpe_interface_on_host(self):
+        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        self.vpp.gpe_locators = "uplink"
+        self.vpp.physnets = {"uplink": "test_iface"}
+        port_uuid = 'fake-port-uuid'
+        mock_net_data = {'bridge_domain_id': 70000,
+                         'if_upstream': "test_iface",
+                         'if_upstream_idx': 720,
+                         'network_type': 'vxlan',
+                         'segmentation_id': 5000,
+                         'physnet': 'uplink'}
+        mock_props = {'iface_idx': 10,
+                      'bind_type': 'vhostuser',
+                      'mac': '11:11:11:11:11:11',
+                      'path': '/tmp/fake-path',
+                      'net_data': mock_net_data}
+        mock_gpe_map = {'vnis': set([5000]),
+                        'sw_if_indxs': set([720]),
+                        'local_map': {'11:11:11:11:11:11': 5000}
+                        }
+        self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = [(5000,
+                                                                  70000)]
+        self.vpp.interfaces[port_uuid] = mock_props
+        self.vpp.networks[('uplink', 'vxlan', 5000)] = mock_net_data
+        self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
+        self.vpp.gpe_map['remote_map'] = {}
+        self.vpp.unbind_interface_on_host(port_uuid)
+        self.vpp.vpp.del_lisp_local_mac.assert_called_once_with(
+            mock_props['mac'],
+            mock_net_data['segmentation_id'],
+            gpe_lset_name)
+        assert (self.vpp.gpe_map[gpe_lset_name]['local_map'] == {})
+        assert (self.vpp.interfaces == {})
+        self.vpp.vpp.delete_bridge_domain.assert_called_once_with(
+            mock_net_data['bridge_domain_id'])
+        self.vpp.vpp.del_lisp_vni_to_bd_mapping.assert_called_once_with(
+            vni=mock_net_data['segmentation_id'],
+            bridge_domain=mock_net_data['bridge_domain_id'])
+        assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] == set([]))
+        assert (self.vpp.networks == {})
