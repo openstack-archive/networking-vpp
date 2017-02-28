@@ -44,10 +44,8 @@ function configure_networking_vpp {
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_user $ETCD_USER
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_pass $ETCD_PASS
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp enable_vpp_restart $ENABLE_VPP_RESTART
-
-    if [ ! -z "$VXLAN_SRC_ADDR" ] ; then
-       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_src_addr $VXLAN_SRC_ADDR
-    fi
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_src_addr $VXLAN_SRC_ADDR
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp gpe_locator_iface $GPE_LOCATOR_IFACE
 
     if [ ! -z "$VXLAN_BCAST_ADDR" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_bcast_addr $VXLAN_BCAST_ADDR

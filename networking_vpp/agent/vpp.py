@@ -40,6 +40,17 @@ def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
 
 
+def bytes_to_mac(mbytes):
+    return ':'.join(['%02x' % ord(x) for x in mbytes[:6]])
+
+
+def bytes_to_ip(ip_bytes, is_ipv6):
+    if is_ipv6:
+        return str(ipaddress.ip_address(ip_bytes))
+    else:
+        return str(ipaddress.ip_address(ip_bytes[:4]))
+
+
 def singleton(cls):
     instances = {}
 
@@ -642,3 +653,209 @@ class VPPInterface(object):
 
     def set_interface_mtu(self, sw_if_idx, mtu):
         self.call_vpp('sw_interface_set_mtu', sw_if_index=sw_if_idx, mtu=mtu)
+
+    def get_bridge_domains(self):
+        t = self.call_vpp('bridge_domain_dump', bd_id=0xffffffff)
+        return set([bd.bd_id for bd in t])
+
+    def lisp_enable(self):
+        self.call_vpp('lisp_enable_disable', is_en=1)
+
+    def is_lisp_enabled(self):
+        t = self.call_vpp('show_lisp_status')
+        return t.gpe_status
+
+    def get_lisp_vni_to_bd_mappings(self):
+        """Retrieve LISP mappings between the VNI and Bridge Domain."""
+        t = self.call_vpp('lisp_eid_table_map_dump', is_l2=1)
+        return [(eid_map.vni, eid_map.dp_table) for eid_map in t]
+
+    def add_lisp_vni_to_bd_mapping(self, vni, bridge_domain):
+        """Add a LISP mapping between a VNI and bridge-domain."""
+        self.call_vpp('lisp_eid_table_add_del_map',
+                      is_add=1,
+                      vni=vni,
+                      dp_table=bridge_domain,
+                      is_l2=1)
+
+    def del_lisp_vni_to_bd_mapping(self, vni, bridge_domain):
+        """Delete the LISP mapping between a VNI and bridge-domain."""
+        self.call_vpp('lisp_eid_table_add_del_map',
+                      is_add=0,
+                      vni=vni,
+                      dp_table=bridge_domain,
+                      is_l2=1)
+
+    def set_interface_address(self, sw_if_index, is_ipv6,
+                              address_length, address):
+        """Configure an IPv4 or IPv6 address on a software interface."""
+        self.call_vpp('sw_interface_add_del_address',
+                      sw_if_index=sw_if_index,
+                      is_add=1,
+                      is_ipv6=is_ipv6,
+                      del_all=False,
+                      address_length=address_length,
+                      address=address)
+
+    def del_interface_address(self, sw_if_index, is_ipv6,
+                              address_length, address):
+        """Remove an IPv4 or IPv6 address on a software interface."""
+        self.call_vpp('sw_interface_add_del_address',
+                      sw_if_index=sw_if_index,
+                      is_add=0,
+                      is_ipv6=is_ipv6,
+                      del_all=False,
+                      address_length=address_length,
+                      address=address)
+
+    def add_lisp_local_mac(self, mac, vni, locator_set_name):
+        """Add a local mac address to VNI association in LISP"""
+        self.call_vpp('lisp_add_del_local_eid',
+                      is_add=1,
+                      eid_type=2,  # 2: mac_address
+                      eid=mac_to_bytes(mac),
+                      prefix_len=0,
+                      locator_set_name=locator_set_name,
+                      vni=vni)
+
+    def del_lisp_local_mac(self, mac, vni, locator_set_name):
+        """Delete a local mac address to VNI association in LISP"""
+        self.call_vpp('lisp_add_del_local_eid',
+                      is_add=0,
+                      eid_type=2,  # type 2: mac_address
+                      eid=mac_to_bytes(mac),
+                      prefix_len=0,
+                      locator_set_name=locator_set_name,
+                      vni=vni)
+
+    def add_lisp_remote_mac(self, mac, vni, underlay):
+        """Add a LISP entry for a remote mac address to the underlay IP.
+
+        Arguments:-
+        mac - remote mac_address
+        vni - virtual network identifier
+        underlay - An underlay IP represented within a dict. as below:
+                           {"is_ip4": <value>,
+                           "priority": <priority>,
+                           "weight": <weight>,
+                           "addr": <binary IPv4 or IPv6 address>}])
+        """
+        self.call_vpp('lisp_add_del_remote_mapping',
+                      is_add=1,
+                      vni=vni,
+                      eid_type=2,  # type 2: mac_address
+                      eid=mac_to_bytes(mac),
+                      rlocs=[underlay],
+                      rloc_num=1,
+                      is_src_dst=0)
+
+    def del_lisp_remote_mac(self, mac, vni):
+        """Delete a LISP entry for a remote mac address.
+
+        Arguments:-
+        mac - remote mac_address
+        vni - virtual network identifier
+        """
+        self.call_vpp('lisp_add_del_remote_mapping',
+                      is_add=0,
+                      vni=vni,
+                      eid_type=2,  # type 2: mac_address
+                      eid=mac_to_bytes(mac),
+                      rlocs=[],
+                      rloc_num=0,
+                      is_src_dst=0)
+
+    def add_lisp_locator_set(self, locator_set_name):
+        """Adds a LISP locator set.
+
+        A LISP locator set is a set of underlay interfaces used by GPE.
+        """
+        t = self.call_vpp('lisp_add_del_locator_set',
+                          is_add=1,
+                          locator_set_name=locator_set_name,
+                          locator_num=0,
+                          locators=[])
+        return t.ls_index
+
+    def add_lisp_locator(self, locator_set_name, sw_if_index,
+                         priority=1, weight=1):
+        """Adds a LISP locator to the locator set.
+
+        A LISP locator is the software interface index of the underlay
+        interface.
+        """
+        self.call_vpp('lisp_add_del_locator',
+                      is_add=1,
+                      locator_set_name=locator_set_name,
+                      sw_if_index=sw_if_index,
+                      priority=priority,
+                      weight=weight)
+
+    def del_lisp_locator(self, locator_set_name, sw_if_index):
+        """Removes a LISP locator from the locator set.
+
+        A LISP locator is the software interface index of the underlay
+        interface.
+        """
+        self.call_vpp('lisp_add_del_locator',
+                      is_add=0,
+                      locator_set_name=locator_set_name,
+                      sw_if_index=sw_if_index)
+
+    def get_lisp_local_locators(self, name):
+        """Get lisp local locator sets and their corresponding locators.
+
+        GPE uses a locator-set to group the available underlay interfaces.
+        Each underlay interface is called a locator. This method is used to
+        retrieve the list of locators present within VPP for a certain
+        locator-set.
+
+        Arguments:-
+        name: The name of the locator set
+
+        Returns:-
+        A list of locators.
+        Each locator is a dictionary and has as key named "sw_if_idxs" used
+        to identify all the software indexes within VPP functioning as the
+        underlay interfaces for the locator set.
+
+        """
+        locators = []
+        # filter=1 for local locators
+        t = self.call_vpp('lisp_locator_set_dump', filter=1)
+        for ls in t:
+            ls_set_name = fix_string(ls.ls_name)
+            if ls_set_name == name:
+                locators.append({'locator_set_name': ls_set_name,
+                                 'locator_set_index': ls.ls_index,
+                                 'sw_if_idxs': [intf.sw_if_index for
+                                                intf in self.call_vpp(
+                                                    'lisp_locator_dump',
+                                                    ls_name=str(ls_set_name))
+                                                ]
+                                 }
+                                )
+        return locators
+
+    def get_lisp_locator_ip(self, locator_index):
+        """Get the IP address of the locator (i.e. underlay) from its index"""
+        t = self.call_vpp('lisp_locator_dump',
+                          ls_index=locator_index,
+                          is_index_set=1)
+        for locator in t:
+            return bytes_to_ip(locator.ip_address, locator.is_ipv6)
+
+    def get_lisp_eid_table(self):
+        """Query the LISP EID table within VPP and return its contents.
+
+        A LISP EID table keeps a mapping between the mac-addresses, VNI
+        and the underlay interfaces known to VPP. The 'is_local' key
+        is used to determine whether the mapping is local or remote.
+        """
+        t = self.call_vpp('lisp_eid_table_dump')
+        return [{'is_local': val.is_local,
+                 'locator_set_index': val.locator_set_index,
+                 'mac': bytes_to_mac(val.eid),
+                 'vni': val.vni
+                 }
+                for val in t]
