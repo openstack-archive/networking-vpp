@@ -12,3 +12,4 @@ neutron-lib>=0.0.2 # Apache-2.0
 python-etcd>=0.4.3
 eventlet
 ipaddress
+click
