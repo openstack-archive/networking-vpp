@@ -1823,10 +1823,19 @@ def main():
     host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
                                          cfg.CONF.ml2_vpp.etcd_port)
 
-    etcd_client = etcd.Client(host=host,
-                              username=cfg.CONF.ml2_vpp.etcd_user,
-                              password=cfg.CONF.ml2_vpp.etcd_pass,
-                              allow_reconnect=True)
+
+    if cfg.CONF.ml2_vpp.etc_https:
+        etcd_client = etcd.Client(host=host,
+                                  username=cfg.CONF.ml2_vpp.etcd_user,
+                                  password=cfg.CONF.ml2_vpp.etcd_pass,
+                                  protocol='https',
+                                  ca_cert=cfg.CONF.ml2_vpp.etcd_ca_cert,
+                                  allow_reconnect=True)
+    else:
+        etcd_client = etcd.Client(host=host,
+                                  username=cfg.CONF.ml2_vpp.etcd_user,
+                                  password=cfg.CONF.ml2_vpp.etcd_pass,
+                                  allow_reconnect=True)
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
 
