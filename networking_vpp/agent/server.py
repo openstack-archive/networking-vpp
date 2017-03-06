@@ -50,6 +50,7 @@ from networking_vpp import config_opts
 from networking_vpp.etcdutils import EtcdChangeWatcher
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
+from networking_vpp.exceptions import InvalidEtcdCAConfig
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
@@ -1823,10 +1824,23 @@ def main():
     host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
                                          cfg.CONF.ml2_vpp.etcd_port)
 
-    etcd_client = etcd.Client(host=host,
-                              username=cfg.CONF.ml2_vpp.etcd_user,
-                              password=cfg.CONF.ml2_vpp.etcd_pass,
-                              allow_reconnect=True)
+    if not cfg.CONF.ml2_vpp.etcd_insecure_explicit_disable_https:
+        if cfg.CONF.ml2_vpp.etcd_ca_cert is None:
+            LOG.error("etcd CA cert is not set and HTTPS is enabled")
+            raise InvalidEtcdCAConfig()
+
+        etcd_client = etcd.Client(host=host,
+                                       username=cfg.CONF.ml2_vpp.etcd_user,
+                                       password=cfg.CONF.ml2_vpp.etcd_pass,
+                                       protocol='https',
+                                       ca_cert=cfg.CONF.ml2_vpp.etcd_ca_cert,
+                                       allow_reconnect=True)
+    else:
+        LOG.warning("etcd is not using HTTPS, insecure setting")
+        etcd_client = etcd.Client(host=host,
+                                       username=cfg.CONF.ml2_vpp.etcd_user,
+                                       password=cfg.CONF.ml2_vpp.etcd_pass,
+                                       allow_reconnect=True)
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
 

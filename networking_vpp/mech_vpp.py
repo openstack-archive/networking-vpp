@@ -33,6 +33,7 @@ from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
 from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
+from networking_vpp.exceptions import InvalidEtcdCAConfig
 from networking_vpp.db import db
 from networking_vpp.etcdutils import EtcdChangeWatcher
 from neutron.callbacks import events
@@ -435,14 +436,27 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
                                              cfg.CONF.ml2_vpp.etcd_port)
-        self.etcd_client = etcd.Client(host=host,
-                                       username=cfg.CONF.ml2_vpp.etcd_user,
-                                       password=cfg.CONF.ml2_vpp.etcd_pass,
-                                       allow_reconnect=True)
 
+        if not cfg.CONF.ml2_vpp.etcd_insecure_explicit_disable_https:
+            if cfg.CONF.ml2_vpp.etcd_ca_cert is None:
+                LOG.error("etcd CA cert is not set and HTTPS is enabled")
+                raise InvalidEtcdCAConfig()
+
+            self.etcd_client = etcd.Client(host=host,
+                                           username=cfg.CONF.ml2_vpp.etcd_user,
+                                           password=cfg.CONF.ml2_vpp.etcd_pass,
+                                           protocol='https',
+                                           ca_cert=cfg.CONF.ml2_vpp.etcd_ca_cert,
+                                           allow_reconnect=True)
+        else:
+            LOG.warning("etcd is not using HTTPS, insecure setting")
+            self.etcd_client = etcd.Client(host=host,
+                                           username=cfg.CONF.ml2_vpp.etcd_user,
+                                           password=cfg.CONF.ml2_vpp.etcd_pass,
+                                           allow_reconnect=True)
         # For Liberty support, we have to have a memory between notifications
         self.deleted_rule_secgroup_id = {}
-
+        
         # We need certain directories to exist
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
