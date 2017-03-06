@@ -27,6 +27,9 @@ ETCD_PORT=${ETCD_PORT:-2379}
 ETCD_USER=${ETCD_USER:-}
 #Password for etcd authentication
 ETCD_PASS=${ETCD_PASS:-}
+# If a cert is provided, https is enabled; if not, security is disabled explicitly.
+ETCD_CA_CERT=${ETCD_CA_CERT:-}
+
 #Enable VPP restart by the Agent
 ENABLE_VPP_RESTART=${ENABLE_VPP_RESTART:-False}
 

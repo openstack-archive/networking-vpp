@@ -56,6 +56,12 @@ function configure_networking_vpp {
     if [ ! -z "$VXLAN_VRF" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_vrf $VXLAN_VRF
     fi
+
+    if [ ! -z "$ETCD_CA_CERT" ] ; then
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_ca_cert $ETCD_CA_CERT
+    else
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_insecure_explicit_disable_https True
+    fi
 }
 
 function shut_networking_vpp_down {
