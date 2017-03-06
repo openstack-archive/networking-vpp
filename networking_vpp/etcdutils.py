@@ -19,6 +19,8 @@ import atexit
 import etcd
 import eventlet
 import eventlet.semaphore
+from exceptions import InvalidEtcdCAConfig
+from oslo_config import cfg
 from oslo_log import log as logging
 import six
 import time

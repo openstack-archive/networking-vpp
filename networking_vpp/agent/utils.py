@@ -99,15 +99,23 @@ class EtcdClientFactory(object):
         hostconf = self._parse_host_config(ml2_vpp_conf.etcd_host,
                                            ml2_vpp_conf.etcd_port)
 
-        self.hostconf = hostconf
-        self.etcd_user = ml2_vpp_conf.etcd_user
-        self.etcd_pass = ml2_vpp_conf.etcd_pass
+        self.etcd_args = {
+            'hostconf': hostconf,
+            'username': ml2_vpp_conf.etcd_user,
+            'password': ml2_vpp_conf.etcd_pass,
+            'allow_reconnect': True}
+
+        if not ml2_vpp_conf.etcd_insecure_explicit_disable_https:
+            if ml2_vpp_conf.etcd_ca_cert is None:
+                raise InvalidEtcdCAConfig()
+
+            self.etcd_args['protocol'] = 'https'
+            self.etcd_args['ca_cert'] = ml2_vpp_conf.etcd_ca_cert,
+
+        else:
+            LOG.warning("etcd is not using HTTPS, insecure setting")
 
     def client(self):
-        etcd_client = \
-            etcd.Client(host=self.hostconf,
-                        username=self.etcd_user,
-                        password=self.etcd_pass,
-                        allow_reconnect=True)
+        etcd_client = etcd.Client(**self.etcd_args)
 
         return etcd_client
