@@ -977,35 +977,29 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Every key changes on a restart, which has the
             # useful effect of resending all Nova notifications
             # for 'port bound' events based on existing state.
-            def key_change(self, action, key, value):
+            def added(self, key, value):
                 # Matches a port key, gets host and uuid
-                m = re.match(self.data.state_key_space +
-                             '/([^/]+)/ports/([^/]+)$',
-                             key)
+                m = re.match('^([^/]+)/ports/([^/]+)$', key)
 
                 if m:
                     host = m.group(1)
                     port = m.group(2)
 
-                    if action == 'delete':
-                        # Nova doesn't much care when ports go away.
-                        pass
-                    else:
-                        # While this is strictly true and we're
-                        # allowed to do it now...
-                        self.data.notify_bound(port, host)
-                        # TODO(ijw): Nova isn't always listening at
-                        # this point, In our vhostuser case, this
-                        # callback turns up before Nova starts waiting
-                        # (the VM's up and QEMU is ready; binding
-                        # completes) so the signal arrives before the
-                        # wait even starts.  Send a late message as
-                        # well - duplicates are harmlessly ignored.
-                        eventlet.spawn_after(4, self.data.notify_bound,
-                                             port, host)
+                    # While this is strictly true and we're
+                    # allowed to do it now...
+                    self.data.notify_bound(port, host)
+                    # TODO(ijw): Nova isn't always listening at
+                    # this point, In our vhostuser case, this
+                    # callback turns up before Nova starts waiting
+                    # (the VM's up and QEMU is ready; binding
+                    # completes) so the signal arrives before the
+                    # wait even starts.  Send a late message as
+                    # well - duplicates are harmlessly ignored.
+                    eventlet.spawn_after(4, self.data.notify_bound,
+                                         port, host)
                 else:
-                    # Matches a port key, gets host and uuid
-                    m = re.match(self.data.state_key_space + '/([^/]+)/alive$',
+                    # Matches an agent, gets a liveness notification
+                    m = re.match(self.data.state_key_space + '^([^/]+)/alive$',
                                  key)
 
                     if m:
@@ -1013,13 +1007,21 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         # table.
                         host = m.group(1)
 
-                        if action == 'delete':
-                            LOG.info('host %s has died', host)
-                        else:
-                            LOG.debug('host %s is alive', host)
-                    else:
-                        LOG.warning('Unexpected key change in '
-                                    'etcd port feedback: %s', key)
+                        LOG.debug('host %s is alive', host)
+
+            def removed(self, key):
+                # Nova doesn't much care when ports go away.
+
+                # Matches an agent, gets a liveness notification
+                m = re.match(self.data.state_key_space + '^([^/]+)/alive$',
+                             key)
+
+                if m:
+                    # TODO(ijw): this should be fed into the agents
+                    # table.
+                    host = m.group(1)
+
+                    LOG.info('host %s has died', host)
 
         # Assign a UUID to each worker thread to enable thread election
         return eventlet.spawn(
