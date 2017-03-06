@@ -48,6 +48,7 @@ from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
 from networking_vpp.etcdutils import EtcdChangeWatcher
+from networking_vpp.etcdutils import EtcdClient
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
 from neutron.agent.linux import bridge_lib
@@ -1823,10 +1824,7 @@ def main():
     host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
                                          cfg.CONF.ml2_vpp.etcd_port)
 
-    etcd_client = etcd.Client(host=host,
-                              username=cfg.CONF.ml2_vpp.etcd_user,
-                              password=cfg.CONF.ml2_vpp.etcd_pass,
-                              allow_reconnect=True)
+    etcd_client = EtcdClient(host)
 
     ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
 
