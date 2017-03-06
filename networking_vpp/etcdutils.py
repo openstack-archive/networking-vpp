@@ -20,6 +20,7 @@ import etcd
 import eventlet
 import eventlet.semaphore
 from oslo_log import log as logging
+import re
 import six
 import time
 import traceback
@@ -389,7 +390,7 @@ class EtcdChangeWatcher(EtcdWatcher):
 
     This deals with the start/resync/watch dilemmas and makes a single
     'this key has changed' call regardless of what prompts it.
-    It does this by remembering what it's notified (via key_changed) in
+    It does this by remembering what it's notified (via key_change) in
     the past, and avoiding any notification that amounts to 'this key has
     changed to the same value'.  However, when we have to do a full resync
     the ordering of key updates is not guaranteed.
@@ -399,6 +400,7 @@ class EtcdChangeWatcher(EtcdWatcher):
                  wait_until_elected=False, recovery_time=5,
                  data=None, heartbeat=60):
         self.implemented_state = {}
+        self.watch_path = watch_path
 
         super(EtcdChangeWatcher, self).__init__(
             etcd_client, name, watch_path, election_path,
@@ -450,6 +452,36 @@ class EtcdChangeWatcher(EtcdWatcher):
         else:
             self.implemented_state[key] = value
 
-    @abstractmethod
     def key_change(self, action, key, value):
+        """Called when a key changes from the known value
+
+        This can be because it's added, changed, refreshed or deleted.
+        This default implementation does not notify of a change at
+        the root.  We assume only subkeys are interesting.
+        """
+
+        # TODO(ijw) makes more sense in the long run to use startswith...
+        m = re.match('^' + re.escape(self.watch_path) + '/(.*)$', key)
+        if m:
+            short_key = m.group(1)
+            LOG.debug("Watcher %s got %s on shortkey %s",
+                      self.name, action, short_key)
+
+            if action == 'deleted':
+                self.removed(short_key)
+            else:
+                self.added(short_key, value)
+
+    def removed(self, key):
+        """Called when a key is deleted
+
+        The watch path is removed, leaving only the subpath.
+        """
+        pass
+
+    def added(self, key, value):
+        """Called when a key is added, changed, updated...
+
+        The watch path is removed, leaving only the subpath.
+        """
         pass

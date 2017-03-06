@@ -1299,6 +1299,7 @@ class EtcdListener(object):
                                                  segmentation_id)
         if props is None:
             # Problems with the binding
+            # We will never notify anyone this port is ready.
             return None
 
         # Store the binding information.  We put this into
@@ -1708,99 +1709,63 @@ class EtcdListener(object):
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
 
-            def key_change(self, action, key, value):
-                """Implement etcd state when it changes
+            def removed(self, port):
+                # Removing key == desire to unbind
+                self.data.unbind(port)
 
-                This implements the state in VPP and notes the key/value
-                that VPP has implemented in self.implemented_state.
-                """
+                # Unlike bindings, unbindings are immediate.
 
-                LOG.debug('Key change: %s', key)
+                try:
+                    self.etcd_client.delete(
+                        self.data.state_key_space + '/%s'
+                        % port)
+                except etcd.EtcdKeyNotFound:
+                    # Gone is fine; if we didn't delete it
+                    # it's no problem
+                    pass
 
-                # Matches a port key, gets host and uuid
-                m = re.match(self.data.port_key_space + '/([^/]+)$', key)
+            def added(self, port, value):
+                # Create or update == bind
 
-                if m:
-                    port = m.group(1)
+                # In EtcdListener, bind *ensures correct
+                # binding* and is idempotent.  It will also
+                # fix up security if the security state has
+                # changed.  NB most things will not change on
+                # an update.
 
-                    if action == 'delete':
-                        # Removing key == desire to unbind
-                        self.data.unbind(port)
-
-                        # Unlike bindings, unbindings are immediate.
-
-                        try:
-                            self.etcd_client.delete(
-                                self.data.state_key_space + '/%s'
-                                % port)
-                        except etcd.EtcdKeyNotFound:
-                            # Gone is fine; if we didn't delete it
-                            # it's no problem
-                            pass
-                    else:
-                        # Create or update == bind
-
-                        # In EtcdListener, bind *ensures correct
-                        # binding* and is idempotent.  It will also
-                        # fix up security if the security state has
-                        # changed.  NB most things will not change on
-                        # an update.
-
-                        data = json.loads(value)
-                        props = self.data.bind(
-                            self.data.binder.add_notification,
-                            port,
-                            data['binding_type'],
-                            data['mac_address'],
-                            data['physnet'],
-                            data['network_type'],
-                            data['segmentation_id'],
-                            data  # TODO(ijw) convert incoming to security fmt
-                            )
-
-                        if props is None:
-                            # The binding failed for some reason (typically
-                            # a problem with physnet config); we don't quit,
-                            # in case the rest of what we're doing is working,
-                            # but we don't proceed any further.
-                            # Nova will time out on the bind completion.
-                            # An admin can also fix the config and this will
-                            # cause binds to retry on startup resync.
-                            # Until then, this etcd key will be ignored.
-                            return
-
-                else:
-                    LOG.warning('Unexpected key change in etcd '
-                                'port feedback, key %s', key)
+                data = json.loads(value)
+                self.data.bind(
+                    self.data.binder.add_notification,
+                    port,
+                    data['binding_type'],
+                    data['mac_address'],
+                    data['physnet'],
+                    data['network_type'],
+                    data['segmentation_id'],
+                    data  # TODO(ijw) convert incoming to security fmt
+                    )
+                # While the bind might fail for one reason or another,
+                # we have nothing we can do at this point.  We simply
+                # decline to notify Nova the port is ready.
 
         class SecGroupWatcher(EtcdChangeWatcher):
 
             def do_tick(self):
                 pass
 
-            def key_change(self, action, key, value):
-                # Matches a security group key and does work
-                LOG.debug("secgroup_watcher: doing work for %s %s %s" %
-                          (action, key, value))
-                # Matches a secgroup key and gets its ID and data
-                m = re.match(self.data.secgroup_key_space + '/([^/]+)$', key)
-                if m:
-                    secgroup = m.group(1)
-                    if action == 'delete':
-                        LOG.debug("secgroup_watcher: deleting secgroup %s"
-                                  % secgroup)
-                        self.data.acl_delete(secgroup)
-                    else:
-                        # create or update a secgroup == add_replace vpp acl
-                        data = json.loads(value)
-                        LOG.debug("secgroup_watcher: add_replace secgroup %s"
-                                  % secgroup)
-                        self.data.acl_add_replace(secgroup, data)
+            def removed(self, secgroup):
+                LOG.debug("secgroup_watcher: deleting secgroup %s"
+                          % secgroup)
+                self.data.acl_delete(secgroup)
 
-                        self.data.reconsider_port_secgroups()
-                else:
-                    LOG.warning('secgroup_watcher: Unexpected change in '
-                                'etcd secgroup feedback for key %s' % key)
+            def added(self, secgroup, value):
+                # create or update a secgroup == add_replace vpp acl
+                data = json.loads(value)
+                LOG.debug("secgroup_watcher: add_replace secgroup %s"
+                          % secgroup)
+                self.data.acl_add_replace(secgroup, data)
+
+                self.data.reconsider_port_secgroups()
 
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
