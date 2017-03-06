@@ -29,6 +29,14 @@ except ImportError:
     portbindings = neutron.extensions.portbindings
 
 try:
+    # Newton+
+    import neutron_lib.context
+    context = neutron_lib.context
+except ImportError:
+    import neutron.context
+    context = neutron.context
+
+try:
     # Mitaka+
     import neutron_lib.constants
     import neutron_lib.exceptions
