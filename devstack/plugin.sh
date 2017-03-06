@@ -34,7 +34,12 @@ function install_networking_vpp {
 }
 
 function init_networking_vpp {
-    :
+    # This relies on a bunch of etcd state, and if you're stacking and unstacking
+    # stale cruft builds up.
+
+    for f in $(etcdctl ls --recursive /networking-vpp | sort -r); do
+        etcdctl rm $f 2>/dev/null || etcdctl rmdir $f
+    done
 }
 
 function configure_networking_vpp {
