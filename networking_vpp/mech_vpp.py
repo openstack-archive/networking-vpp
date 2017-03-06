@@ -35,6 +35,7 @@ from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp.etcdutils import EtcdChangeWatcher
+from networking_vpp.etcdutils import EtcdClient
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
@@ -435,10 +436,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
                                              cfg.CONF.ml2_vpp.etcd_port)
-        self.etcd_client = etcd.Client(host=host,
-                                       username=cfg.CONF.ml2_vpp.etcd_user,
-                                       password=cfg.CONF.ml2_vpp.etcd_pass,
-                                       allow_reconnect=True)
+
+        self.etcd_client = EtcdClient(host)
 
         # For Liberty support, we have to have a memory between notifications
         self.deleted_rule_secgroup_id = {}

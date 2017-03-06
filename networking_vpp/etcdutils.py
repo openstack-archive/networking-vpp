@@ -19,6 +19,8 @@ import atexit
 import etcd
 import eventlet
 import eventlet.semaphore
+from exceptions import InvalidEtcdCAConfig
+from oslo_config import cfg
 from oslo_log import log as logging
 import six
 import time
@@ -453,3 +455,31 @@ class EtcdChangeWatcher(EtcdWatcher):
     @abstractmethod
     def key_change(self, action, key, value):
         pass
+
+
+class EtcdClient(etcd.Client):
+    """An etcd client that handles the client settings from configuration.
+
+    The Class detects if https is enabled and checks if the CA is properly set.
+    """
+
+    def __init__(self, host):
+
+        if not cfg.CONF.ml2_vpp.etcd_insecure_explicit_disable_https:
+            if cfg.CONF.ml2_vpp.etcd_ca_cert is None:
+                raise InvalidEtcdCAConfig()
+
+            super(EtcdClient, self).__init__(
+                host=host,
+                username=cfg.CONF.ml2_vpp.etcd_user,
+                password=cfg.CONF.ml2_vpp.etcd_pass,
+                protocol='https',
+                ca_cert=cfg.CONF.ml2_vpp.etcd_ca_cert,
+                allow_reconnect=True)
+        else:
+            LOG.warning("etcd is not using HTTPS, insecure setting")
+            super(EtcdClient, self).__init__(
+                host=host,
+                username=cfg.CONF.ml2_vpp.etcd_user,
+                password=cfg.CONF.ml2_vpp.etcd_pass,
+                allow_reconnect=True)
