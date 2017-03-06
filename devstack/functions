@@ -58,6 +58,37 @@ function set_hugepages {
 function setup_host_env {
     is_package_installed etcd || install_package etcd
     restart_service etcd
+
+    # This relies on a bunch of etcd state, and if you're stacking and unstacking
+    # stale cruft builds up.
+
+    clean_etcd
+
     set_hugepages
     systemctl is-active vpp || start_vpp
+}
+
+function clean_etcd() {
+
+    # etcd_host may be complex, so we do our best with it
+
+    if [[ ! "$ETCD_HOST" =~ "://" ]] ; then
+        hostarg=""
+        for f in $(echo "$ETCD_HOST" | tr "," "\n"); do
+            hostarg="$hostarg,http://$f:$ETCD_PORT/"
+        done
+        # Strip that leading comma
+
+        hostarg="${hostarg:1}"
+    else
+        hostarg="$ETCD_HOST"
+    fi
+    args="--endpoints $hostarg"
+
+    # TODO(ijw): deal with username and password
+
+    sleep 2 # settle time for the daemon
+    for f in $(etcdctl $args ls --recursive /networking-vpp | sort -r); do
+        etcdctl rm $f 2>/dev/null || etcdctl rmdir $f
+    done
 }
