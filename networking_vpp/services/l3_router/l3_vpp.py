@@ -27,12 +27,11 @@ from neutron.db import l3_gwmode_db
 from neutron.extensions import providernet as provider
 from neutron_lib import constants
 
+from networking_vpp.agent import server
 from networking_vpp.db import db
 from networking_vpp.mech_vpp import EtcdAgentCommunicator
 
 LOG = logging.getLogger(__name__)
-
-LEADIN = '/networking-vpp'
 
 
 class VppL3RouterPlugin(
@@ -52,6 +51,41 @@ class VppL3RouterPlugin(
         super(VppL3RouterPlugin, self).__init__()
         self.communicator = EtcdAgentCommunicator()
         self.l3_host = cfg.CONF.ml2_vpp.l3_host
+
+    def _get_physnet(self):
+        # Get physnet corresponding to the L3 host
+        for (host, physnet) in self.communicator.find_physnets():
+            if host == self.l3_host:
+                return physnet
+
+    def _floatingip_path(self, fip_id):
+        return (server.LEADIN + '/nodes/' + self.l3_host +
+                '/server.ROUTER_FIP_DIR/' + fip_id)
+
+    def _process_floatingip(self, context, fip_dict, event_type):
+        port = self._core_plugin.get_port(context, fip_dict['port_id'])
+        external_network = self._core_plugin.get_network(
+            context, fip_dict['floating_network_id'])
+        internal_network = self._core_plugin.get_network(
+            context, port['network_id'])
+
+        vpp_floatingip_dict = {
+            'physnet': self._get_physnet(),
+            'external_net_type': external_network[provider.NETWORK_TYPE],
+            'external_segmentation_id':
+                external_network[provider.SEGMENTATION_ID],
+            'internal_net_type': internal_network[provider.NETWORK_TYPE],
+            'internal_segmentation_id':
+                internal_network[provider.SEGMENTATION_ID],
+            'fixed_ip_address': fip_dict.get('fixed_ip_address'),
+            'floating_ip_address': fip_dict.get('floating_ip_address'),
+            'event': event_type,
+        }
+
+        db.journal_write(context.session,
+                         self._floatingip_path(fip_dict['id']),
+                         vpp_floatingip_dict)
+        self.communicator.kick()
 
     def get_plugin_type(self):
         return constants.L3
@@ -77,6 +111,42 @@ class VppL3RouterPlugin(
             super(VppL3RouterPlugin, self).delete_router(context, router_id)
             # Delete VRF allocation for this router
             db.delete_router_vrf(context.session, router_id)
+
+    def create_floatingip(self, context, floatingip):
+        session = db_api.get_session()
+        with session.begin(subtransactions=True):
+            fip_dict = super(VppL3RouterPlugin, self).create_floatingip(
+                context, floatingip,
+                initial_status=constants.FLOATINGIP_STATUS_ACTIVE)
+            if fip_dict.get('port_id') is not None:
+                self._process_floatingip(context, fip_dict, 'associate')
+
+        return fip_dict
+
+    def update_floatingip(self, context, floatingip_id, floatingip):
+        org_fip_dict = self.get_floatingip(context, floatingip_id)
+        session = db_api.get_session()
+        with session.begin(subtransactions=True):
+            fip_dict = super(VppL3RouterPlugin, self).update_floatingip(
+                context, floatingip_id, floatingip)
+            if fip_dict.get('port_id') is not None:
+                event_type = 'associate'
+                vpp_fip_dict = fip_dict
+            else:
+                event_type = 'disassociate'
+                vpp_fip_dict = org_fip_dict
+            self._process_floatingip(context, vpp_fip_dict, event_type)
+
+        return fip_dict
+
+    def delete_floatingip(self, context, floatingip_id):
+        org_fip_dict = self.get_floatingip(context, floatingip_id)
+        session = db_api.get_session()
+        with session.begin(subtransactions=True):
+            super(VppL3RouterPlugin, self).delete_floatingip(
+                context, floatingip_id)
+            if org_fip_dict.get('port_id') is not None:
+                self._process_floatingip(context, org_fip_dict, 'disassociate')
 
     def _get_router_intf_details(self, context, router_id, interface_info,
                                  router_dict):
@@ -121,7 +191,8 @@ class VppL3RouterPlugin(
                                           interface_info, router_dict)
             db.journal_write(
                 context.session,
-                LEADIN + '/nodes/' + self.l3_host + '/routers/' + router_id,
+                (server.LEADIN + '/nodes/' + self.l3_host +
+                 '/server.ROUTER_INTF_DIR/' + router_id),
                 router_dict)
             self.communicator.kick()
 
@@ -140,7 +211,8 @@ class VppL3RouterPlugin(
 
             db.journal_write(
                 context.session,
-                LEADIN + '/nodes/' + self.l3_host + '/routers/' + router_id,
+                (server.LEADIN + '/nodes/' + self.l3_host +
+                 '/server.ROUTER_INTF_DIR/' + router_id),
                 router_dict)
             self.communicator.kick()
 
