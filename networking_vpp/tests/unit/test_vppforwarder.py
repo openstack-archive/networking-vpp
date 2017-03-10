@@ -23,6 +23,11 @@ sys.modules['threading'] = mock.MagicMock()
 from networking_vpp.agent import server
 from neutron.tests import base
 
+INTERNAL_SEGMENATION_ID = 100
+INTERNAL_SEGMENATION_TYPE = 'vlan'
+PHYSNET = 'physnet1'
+FIXED_IP_ADDRESS = '192.168.100.10'
+
 
 class VPPForwarderTestCase(base.BaseTestCase):
     _mechanism_drivers = ['vpp']
@@ -261,6 +266,15 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'gateway_ip': '2001:db8:1234::1', 'is_ipv6': False,
                 'prefixlen': 64, 'mtu': 1500}
 
+    def _get_mock_floatingip(self):
+        return {'internal_segmentation_id': INTERNAL_SEGMENATION_ID,
+                'internal_net_type': INTERNAL_SEGMENATION_TYPE,
+                'external_segmentation_id': 172,
+                'external_net_type': 'vlan',
+                'fixed_ip_address': FIXED_IP_ADDRESS,
+                'floating_ip_address': '100.38.15.131',
+                'physnet': PHYSNET}
+
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
     def _test_create_router_interface_on_host(self, m_network_on_host, router):
@@ -399,3 +413,109 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self._test_delete_router_interface_with_multiple_interfaces(
             router=self._get_mock_v6_router_interface(),
             other_router=self._get_mock_router_interface())
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_floatingip_on_vpp(self, m_network_on_host):
+        """Test create floatingip processing.
+
+        Verify that the SNAT create APIs are called.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 'fake_up_idx'}
+        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
+                              INTERNAL_SEGMENATION_ID):
+                             {'bridge_domain_id': 1}}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+
+        self.vpp.associate_floatingip(floatingip_dict)
+
+        self.assertEqual(self.vpp.vpp.set_snat_on_interface.call_count, 2)
+        self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
+            floatingip_dict['fixed_ip_address'],
+            floatingip_dict['floating_ip_address'])
+        self.assertEqual(m_network_on_host.call_count, 1)
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_floatingip_on_vpp_existing_indexes(
+            self, m_network_on_host):
+        """Test create floatingip processing with existing indexes.
+
+        Verify that the SNAT interfaces are not created if they already
+        exist on the VPP.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 4}
+        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
+                              INTERNAL_SEGMENATION_ID):
+                             {'bridge_domain_id': 1}}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_snat_interfaces.return_value = [4, 5]
+
+        self.vpp.associate_floatingip(floatingip_dict)
+
+        self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
+
+    def test_create_floatingip_on_vpp_no_internal_network(self):
+        """Test create floatingip processing without an internal network.
+
+        Verify that the SNAT interfaces are not created when the
+        internal network (router interface) hasn't been created.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        self.vpp.networks = {}
+
+        self.vpp.associate_floatingip(floatingip_dict)
+
+        self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_delete_floatingip_on_vpp(self, m_network_on_host):
+        """Test delete floatingip processing.
+
+        Verify that the SNAT delete APIs are called.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 'fake_up_idx'}
+        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
+                              INTERNAL_SEGMENATION_ID):
+                             {'bridge_domain_id': 1}}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_snat_local_ipaddresses.return_value = []
+
+        self.vpp.disassociate_floatingip(floatingip_dict)
+
+        self.assertFalse(self.vpp.vpp.set_snat_static_mapping.call_count)
+        self.assertEqual(self.vpp.vpp.set_snat_on_interface.call_count, 2)
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_delete_floatingip_on_vpp_existing_indexes(
+            self, m_network_on_host):
+        """Test delete floatingip processing with existing indexes.
+
+        Verify that the SNAT interfaces are not deleted if SNAT IP
+        addresses are still present.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 'fake_up_idx'}
+        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
+                              INTERNAL_SEGMENATION_ID):
+                             {'bridge_domain_id': 1}}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_snat_local_ipaddresses.return_value = (
+            [FIXED_IP_ADDRESS])
+
+        self.vpp.disassociate_floatingip(floatingip_dict)
+
+        self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
+            floatingip_dict['fixed_ip_address'],
+            floatingip_dict['floating_ip_address'],
+            is_add=0)
+        self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
