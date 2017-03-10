@@ -1259,6 +1259,69 @@ class VPPForwarder(object):
         # Works for both addresses and the net address of masked networks
         return ip_network(unicode(ip_addr)).network_address.packed
 
+    def _get_snat_indexes(self, floatingip_dict):
+        # Get internal network details.
+        internal_network_data = self.networks.get(
+            (floatingip_dict['physnet'],
+             floatingip_dict['internal_net_type'],
+             floatingip_dict['internal_segmentation_id']),
+            None)
+        if internal_network_data:
+            net_br_idx = internal_network_data['bridge_domain_id']
+
+            # if needed the external subinterface will be created.
+            external_network_data = self.ensure_network_on_host(
+                floatingip_dict['physnet'],
+                floatingip_dict['external_net_type'],
+                floatingip_dict['external_segmentation_id'])
+
+            # Return the internal and external interface indexes.
+            return (self.vpp.get_bridge_bvi(net_br_idx),
+                    external_network_data['if_upstream_idx'])
+        else:
+            LOG.error('Failed to get internal network data. Verify that the '
+                      'router interface on the private network was created.')
+            return None, None
+
+    def _add_snat_interfaces(self, floatingip_dict):
+        """Add SNAT interfaces."""
+
+        loopback_idx, external_idx = self._get_snat_indexes(floatingip_dict)
+        snat_interfaces = self.vpp.get_snat_interfaces()
+
+        if loopback_idx and loopback_idx not in snat_interfaces:
+            self.vpp.set_snat_on_interface(loopback_idx)
+        if external_idx and external_idx not in snat_interfaces:
+            self.vpp.set_snat_on_interface(external_idx, is_inside=0)
+
+    def _delete_external_subinterface(self, floatingip_dict):
+        """Check if the external subinterface can be deleted."""
+
+        physnet = floatingip_dict['physnet']
+        external_net_type = floatingip_dict['external_net_type']
+        external_segmentation_id = floatingip_dict['external_segmentation_id']
+        external_network_data = self.networks.get(
+            (physnet, external_net_type, external_segmentation_id), None)
+        if external_network_data:
+            physnet_ip_addrs = self.vpp.get_interface_ip_addresses(
+                external_network_data['if_upstream_idx'])
+            if not physnet_ip_addrs:
+                self.delete_network_on_host(
+                    physnet, external_net_type, external_segmentation_id)
+
+    def _delete_snat_interfaces(self, floatingip_dict):
+        """Delete SNAT interfaces."""
+
+        loopback_idx, external_idx = self._get_snat_indexes(floatingip_dict)
+        snat_static_mappings = self.vpp.get_snat_static_mappings()
+
+        # Delete SNAT interfaces if all IP addresses have been removed.
+        if not snat_static_mappings:
+            if loopback_idx:
+                self.vpp.set_snat_on_interface(loopback_idx, is_add=0)
+            self.vpp.set_snat_on_interface(external_idx, is_inside=0, is_add=0)
+            self._delete_external_subinterface(floatingip_dict)
+
     def create_router_interface_on_host(self, router):
         """Create a router on the local host.
 
@@ -1316,6 +1379,21 @@ class VPPForwarder(object):
             else:
                 # Last subnet assigned, delete the interface
                 self.vpp.delete_loopback(bvi_if_idx)
+
+    def associate_floatingip(self, floatingip_dict):
+        """Add SNAT interfaces and IP addresses to VPP."""
+        self._add_snat_interfaces(floatingip_dict)
+        self.vpp.set_snat_static_mapping(
+            floatingip_dict['fixed_ip_address'],
+            floatingip_dict['floating_ip_address'])
+
+    def disassociate_floatingip(self, floatingip_dict):
+        """Remove SNAT interfaces and IP addresses from VPP."""
+        self.vpp.set_snat_static_mapping(
+            floatingip_dict['fixed_ip_address'],
+            floatingip_dict['floating_ip_address'],
+            is_add=0)
+        self._delete_snat_interfaces(floatingip_dict)
 
     def get_spoof_filter_rules(self):
         """Build and return a list of anti-spoofing rules.
@@ -1407,6 +1485,8 @@ class VPPForwarder(object):
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
+ROUTER_INTF_DIR = '/router/interface/'
+ROUTER_FIP_DIR = '/router/floatingip/'
 
 
 class EtcdListener(object):
@@ -1727,7 +1807,7 @@ class EtcdListener(object):
         # storing, so it's lost on reboot of VPP)
 
         self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        self.router_key_space = LEADIN + "/nodes/%s/routers" % self.host
+        self.router_key_space = LEADIN + "/nodes/%s/router" % self.host
         self.secgroup_key_space = LEADIN + "/global/secgroups"
         self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
@@ -1850,7 +1930,7 @@ class EtcdListener(object):
         class RouterWatcher(EtcdChangeWatcher):
             """Start an etcd watcher for router operations.
 
-            Starts an etcd watcher on the /routers directory for
+            Starts an etcd watcher on the /router directory for
             this node. This watcher is responsible for consuming
             Neutron router CRUD operations.
             """
@@ -1860,23 +1940,40 @@ class EtcdListener(object):
             def key_change(self, action, key, value):
                 LOG.debug("router_watcher: doing work for %s %s %s" %
                           (action, key, value))
-                m = re.match(self.data.router_key_space + '/([^/]+)$', key)
-                if m:
-                    router_id = m.group(1)
+                m = re.match(self.data.router_key_space + '/([^/]+)/([^/]+)?$',
+                             key)
+                if m and m.group(1) == 'interface':
+                    router_id = m.group(2)
                     router = json.loads(value)
                     if router.get('delete', False):
                         self.data.vppf.delete_router_interface_on_host(router)
                     elif action == 'delete':
                         try:
                             self.etcd_client.delete(
-                                self.data.router_key_space + '/%s'
-                                % router_id)
+                                self.data.router_key_space +
+                                "/interface/%s" % router_id)
                         except etcd.EtcdKeyNotFound:
                             # Gone is fine; if we didn't delete it
                             # it's no problem
                             pass
                     else:
                         self.data.vppf.create_router_interface_on_host(router)
+                elif m and m.group(1) == 'floatingip':
+                    if action == 'delete':
+                        try:
+                            self.etcd_client.delete(
+                                self.data.router_key_space +
+                                "/floatingip/%s" % m.group(2))
+                        except etcd.EtcdKeyNotFound:
+                            pass
+                    else:
+                        floatingip_dict = json.loads(value)
+                        if floatingip_dict['event'] == 'associate':
+                            self.data.vppf.associate_floatingip(
+                                floatingip_dict)
+                        else:
+                            self.data.vppf.disassociate_floatingip(
+                                floatingip_dict)
                 else:
                     LOG.warn('Unexpected key change in etcd router feedback,'
                              ' key %s' % key)
