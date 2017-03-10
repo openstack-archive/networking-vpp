@@ -258,6 +258,15 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'gateway_ip': '2001:db8:1234::1', 'is_ipv6': False,
                 'prefixlen': 64}
 
+    def _get_mock_floatingip(self):
+        return {'internal_segmentation_id': 143,
+                'internal_net_type': 'vlan',
+                'external_segmentation_id': 172,
+                'external_net_type': 'vlan',
+                'fixed_ip_address': '192.168.100.10',
+                'floating_ip_address': '100.38.15.131',
+                'physnet': 'physnet1'}
+
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
     def _test_create_router_on_host(self, m_network_on_host, router):
@@ -337,3 +346,81 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self._test_router_create_with_existing_bvi_different_ip(
             router=self._get_mock_v6_router(),
             other_router=self._get_mock_router())
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_floatingip_on_vpp(self, m_network_on_host):
+        """Test create floatingip processing.
+
+        Verify that the SNAT create APIs are called.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 'fake_up_idx'}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+
+        self.vpp.associate_floatingip(floatingip_dict)
+
+        self.assertEqual(self.vpp.vpp.set_snat_on_interface.call_count, 2)
+        self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
+            floatingip_dict['fixed_ip_address'],
+            floatingip_dict['floating_ip_address'])
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_floatingip_on_vpp_existing_indexes(
+            self, m_network_on_host):
+        """Test create floatingip processing with existing indexes.
+
+        Verify that the SNAT interfaces are not created if they already
+        exist on the VPP.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 4}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_snat_interfaces.return_value = [4, 5]
+
+        self.vpp.associate_floatingip(floatingip_dict)
+
+        self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_delete_floatingip_on_vpp(self, m_network_on_host):
+        """Test delete floatingip processing.
+
+        Verify that the SNAT delete APIs are called.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 'fake_up_idx'}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_snat_static_mappings.return_value = []
+
+        self.vpp.disassociate_floatingip(floatingip_dict)
+
+        self.assertEqual(self.vpp.vpp.set_snat_on_interface.call_count, 2)
+        self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
+            floatingip_dict['fixed_ip_address'],
+            floatingip_dict['floating_ip_address'],
+            is_add=0)
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_delete_floatingip_on_vpp_existing_indexes(
+            self, m_network_on_host):
+        """Test delete floatingip processing with existing indexes.
+
+        Verify that the SNAT interfaces are not deleted if SNAT IP
+        addresses are still present.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
+                                          'if_upstream_idx': 'fake_up_idx'}
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_snat_static_mappings.return_value = ['test mapping']
+
+        self.vpp.disassociate_floatingip(floatingip_dict)
+
+        self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
