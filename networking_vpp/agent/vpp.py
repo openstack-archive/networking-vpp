@@ -642,3 +642,39 @@ class VPPInterface(object):
 
     def set_interface_mtu(self, sw_if_idx, mtu):
         self.call_vpp('sw_interface_set_mtu', sw_if_index=sw_if_idx, mtu=mtu)
+
+    def get_snat_interfaces(self):
+        snat_interface_list = []
+        snat_interfaces = self.call_vpp('snat_interface_dump')
+        for intf in snat_interfaces:
+            snat_interface_list.append(intf.sw_if_index)
+        return snat_interface_list
+
+    def get_snat_local_ipaddresses(self):
+        # NB: Only IPv4 SNAT addresses are supported.
+        snat_local_ipaddresses = []
+        snat_static_mappings = self.call_vpp('snat_static_mapping_dump')
+        for static_mapping in snat_static_mappings:
+            snat_local_ipaddresses.append(
+                str(ipaddress.IPv4Address(
+                    static_mapping.local_ip_address[:4])))
+        return snat_local_ipaddresses
+
+    def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
+        self.call_vpp('snat_interface_add_del_feature',
+                      sw_if_index=sw_if_index,
+                      is_inside=is_inside,
+                      is_add=is_add)
+
+    def set_snat_static_mapping(self, local_ip, external_ip, is_add=1):
+        local_ip = str(ipaddress.IPv4Address(local_ip).packed)
+        external_ip = str(ipaddress.IPv4Address(external_ip).packed)
+        self.call_vpp('snat_add_static_mapping',
+                      local_ip_address=local_ip,
+                      external_ip_address=external_ip,
+                      local_port=0,
+                      external_port=0,
+                      addr_only=1,
+                      vrf_id=0,
+                      is_add=is_add,
+                      is_ip4=1)
