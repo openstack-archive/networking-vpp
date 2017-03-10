@@ -639,3 +639,32 @@ class VPPInterface(object):
             int_addrs.append((str(ipaddress.ip_address(v6_addr[3]).exploded),
                              v6_addr[4]))
         return int_addrs
+
+    def get_snat_interfaces(self):
+        snat_interface_list = []
+        snat_interfaces = self.call_vpp('snat_interface_dump')
+        for intf in snat_interfaces:
+            snat_interface_list.append(intf.sw_if_index)
+        return snat_interface_list
+
+    def get_snat_static_mappings(self):
+        return self.call_vpp('snat_static_mapping_dump')
+
+    def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
+        self.call_vpp('snat_interface_add_del_feature',
+                      sw_if_index=sw_if_index,
+                      is_inside=is_inside,
+                      is_add=is_add)
+
+    def set_snat_static_mapping(self, local_ip, external_ip, is_add=1):
+        local_ip = str(ipaddress.IPv4Address(local_ip).packed)
+        external_ip = str(ipaddress.IPv4Address(external_ip).packed)
+        self.call_vpp('snat_add_static_mapping',
+                      local_ip_address=local_ip,
+                      external_ip_address=external_ip,
+                      local_port=0,
+                      external_port=0,
+                      addr_only=1,
+                      vrf_id=0,
+                      is_add=is_add,
+                      is_ip4=1)
