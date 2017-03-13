@@ -1037,7 +1037,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         if action == 'delete':
                             LOG.info('host %s has died', host)
                         else:
-                            LOG.info('host %s is alive', host)
+                            LOG.debug('host %s is alive', host)
                     else:
                         LOG.warning('Unexpected key change in '
                                     'etcd port feedback: %s', key)
