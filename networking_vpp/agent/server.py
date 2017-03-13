@@ -1594,125 +1594,6 @@ class EtcdListener(object):
 
         self.etcd_helper.clear_state(self.state_key_space)
 
-        class PortWatcher(EtcdChangeWatcher):
-
-            def do_tick(self):
-                # The key that indicates to people that we're alive
-                # (not that they care)
-                # TODO(ijw): use refresh after the create to avoid the
-                # notification
-                self.etcd_client.write(LEADIN + '/state/%s/alive' %
-                                       self.data.host,
-                                       1, ttl=3 * self.heartbeat)
-
-            def removed(self, port):
-                # Removing key == desire to unbind
-                self.data.unbind(port)
-                LOG.debug("port_watcher: known secgroup to acl "
-                          "mappings %s" % secgroups)
-                try:
-                    self.etcd_client.delete(
-                        self.data.state_key_space + '/%s'
-                        % port)
-                except etcd.EtcdKeyNotFound:
-                    # Gone is fine; if we didn't delete it
-                    # it's no problem
-                    pass
-
-            def added(self, port, value):
-                # Create or update == bind
-                # NB most things will not change on an update.
-                # TODO(ijw): go through the cases.
-                data = json.loads(value)
-                props = self.data.bind(port,
-                                       data['binding_type'],
-                                       data['mac_address'],
-                                       data['physnet'],
-                                       data['network_type'],
-                                       data['segmentation_id'])
-                if props is None:
-                    # The binding failed for some reason (typically
-                    # a problem with physnet config); we don't quit,
-                    # in case the rest of what we're doing is working,
-                    # but we don't proceed any further.
-                    # Nova will time out on the bind completion.
-                    # An admin can also fix the config and this will
-                    # cause binds to retry on startup resync.
-                    # Until then, this etcd key will be ignored.
-                    return
-
-                # If (security-groups and port_security)
-                # are enabled and it's a vhostuser port
-                # proceed to set L3/L2 ACLs, else skip security
-                if (self.data.secgroup_enabled
-                        and data.get('port_security_enabled', True)
-                        and data['binding_type'] == 'vhostuser'):
-                    LOG.debug("port_watcher: known secgroup to acl "
-                              "mappings %s" % secgroups)
-                    security_groups = data.get('security_groups', [])
-                    LOG.debug("port_watcher:Setting secgroups %s "
-                              "on sw_if_index %s for port %s" %
-                              (security_groups,
-                               props['iface_idx'],
-                               port))
-                    self.data.set_acls_on_port(
-                        security_groups,
-                        props['iface_idx'])
-                    LOG.debug("port_watcher: setting secgroups "
-                              "%s on sw_if_index %s for port %s " %
-                              (security_groups,
-                               props['iface_idx'],
-                               port))
-                    # Set Allowed address pairs and mac-spoof filter
-                    aa_pairs = data.get('allowed_address_pairs', [])
-                    LOG.debug("port_watcher: Setting allowed "
-                              "address pairs %s on port %s "
-                              "sw_if_index %s" %
-                              (aa_pairs,
-                               port,
-                               props['iface_idx']))
-                    self.data.set_mac_ip_acl_on_port(
-                        data['mac_address'],
-                        data.get('fixed_ips'),
-                        aa_pairs,
-                        props['iface_idx'])
-                    LOG.debug("port_watcher: setting allowed-addr-"
-                              "pairs %s on sw_if_index %s for "
-                              "port %s" %
-                              (aa_pairs,
-                               props['iface_idx'],
-                               port))
-                self.data.vppf.vpp.ifup(props['iface_idx'])
-                # Clear ACLs on vhostuser port if port_security
-                # is disabled
-                if (not data.get('port_security_enabled', True)
-                        and data['binding_type'] == 'vhostuser'):
-                    LOG.debug("Removing port_security on "
-                              "port %s", port)
-                    self.data.vppf.remove_acls_on_vpp_port(
-                        props['iface_idx'])
-
-        class SecGroupWatcher(EtcdChangeWatcher):
-
-            def do_tick(self):
-                pass
-
-            def removed(self, secgroup):
-                LOG.debug("secgroup_watcher: deleting secgroup %s"
-                          % secgroup)
-                self.data.acl_delete(secgroup)
-                LOG.debug("secgroup watcher: known secgroup to acl "
-                          "mappings %s" % secgroups)
-
-            def added(self, secgroup, value):
-                # create or update a secgroup == add_replace vpp acl
-                data = json.loads(value)
-                LOG.debug("secgroup_watcher: add_replace secgroup %s"
-                          % secgroup)
-                self.data.acl_add_replace(secgroup, data)
-                LOG.debug("secgroup_watcher: known secgroup to acl "
-                          "mappings %s" % secgroups)
-
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
                       "performing secgroup_watcher lookups")
@@ -1738,6 +1619,127 @@ class EtcdListener(object):
                                     data=self).watch_forever)
 
         self.pool.waitall()
+
+
+class PortWatcher(EtcdChangeWatcher):
+
+    def do_tick(self):
+        # The key that indicates to people that we're alive
+        # (not that they care)
+        # TODO(ijw): use refresh after the create to avoid the
+        # notification
+        self.etcd_client.write(LEADIN + '/state/%s/alive' %
+                               self.data.host,
+                               1, ttl=3 * self.heartbeat)
+
+    def removed(self, port):
+        # Removing key == desire to unbind
+        self.data.unbind(port)
+        LOG.debug("port_watcher: known secgroup to acl "
+                  "mappings %s" % secgroups)
+        try:
+            self.etcd_client.delete(
+                self.data.state_key_space + '/%s'
+                % port)
+        except etcd.EtcdKeyNotFound:
+            # Gone is fine; if we didn't delete it
+            # it's no problem
+            pass
+
+    def added(self, port, value):
+        # Create or update == bind
+        # NB most things will not change on an update.
+        # TODO(ijw): go through the cases.
+        data = json.loads(value)
+        props = self.data.bind(port,
+                               data['binding_type'],
+                               data['mac_address'],
+                               data['physnet'],
+                               data['network_type'],
+                               data['segmentation_id'])
+        if props is None:
+            # The binding failed for some reason (typically
+            # a problem with physnet config); we don't quit,
+            # in case the rest of what we're doing is working,
+            # but we don't proceed any further.
+            # Nova will time out on the bind completion.
+            # An admin can also fix the config and this will
+            # cause binds to retry on startup resync.
+            # Until then, this etcd key will be ignored.
+            return
+
+        # If (security-groups and port_security)
+        # are enabled and it's a vhostuser port
+        # proceed to set L3/L2 ACLs, else skip security
+        if (self.data.secgroup_enabled
+                and data.get('port_security_enabled', True)
+                and data['binding_type'] == 'vhostuser'):
+            LOG.debug("port_watcher: known secgroup to acl "
+                      "mappings %s" % secgroups)
+            security_groups = data.get('security_groups', [])
+            LOG.debug("port_watcher:Setting secgroups %s "
+                      "on sw_if_index %s for port %s" %
+                      (security_groups,
+                       props['iface_idx'],
+                       port))
+            self.data.set_acls_on_port(
+                security_groups,
+                props['iface_idx'])
+            LOG.debug("port_watcher: setting secgroups "
+                      "%s on sw_if_index %s for port %s " %
+                      (security_groups,
+                       props['iface_idx'],
+                       port))
+            # Set Allowed address pairs and mac-spoof filter
+            aa_pairs = data.get('allowed_address_pairs', [])
+            LOG.debug("port_watcher: Setting allowed "
+                      "address pairs %s on port %s "
+                      "sw_if_index %s" %
+                      (aa_pairs,
+                       port,
+                       props['iface_idx']))
+            self.data.set_mac_ip_acl_on_port(
+                data['mac_address'],
+                data.get('fixed_ips'),
+                aa_pairs,
+                props['iface_idx'])
+            LOG.debug("port_watcher: setting allowed-addr-"
+                      "pairs %s on sw_if_index %s for "
+                      "port %s" %
+                      (aa_pairs,
+                       props['iface_idx'],
+                       port))
+        self.data.vppf.vpp.ifup(props['iface_idx'])
+        # Clear ACLs on vhostuser port if port_security
+        # is disabled
+        if (not data.get('port_security_enabled', True)
+                and data['binding_type'] == 'vhostuser'):
+            LOG.debug("Removing port_security on "
+                      "port %s", port)
+            self.data.vppf.remove_acls_on_vpp_port(
+                props['iface_idx'])
+
+
+class SecGroupWatcher(EtcdChangeWatcher):
+
+    def do_tick(self):
+        pass
+
+    def removed(self, secgroup):
+        LOG.debug("secgroup_watcher: deleting secgroup %s"
+                  % secgroup)
+        self.data.acl_delete(secgroup)
+        LOG.debug("secgroup watcher: known secgroup to acl "
+                  "mappings %s" % secgroups)
+
+    def added(self, secgroup, value):
+        # create or update a secgroup == add_replace vpp acl
+        data = json.loads(value)
+        LOG.debug("secgroup_watcher: add_replace secgroup %s"
+                  % secgroup)
+        self.data.acl_add_replace(secgroup, data)
+        LOG.debug("secgroup_watcher: known secgroup to acl "
+                  "mappings %s" % secgroups)
 
 
 class VPPRestart(object):
