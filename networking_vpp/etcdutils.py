@@ -229,9 +229,49 @@ class EtcdWatcher(object):
         self.etcd_data = None
 
         # Get the initial state of etcd.
+        self.init_resync_start()
         self.refresh_all_data()
 
+        # NB needs the lock to run safely.
+        def short_keys():
+            for f in self.etcd_data.keys():
+                short_key = self.make_short_key(f)
+                if short_key:
+                    yield short_key
+
+        with self.etcd_data_lock:
+            self.init_resync_end(short_keys())
+
+    def make_short_key(self, key):
+        # TODO(ijw) .startswith would be more sensible
+        m = re.match('^' + re.escape(self.watch_path) + '/(.*+)$', key)
+        if m:
+            return m.group(1)
+        else:
+            return None
+
+    def init_resync_start(self):
+        """Overrideable function when the first resync starts
+
+        Whatever is being driven by the etcd data, this is a good time
+        to find out what state it's currently in.  It may be
+        persisting data over a restart of the process watching etcd.
+        """
+        pass
+
+    def init_resync_end(self, short_keys):
+        """Overrideable function when the first resync ends
+
+        Whatever is being driven by the etcd data, this is a good time
+        to clean up its state based on what was originally discovered
+        and what we now know etcd wants.
+
+        short_keys - an iterator for the keys
+        """
+        pass
+
     def do_work(self, action, key, value):
+
         """Process an indiviudal update received in a watch
 
         Override this if you can deal with individual updates given
@@ -459,10 +499,10 @@ class EtcdChangeWatcher(EtcdWatcher):
         This default implementation does not notify of a change at
         the root.  We assume only subkeys are interesting.
         """
+        short_key = self.make_short_key(key)
 
-        m = re.match('^' + re.escape(self.watch_path) + '/([^/]+)$', key)
-        if m:
-            short_key = m.group(1)
+        if short_key is not None:
+
             LOG.debug("Watcher %s got %s on shortkey %s",
                       self.name, action, short_key)
 
