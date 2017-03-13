@@ -2484,170 +2484,6 @@ class EtcdListener(object):
         self.binder = BindNotifier(self.client_factory, self.state_key_space)
         self.pool.spawn(self.binder.run)
 
-        class PortWatcher(EtcdChangeWatcher):
-
-            def do_tick(self):
-                # The key that indicates to people that we're alive
-                # (not that they care)
-                # TODO(ijw): use refresh after the create to avoid the
-                # notification
-                self.etcd_client.write(LEADIN + '/state/%s/alive' %
-                                       self.data.host,
-                                       1, ttl=3 * self.heartbeat)
-
-            def init_resync_start(self):
-                """Identify known ports in VPP
-
-                We are beginning a resync because the agent has
-                restarted.  We should be fixing VPP with the least
-                disruption possible so that traffic being passed by VPP
-                on currently configured ports is not disrupted.  As such,
-                this goes to find correctly configured ports (which -
-                if still required - will be left alone) and removes
-                structures that have been partially or incorrectly set up.
-                """
-                self.expected_keys = self.data.vpp_restart_prepare()
-
-            def removed(self, port):
-                # Removing key == desire to unbind
-
-                try:
-                    port_data = self.data.vppf.interfaces[port]
-                    port_net = port_data['net_data']
-                    is_vxlan = port_net['network_type'] == 'vxlan'
-
-                    if is_vxlan:
-                        # Get seg_id and mac to delete any gpe mappings
-                        seg_id = port_net['segmentation_id']
-                        mac = port_data['mac']
-                except KeyError:
-                    # On initial resync, this information may not
-                    # be available; also, the network may not
-                    # be vxlan
-                    if is_vxlan:
-                        LOG.warn('Unable to delete GPE mappings for port')
-                    is_vxlan = False
-
-                self.data.unbind(port)
-
-                # Unlike bindings, unbindings are immediate.
-
-                try:
-                    self.etcd_client.delete(
-                        self.data.state_key_space + '/%s'
-                        % port)
-                    if is_vxlan:
-                        self.etcd_client.delete(
-                            self.data.gpe_key_space + '/%s/%s/%s'
-                            % (seg_id, self.data.host, mac))
-                except etcd.EtcdKeyNotFound:
-                    # Gone is fine; if we didn't delete it
-                    # it's no problem
-                    pass
-
-            def added(self, port, value):
-                # Create or update == bind
-
-                # In EtcdListener, bind *ensures correct
-                # binding* and is idempotent.  It will also
-                # fix up security if the security state has
-                # changed.  NB most things will not change on
-                # an update.
-
-                data = json.loads(value)
-                self.data.bind(
-                    self.data.binder.add_notification,
-                    port,
-                    data['binding_type'],
-                    data['mac_address'],
-                    data['physnet'],
-                    data['network_type'],
-                    data['segmentation_id'],
-                    data  # TODO(ijw) convert incoming to security fmt
-                    )
-                # While the bind might fail for one reason or another,
-                # we have nothing we can do at this point.  We simply
-                # decline to notify Nova the port is ready.
-
-                # For vxlan networks,
-                # write the remote mapping data to etcd to
-                # propagate the mac to underlay mapping to all
-                # agents that bind this segment using GPE
-                if data['network_type'] == 'vxlan':
-                    host_ip = self.data.vppf.gpe_underlay_addr
-                    gpe_key = self.data.gpe_key_space + '/%s/%s/%s' % (
-                        data['segmentation_id'],
-                        self.data.host,
-                        data['mac_address'])
-                    LOG.debug('Writing gpe key %s with vxlan mapping '
-                              'to underlay IP address %s',
-                              gpe_key, host_ip)
-                    self.etcd_client.write(gpe_key, host_ip)
-
-        class RouterWatcher(EtcdChangeWatcher):
-            """Start an etcd watcher for router operations.
-
-            Starts an etcd watcher on the /router directory for
-            this node. This watcher is responsible for consuming
-            Neutron router CRUD operations.
-            """
-            def do_tick(self):
-                pass
-
-            def _del_key(self, key):
-                try:
-                    self.etcd_client.delete(key)
-                except etcd.EtcdKeyNotFound:
-                    # Gone is fine; if we didn't delete it
-                    # it's no problem
-                    pass
-
-            def key_change(self, action, key, value):
-                LOG.debug("router_watcher: doing work for %s %s %s" %
-                          (action, key, value))
-                m = re.match(self.data.router_key_space + '/([^/]+)/([^/]+)?$',
-                             key)
-                if m and m.group(1) == 'interface':
-                    if action != 'delete':
-                        router_id = m.group(2)
-                        router = json.loads(value)
-                        if router.get('delete', False):
-                            self.data.vppf.delete_router_interface_on_host(
-                                router)
-                            self._del_key(self.data.router_key_space +
-                                          '/interface/%s' % router_id)
-                        else:
-                            self.data.vppf.create_router_interface_on_host(
-                                router)
-                elif m and m.group(1) == 'floatingip':
-                    if action != 'delete':
-                        floatingip_dict = json.loads(value)
-                        if floatingip_dict['event'] == 'associate':
-                            self.data.vppf.associate_floatingip(
-                                floatingip_dict)
-                        else:
-                            self.data.vppf.disassociate_floatingip(
-                                floatingip_dict)
-                            self._del_key(self.data.router_key_space +
-                                          '/floatingip/%s' % m.group(2))
-                elif m and m.group(1) == 'router':
-                    if action != 'delete':
-                        router_id = m.group(2)
-                        router = json.loads(value)
-                        if router.get('delete', False):
-                            # Delete an external gateway
-                            (self.data.vppf.
-                             delete_router_external_gateway_on_host(router))
-                            self._del_key(self.data.router_key_space +
-                                          '/router/%s' % router_id)
-                        else:
-                            # Add the external gateway
-                            (self.data.vppf.
-                             create_router_external_gateway_on_host(router))
-                else:
-                    LOG.warn('Unexpected key change in etcd router feedback,'
-                             ' key %s' % key)
-
         # Check if the vpp router service plugin is enabled
         if 'vpp-router' in cfg.CONF.service_plugins:
             LOG.debug("Spawning router_watcher")
@@ -2656,67 +2492,6 @@ class EtcdListener(object):
                                           self.router_key_space,
                                           heartbeat=self.AGENT_HEARTBEAT,
                                           data=self).watch_forever)
-
-        class SecGroupWatcher(EtcdChangeWatcher):
-
-            def __init__(self, etcd_client, name, watch_path,
-                         known_keys,
-                         **kwargs):
-                self.known_keys = known_keys
-                super(SecGroupWatcher, self).__init__(
-                    etcd_client, name, watch_path, **kwargs)
-
-            def init_resync_start(self):
-                # TODO(ijw): we should probably do the secgroup work
-                # here rather than up front
-                return self.known_keys
-
-            def do_tick(self):
-                pass
-
-            def removed(self, secgroup):
-                self.data.acl_delete(secgroup)
-
-            def added(self, secgroup, value):
-                # create or update a secgroup == add_replace vpp acl
-                data = json.loads(value)
-                self.data.acl_add_replace(secgroup, data)
-
-                self.data.reconsider_port_secgroups()
-
-        class GpeWatcher(EtcdChangeWatcher):
-
-            def do_tick(self):
-                pass
-
-            def parse_key(self, gpe_key):
-                m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)', gpe_key)
-                vni, hostname, mac = None, None, None
-                if m:
-                    vni = int(m.group(1))
-                    hostname = m.group(2)
-                    mac = m.group(3)
-                return (vni, hostname, mac)
-
-            def added(self, gpe_key, value):
-                # gpe_key format is "vni/hostname/mac"
-                vni, hostname, mac = self.parse_key(gpe_key)
-                if (vni and hostname and mac and
-                        self.data.is_valid_remote_map(vni, hostname)):
-                    self.data.vppf.ensure_remote_gpe_mapping(
-                        vni=vni,
-                        mac=mac,
-                        remote_ip=value)
-                    LOG.debug("Current gpe map %s",
-                              self.data.vppf.gpe_map)
-
-            def removed(self, gpe_key):
-                vni, hostname, mac = self.parse_key(gpe_key)
-                if (vni and hostname and mac and
-                        self.data.is_valid_remote_map(vni, hostname)):
-                    self.data.vppf.delete_remote_gpe_mapping(
-                        vni=vni,
-                        mac=mac)
 
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
@@ -2752,6 +2527,235 @@ class EtcdListener(object):
                                        heartbeat=self.AGENT_HEARTBEAT,
                                        data=self).watch_forever)
         self.pool.waitall()
+
+
+class PortWatcher(EtcdChangeWatcher):
+
+    def do_tick(self):
+        # The key that indicates to people that we're alive
+        # (not that they care)
+        # TODO(ijw): use refresh after the create to avoid the
+        # notification
+        self.etcd_client.write(LEADIN + '/state/%s/alive' %
+                               self.data.host,
+                               1, ttl=3 * self.heartbeat)
+
+    def init_resync_start(self):
+        """Identify known ports in VPP
+
+        We are beginning a resync because the agent has
+        restarted.  We should be fixing VPP with the least
+        disruption possible so that traffic being passed by VPP
+        on currently configured ports is not disrupted.  As such,
+        this goes to find correctly configured ports (which -
+        if still required - will be left alone) and removes
+        structures that have been partially or incorrectly set up.
+        """
+        self.expected_keys = self.data.vpp_restart_prepare()
+
+    def removed(self, port):
+        # Removing key == desire to unbind
+
+        try:
+            port_data = self.data.vppf.interfaces[port]
+            port_net = port_data['net_data']
+            is_vxlan = port_net['network_type'] == 'vxlan'
+
+            if is_vxlan:
+                # Get seg_id and mac to delete any gpe mappings
+                seg_id = port_net['segmentation_id']
+                mac = port_data['mac']
+        except KeyError:
+            # On initial resync, this information may not
+            # be available; also, the network may not
+            # be vxlan
+            if is_vxlan:
+                LOG.warn('Unable to delete GPE mappings for port')
+            is_vxlan = False
+
+        self.data.unbind(port)
+
+        # Unlike bindings, unbindings are immediate.
+
+        try:
+            self.etcd_client.delete(
+                self.data.state_key_space + '/%s'
+                % port)
+            if is_vxlan:
+                self.etcd_client.delete(
+                    self.data.gpe_key_space + '/%s/%s/%s'
+                    % (seg_id, self.data.host, mac))
+        except etcd.EtcdKeyNotFound:
+            # Gone is fine; if we didn't delete it
+            # it's no problem
+            pass
+
+    def added(self, port, value):
+        # Create or update == bind
+
+        # In EtcdListener, bind *ensures correct
+        # binding* and is idempotent.  It will also
+        # fix up security if the security state has
+        # changed.  NB most things will not change on
+        # an update.
+
+        data = json.loads(value)
+        self.data.bind(
+            self.data.binder.add_notification,
+            port,
+            data['binding_type'],
+            data['mac_address'],
+            data['physnet'],
+            data['network_type'],
+            data['segmentation_id'],
+            data  # TODO(ijw) convert incoming to security fmt
+            )
+        # While the bind might fail for one reason or another,
+        # we have nothing we can do at this point.  We simply
+        # decline to notify Nova the port is ready.
+
+        # For vxlan networks,
+        # write the remote mapping data to etcd to
+        # propagate the mac to underlay mapping to all
+        # agents that bind this segment using GPE
+        if data['network_type'] == 'vxlan':
+            host_ip = self.data.vppf.gpe_underlay_addr
+            gpe_key = self.data.gpe_key_space + '/%s/%s/%s' % (
+                data['segmentation_id'],
+                self.data.host,
+                data['mac_address'])
+            LOG.debug('Writing gpe key %s with vxlan mapping '
+                      'to underlay IP address %s',
+                      gpe_key, host_ip)
+            self.etcd_client.write(gpe_key, host_ip)
+
+
+class RouterWatcher(EtcdChangeWatcher):
+    """Start an etcd watcher for router operations.
+
+    Starts an etcd watcher on the /router directory for
+    this node. This watcher is responsible for consuming
+    Neutron router CRUD operations.
+    """
+    def do_tick(self):
+        pass
+
+    def _del_key(self, key):
+        try:
+            self.etcd_client.delete(key)
+        except etcd.EtcdKeyNotFound:
+            # Gone is fine; if we didn't delete it
+            # it's no problem
+            pass
+
+    def key_change(self, action, key, value):
+        LOG.debug("router_watcher: doing work for %s %s %s" %
+                  (action, key, value))
+        m = re.match(self.data.router_key_space + '/([^/]+)/([^/]+)?$',
+                     key)
+        if m and m.group(1) == 'interface':
+            if action != 'delete':
+                router_id = m.group(2)
+                router = json.loads(value)
+                if router.get('delete', False):
+                    self.data.vppf.delete_router_interface_on_host(
+                        router)
+                    self._del_key(self.data.router_key_space +
+                                  '/interface/%s' % router_id)
+                else:
+                    self.data.vppf.create_router_interface_on_host(
+                        router)
+        elif m and m.group(1) == 'floatingip':
+            if action != 'delete':
+                floatingip_dict = json.loads(value)
+                if floatingip_dict['event'] == 'associate':
+                    self.data.vppf.associate_floatingip(
+                        floatingip_dict)
+                else:
+                    self.data.vppf.disassociate_floatingip(
+                        floatingip_dict)
+                    self._del_key(self.data.router_key_space +
+                                  '/floatingip/%s' % m.group(2))
+        elif m and m.group(1) == 'router':
+            if action != 'delete':
+                router_id = m.group(2)
+                router = json.loads(value)
+                if router.get('delete', False):
+                    # Delete an external gateway
+                    (self.data.vppf.
+                     delete_router_external_gateway_on_host(router))
+                    self._del_key(self.data.router_key_space +
+                                  '/router/%s' % router_id)
+                else:
+                    # Add the external gateway
+                    (self.data.vppf.
+                     create_router_external_gateway_on_host(router))
+        else:
+            LOG.warn('Unexpected key change in etcd router feedback,'
+                     ' key %s' % key)
+
+
+class SecGroupWatcher(EtcdChangeWatcher):
+
+    def __init__(self, etcd_client, name, watch_path,
+                 known_keys,
+                 **kwargs):
+        self.known_keys = known_keys
+        super(SecGroupWatcher, self).__init__(
+            etcd_client, name, watch_path, **kwargs)
+
+    def init_resync_start(self):
+        # TODO(ijw): we should probably do the secgroup work
+        # here rather than up front
+        return self.known_keys
+
+    def do_tick(self):
+        pass
+
+    def removed(self, secgroup):
+        self.data.acl_delete(secgroup)
+
+    def added(self, secgroup, value):
+        # create or update a secgroup == add_replace vpp acl
+        data = json.loads(value)
+        self.data.acl_add_replace(secgroup, data)
+
+        self.data.reconsider_port_secgroups()
+
+
+class GpeWatcher(EtcdChangeWatcher):
+
+    def do_tick(self):
+        pass
+
+    def parse_key(self, gpe_key):
+        m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)', gpe_key)
+        vni, hostname, mac = None, None, None
+        if m:
+            vni = int(m.group(1))
+            hostname = m.group(2)
+            mac = m.group(3)
+        return (vni, hostname, mac)
+
+    def added(self, gpe_key, value):
+        # gpe_key format is "vni/hostname/mac"
+        vni, hostname, mac = self.parse_key(gpe_key)
+        if (vni and hostname and mac and
+                self.data.is_valid_remote_map(vni, hostname)):
+            self.data.vppf.ensure_remote_gpe_mapping(
+                vni=vni,
+                mac=mac,
+                remote_ip=value)
+            LOG.debug("Current gpe map %s",
+                      self.data.vppf.gpe_map)
+
+    def removed(self, gpe_key):
+        vni, hostname, mac = self.parse_key(gpe_key)
+        if (vni and hostname and mac and
+                self.data.is_valid_remote_map(vni, hostname)):
+            self.data.vppf.delete_remote_gpe_mapping(
+                vni=vni,
+                mac=mac)
 
 
 class BindNotifier(object):
