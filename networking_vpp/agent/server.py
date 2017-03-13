@@ -671,52 +671,7 @@ class VPPForwarder(object):
                       uuid)
         else:
             props = self.interfaces[uuid]
-            iface_idx = props['iface_idx']
-
-            LOG.debug('unbinding port %s, recorded as type %s',
-                      uuid, props['bind_type'])
-
-            # We no longer need this interface.  Specifically if it's
-            # a vhostuser interface it's annoying to have it around
-            # because the VM's memory (hugepages) will not be
-            # released.  So, here, we destroy it.
-
-            if props['bind_type'] == 'vhostuser':
-                # remove port from bridge (sets to l3 mode) prior to deletion
-                self.vpp.delete_from_bridge(iface_idx)
-                self.vpp.delete_vhostuser(iface_idx)
-                # Delete port from vpp_acl map if present
-                if iface_idx in self.port_vpp_acls:
-                    del self.port_vpp_acls[iface_idx]
-                    LOG.debug("secgroup_watcher: Current port acl_vector "
-                              "mappings %s" % str(self.port_vpp_acls))
-                # This interface is no longer connected if it's deleted
-                # RACE, as we may call unbind BEFORE the vhost user
-                # interface is notified as connected to qemu
-                if iface_idx in self.iface_connected:
-                    self.iface_connected.remove(iface_idx)
-            elif props['bind_type'] in ['maketap', 'plugtap']:
-                # remove port from bridge (sets to l3 mode) prior to deletion
-                self.vpp.delete_from_bridge(iface_idx)
-                self.vpp.delete_tap(iface_idx)
-                if props['bind_type'] == 'plugtap':
-                    bridge_name = get_bridge_name(uuid)
-                    bridge = bridge_lib.BridgeDevice(bridge_name)
-                    if bridge.exists():
-                        # These may fail, don't care much
-                        try:
-                            if bridge.owns_interface(props['int_tap_name']):
-                                bridge.delif(props['int_tap_name'])
-                            if bridge.owns_interface(props['ext_tap_name']):
-                                bridge.delif(props['ext_tap_name'])
-                            bridge.link.set_down()
-                            bridge.delbr()
-                        except Exception as exc:
-                            LOG.debug(exc)
-            else:
-                LOG.error('Unknown port type %s during unbind',
-                          props['bind_type'])
-            self.interfaces.pop(uuid)
+            self.clean_interface_from_vpp(uuid, props)
 
             # Check if this is the last interface on host
             for interface in self.interfaces.values():
@@ -728,6 +683,55 @@ class VPPForwarder(object):
                 self.delete_network_on_host(net['physnet'],
                                             net['network_type'],
                                             net['segmentation_id'])
+
+    def clean_interface_from_vpp(self, uuid, props):
+        iface_idx = props['iface_idx']
+
+        LOG.debug('unbinding port %s, recorded as type %s',
+                  uuid, props['bind_type'])
+
+        # We no longer need this interface.  Specifically if it's
+        # a vhostuser interface it's annoying to have it around
+        # because the VM's memory (hugepages) will not be
+        # released.  So, here, we destroy it.
+
+        if props['bind_type'] == 'vhostuser':
+            # remove port from bridge (sets to l3 mode) prior to deletion
+            self.vpp.delete_from_bridge(iface_idx)
+            self.vpp.delete_vhostuser(iface_idx)
+            # Delete port from vpp_acl map if present
+            if iface_idx in self.port_vpp_acls:
+                del self.port_vpp_acls[iface_idx]
+                LOG.debug("secgroup_watcher: Current port acl_vector "
+                          "mappings %s" % str(self.port_vpp_acls))
+            # This interface is no longer connected if it's deleted
+            # RACE, as we may call unbind BEFORE the vhost user
+            # interface is notified as connected to qemu
+            if iface_idx in self.iface_connected:
+                self.iface_connected.remove(iface_idx)
+        elif props['bind_type'] in ['maketap', 'plugtap']:
+            # remove port from bridge (sets to l3 mode) prior to deletion
+            self.vpp.delete_from_bridge(iface_idx)
+            self.vpp.delete_tap(iface_idx)
+            if props['bind_type'] == 'plugtap':
+                bridge_name = get_bridge_name(uuid)
+                bridge = bridge_lib.BridgeDevice(bridge_name)
+                if bridge.exists():
+                    # These may fail, don't care much
+                    try:
+                        if bridge.owns_interface(props['int_tap_name']):
+                            bridge.delif(props['int_tap_name'])
+                        if bridge.owns_interface(props['ext_tap_name']):
+                            bridge.delif(props['ext_tap_name'])
+                        bridge.link.set_down()
+                        bridge.delbr()
+                    except Exception as exc:
+                        LOG.debug(exc)
+        else:
+            LOG.error('Unknown port type %s during unbind',
+                      props['bind_type'])
+        self.interfaces.pop(uuid)
+
 
     def _to_acl_rule(self, r, d, a=2):
         """Convert a SecurityGroupRule to VPP ACL rule.
