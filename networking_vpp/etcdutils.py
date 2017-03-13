@@ -229,9 +229,35 @@ class EtcdWatcher(object):
         self.etcd_data = None
 
         # Get the initial state of etcd.
+        self.init_sync = True
+        self.init_resync_start()
         self.refresh_all_data()
+        self.init_resync_end()
+        self.init_sync = False
+
+    def in_init_sync(self):
+        return self.init_sync
+
+    def init_resync_start(self):
+        """Overrideable function when the first resync starts
+
+        Whatever is being driven by the etcd data, this is a good time
+        to find out what state it's currently in.  It may be
+        persisting data over a restart of the process watching etcd.
+        """
+        pass
+
+    def init_resync_end(self):
+        """Overrideable function when the first resync ends
+
+        Whatever is being driven by the etcd data, this is a good time
+        to clean up its state based on what was originally discovered
+        and what we now know etcd wants.
+        """
+        pass
 
     def do_work(self, action, key, value):
+
         """Process an indiviudal update received in a watch
 
         Override this if you can deal with individual updates given
