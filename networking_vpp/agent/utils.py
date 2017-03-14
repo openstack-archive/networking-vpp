@@ -46,29 +46,43 @@ class EtcdHelper(object):
             # Thrown when the directory already exists, which is fine
             pass
 
+def EtcdClientFactory(object):
+    def _parse_host_config(etc_host, default_port):
+	"""Parse etcd host config (host, host/port, or list of host/port)
 
-def parse_host_config(etc_host, default_port):
-    """Parse etcd host config (host, host/port, or list of host/port)
+	Returns a format suitable for the etcd client creation call.
+	This always uses the list-of-hosts tuple format, even with a single
+	host.
+	"""
 
-    Returns a format suitable for the etcd client creation call.
-    This always uses the list-of-hosts tuple format, even with a single
-    host.
-    """
+	if not isinstance(etc_host, str):
+	    raise vpp_agent_exec.InvalidEtcHostsConfig()
 
-    if not isinstance(etc_host, str):
-        raise vpp_agent_exec.InvalidEtcHostsConfig()
+	if ETC_HOSTS_DELIMITER in etc_host:
+	    hosts = etc_host.split(ETC_HOSTS_DELIMITER)
+	else:
+	    hosts = [etc_host]
 
-    if ETC_HOSTS_DELIMITER in etc_host:
-        hosts = etc_host.split(ETC_HOSTS_DELIMITER)
-    else:
-        hosts = [etc_host]
+	etc_hosts = ()
+	for host in hosts:
+	    etc_hosts = etc_hosts + (parse_host(host, default_port),)
 
-    etc_hosts = ()
-    for host in hosts:
-        etc_hosts = etc_hosts + (parse_host(host, default_port),)
+	return etc_hosts
 
-    return etc_hosts
+    def __init__(self, ml2_vpp_conf):
+    hostconf = nwvpp_utils.parse_host_config(ml2_vpp_conf.etcd_host,
+                                             ml2_vpp_conf.etcd_port)
 
+    self.hostconf = hostconf
+
+
+    def client(self):
+	etcd_client = etcdutils.ClientFactort(host=self.hostconf
+				  username=ml2_vpp_conf.etcd_user,
+				  password=ml2_vpp_conf.etcd_pass,
+				  allow_reconnect=True)
+
+	return etcd_client
 
 def parse_host(etc_host_elem, default_port):
     """Parse a single etcd host entry (which can be host or host/port)

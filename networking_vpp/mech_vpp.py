@@ -326,13 +326,10 @@ class VPPMechanismDriver(api.MechanismDriver):
         # because there was a bug in secgroup output.  Now, it helps with
         # agent races when a port is bound before its secgroup ACLs have been
         # populated.  It can go when the sync issue is addressed.
-                if not self.communicator.secgroup_key_present(sgid):
-                    LOG.debug("ML2_VPP: Update port postcommit "
-                              "writing missing secgroup %s to etcd" % sgid)
-                    self.communicator.send_sg_updates(
-                        port_context._plugin_context,
-                        [sgid]
-                        )
+        self.communicator.send_sg_updates(
+            port_context._plugin_context,
+            [sgid]
+            )
 
 
 @six.add_metaclass(abc.ABCMeta)
@@ -437,12 +434,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                    cfg.CONF.ml2_vpp.etcd_port,
                    cfg.CONF.ml2_vpp.etcd_user,))
 
-        host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
-                                             cfg.CONF.ml2_vpp.etcd_port)
-        self.etcd_client = etcd.Client(host=host,
-                                       username=cfg.CONF.ml2_vpp.etcd_user,
-                                       password=cfg.CONF.ml2_vpp.etcd_pass,
-                                       allow_reconnect=True)
+        self.client_factory = nwvpp_utils.ClientFactory(cfg.CONF.ml2_vpp)
 
         # For Liberty support, we have to have a memory between notifications
         self.deleted_rule_secgroup_id = {}
@@ -453,10 +445,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.secgroup_key_space = LEADIN + '/global/secgroups'
         self.election_key_space = LEADIN + '/election'
         self.journal_kick_key = self.election_key_space + '/kick-journal'
-        self.do_etcd_mkdir(self.state_key_space)
-        self.do_etcd_mkdir(self.port_key_space)
-        self.do_etcd_mkdir(self.secgroup_key_space)
-        self.do_etcd_mkdir(self.election_key_space)
+
+        etcd_helper = etcdutils.EtcdHelper(self.client_factory.client())
+        etcd_helper.ensure_dir(self.state_key_space)
+        etcd_helper.ensure_dir(self.port_key_space)
+        etcd_helper.ensure_dir(self.secgroup_key_space)
+        etcd_helper.ensure_dir(self.election_key_space)
+
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
             self.register_secgroup_event_handler()
@@ -478,9 +473,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.return_thread = self.make_return_worker()
         self.forward_thread = self.make_forward_worker()
 
-    def find_physnets(self):
+    def find_physnets(self, etcd_client):
         physical_networks = set()
-        for rv in self.etcd_client.read(LEADIN, recursive=True).children:
+        for rv in etcd_client.read(LEADIN, recursive=True).children:
             # Find all known physnets
             m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
                          rv.key)
@@ -830,14 +825,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _secgroup_path(self, secgroup_id):
         return self.secgroup_key_space + "/" + secgroup_id
 
-    def secgroup_key_present(self, secgroup_id):
-        """Return True if the key is present in etcd else False."""
-        try:
-            if self.etcd_client.read(self._secgroup_path(secgroup_id)):
-                return True
-        except etcd.EtcdKeyNotFound:
-            return False
-
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
 
@@ -851,7 +838,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # A thread in one Neutron process - possibly not this one -
         # is waiting to send updates from the DB to etcd.  Wake it.
         try:
-            self.etcd_client.write(self.journal_kick_key, '')
+            # TODO(ijw): got to be a more efficient way to create
+            # a client for each thread
+            # From a Neutron thread, we need to tell whichever of the
+            # forwarder threads that is active that it has work to do.
+            self.client_factory.client().write(self.journal_kick_key, '')
         except etcd.EtcdException:
             # A failed wake is not the end of the world.
             pass
@@ -891,23 +882,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     # The post-journal part of the work that clears out the table and
     # updates etcd.
 
-    def do_etcd_update(self, k, v):
-        try:
-            # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
-            if v is None:
-                LOG.debug('deleting key %s', k)
-                try:
-                    self.etcd_client.delete(k)
-                except etcd.EtcdKeyNotFound:
-                    # The key may have already been deleted
-                    # no problem here
-                    pass
-            else:
-                LOG.debug('writing key %s', k)
-                self.etcd_client.write(k, json.dumps(v))
-            return True
-        except Exception:       # TODO(ijw) select your exceptions
-            return False
 
     def do_etcd_mkdir(self, path):
         try:
@@ -923,18 +897,43 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _forward_worker(self):
         LOG.debug('forward worker begun')
 
+        # So that we don't fight over a client shared by other threads,
+        # we have our own, local to this one.
+
+        etcd_client = self.client_factory.client()
+
         session = neutron_db_api.get_session()
-        etcd_election = EtcdElection(self.etcd_client, 'forward_worker',
+        etcd_election = EtcdElection(etcd_client, 'forward_worker',
                                      self.election_key_space,
                                      work_time=PARANOIA_TIME + 3,
                                      recovery_time=3)
+
+	def do_etcd_update(k, v):
+	    try:
+		# not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
+		if v is None:
+		    LOG.debug('deleting key %s', k)
+		    try:
+			etcd_client.delete(k)
+		    except etcd.EtcdKeyNotFound:
+			# The key may have already been deleted
+			# no problem here
+			pass
+		else:
+		    LOG.debug('writing key %s', k)
+		    etcd_client.write(k, json.dumps(v))
+		return True
+
+	    except Exception:       # TODO(ijw) select your exceptions
+		return False
+
         while True:
             try:
                 etcd_election.wait_until_elected()
 
                 def work(k, v):
                     LOG.debug('forward worker updating etcd key %s', k)
-                    if self.do_etcd_update(k, v):
+                    if do_etcd_update(k, v):
                         return True
                     else:
                         # something went bad; breathe, in case we end
@@ -962,8 +961,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 try:
                     with eventlet.Timeout(PARANOIA_TIME):
                         try:
-                            self.etcd_client.watch(self.journal_kick_key,
-                                                   timeout=PARANOIA_TIME - 5)
+                            etcd_client.watch(self.journal_kick_key,
+                                              timeout=PARANOIA_TIME - 5)
                         except etcd.EtcdException:
                             # Check the DB queue now, anyway
                             pass
@@ -1043,6 +1042,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         # Assign a UUID to each worker thread to enable thread election
         return eventlet.spawn(
-            ReturnWatcher(self.etcd_client, 'return_worker',
+            ReturnWatcher(self.client_factory.client(), 'return_worker',
                           self.state_key_space, self.election_key_space,
                           data=self).watch_forever)
