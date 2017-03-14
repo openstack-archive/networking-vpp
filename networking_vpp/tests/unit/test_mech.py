@@ -1,3 +1,4 @@
+
 # Copyright (c) 2016 Cisco Systems, Inc.
 # All Rights Reserved.
 #
@@ -15,6 +16,7 @@
 
 import mock
 
+import etcd
 from etcd import EtcdResult
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
@@ -46,13 +48,21 @@ FAKE_PORT = {'status': 'DOWN',
 class VPPMechanismDriverTestCase(base.BaseTestCase):
     _mechanism_drivers = ['vpp']
 
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client')
+    def etcd_client(self):
+        # This factory is intended to make many clients, but we return
+        # one so we can see how it's used
+        return self.client
+
     # to suppress thread creation
     @mock.patch('networking_vpp.mech_vpp.eventlet')
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client.write')
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client.read')
-    def setUp(self, mock_w, mock_r, mock_event, mock_client):
+    @mock.patch('etcd.Client')
+    @mock.patch('networking_vpp.agent.utils.EtcdClientFactory.client')
+    def setUp(self, mock_eventlet, mock_client, mock_make_client):
         super(VPPMechanismDriverTestCase, self).setUp()
+
+        mock_make_client.side_effect = self.etcd_client
+        self.client = etcd.Client()
+
         self.mech = mech_vpp.VPPMechanismDriver()
         self.mech.initialize()
 
@@ -162,7 +172,9 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
         result._children = [child]
         host = 'vpp0'
         physnet = 'testnet'
-        self.mech.communicator.etcd_client.read.return_value = result
+        self.client.read.return_value = result
+        self.mech.communicator.physical_networks = \
+            self.mech.communicator.find_physnets(self.client)
         assert(self.mech.physnet_known(host, physnet) is True), \
             "Return value for host [%s] and net [%s] should have been True" % (
                 host, physnet)
