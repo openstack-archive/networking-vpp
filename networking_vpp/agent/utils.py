@@ -47,27 +47,45 @@ class EtcdHelper(object):
             pass
 
 
-def parse_host_config(etc_host, default_port):
-    """Parse etcd host config (host, host/port, or list of host/port)
+def EtcdClientFactory(object):
+    def _parse_host_config(self, etc_host, default_port):
+        """Parse etcd host config (host, host/port, or list of host/port)
 
-    Returns a format suitable for the etcd client creation call.
-    This always uses the list-of-hosts tuple format, even with a single
-    host.
-    """
+        Returns a format suitable for the etcd client creation call.
+        This always uses the list-of-hosts tuple format, even with a single
+        host.
+        """
 
-    if not isinstance(etc_host, str):
-        raise vpp_agent_exec.InvalidEtcHostsConfig()
+        if not isinstance(etc_host, str):
+            raise vpp_agent_exec.InvalidEtcHostsConfig()
 
-    if ETC_HOSTS_DELIMITER in etc_host:
-        hosts = etc_host.split(ETC_HOSTS_DELIMITER)
-    else:
-        hosts = [etc_host]
+        if ETC_HOSTS_DELIMITER in etc_host:
+            hosts = etc_host.split(ETC_HOSTS_DELIMITER)
+        else:
+            hosts = [etc_host]
 
-    etc_hosts = ()
-    for host in hosts:
-        etc_hosts = etc_hosts + (parse_host(host, default_port),)
+        etc_hosts = ()
+        for host in hosts:
+            etc_hosts = etc_hosts + (parse_host(host, default_port),)
 
-    return etc_hosts
+        return etc_hosts
+
+    def __init__(self, ml2_vpp_conf):
+        hostconf = self.parse_host_config(ml2_vpp_conf.etcd_host,
+                                          ml2_vpp_conf.etcd_port)
+
+        self.hostconf = hostconf
+        self.etcd_user = ml2_vpp_conf.etcd_user
+        self.etcd_pass = ml2_vpp_conf.etcd_pass
+
+    def client(self):
+        etcd_client = \
+            etcd.Client(host=self.hostconf,
+                        username=self.etcd_user,
+                        password=self.etcd_pass,
+                        allow_reconnect=True)
+
+        return etcd_client
 
 
 def parse_host(etc_host_elem, default_port):
