@@ -1233,22 +1233,15 @@ LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
 
 
 class EtcdListener(object):
-    def __init__(self, host, etcd_client, vppf, physnets):
+    def __init__(self, host, client_factory, vppf, physnets):
         self.host = host
-        self.etcd_client = etcd_client
+        self.client_factory = client_factory
         self.vppf = vppf
         self.physnets = physnets
-        self.etcd_helper = nwvpp_utils.EtcdHelper(self.etcd_client)
-        # We need certain directories to exist
-        self.etcd_helper.ensure_dir(LEADIN + '/state/%s/ports' % self.host)
-        self.etcd_helper.ensure_dir(LEADIN + '/nodes/%s/ports' % self.host)
-        # If the agent is started before q-svc, etcd watch fails as this
-        # directory may not exist. Make sure it exists
-        self.etcd_helper.ensure_dir(LEADIN + '/global/secgroups')
         self.pool = eventlet.GreenPool()
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
 
-        # key: if index in VPP; value: (ID, prop-dict) tuple
+        # key: if index in VPP; value: (ID, bound-callback, prop-dict) tuple
         self.iface_state = {}
 
         self.vppf.vhost_ready_callback = self._vhost_ready
@@ -1258,8 +1251,8 @@ class EtcdListener(object):
     def unbind(self, id):
         self.vppf.unbind_interface_on_host(id)
 
-    def bind(self, id, binding_type, mac_address, physnet, network_type,
-             segmentation_id):
+    def bind(self, callback, id, binding_type, mac_address, physnet,
+             network_type, segmentation_id):
         """Bind an interface as instructed by ML2 on this host.
 
         The interface as a network and binding type.  Assuming the
@@ -1291,7 +1284,7 @@ class EtcdListener(object):
         # be able to debug with it.  This may not happen
         # immediately because the far end may not have connected.
         iface_idx = props['iface_idx']
-        self.iface_state[iface_idx] = (id, props)
+        self.iface_state[iface_idx] = (id, callback, props)
 
         if (binding_type != 'vhostuser' or
            self.vppf.vhostuser_linked_up(iface_idx)):
@@ -1332,9 +1325,8 @@ class EtcdListener(object):
         see the key write multiple times and will act accordingly.
         """
         LOG.debug('marking index %s as ready', str(sw_if_index))
-        (port, props) = self.iface_state[sw_if_index]
-        self.etcd_client.write(self.state_key_space + '/%s' % port,
-                               json.dumps(props))
+        (id, callback, props) = self.iface_state[sw_if_index]
+        callback(id, props)
 
     def acl_add_replace(self, secgroup, data):
         """Add or replace a VPP ACL.
@@ -1581,18 +1573,35 @@ class EtcdListener(object):
         # TODO(ijw): needs to remember its last tick on reboot, or
         # reconfigure from start (which means that VPP needs it
         # storing, so it's lost on reboot of VPP)
-        physnets = self.physnets.keys()
-        for f in physnets:
-            self.etcd_client.write(LEADIN + '/state/%s/physnets/%s'
-                                   % (self.host, f), 1)
 
         self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.secgroup_key_space = LEADIN + "/global/secgroups"
+        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
+        self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
+
+        etcd_client = self.client_factory.client()
+        etcd_helper = nwvpp_utils.EtcdHelper(etcd_client)
+        # We need certain directories to exist so that we can write to
+        # and watch them
+        etcd_helper.ensure_dir(self.port_key_space)
+        etcd_helper.ensure_dir(self.secgroup_key_space)
+        etcd_helper.ensure_dir(self.state_key_space)
+        etcd_helper.ensure_dir(self.physnet_key_space)
+
+        etcd_helper.clear_state(self.state_key_space)
+
+        physnets = self.physnets.keys()
+        etcd_helper.clear_state(self.physnet_key_space)
+        for f in physnets:
+            etcd_client.write(self.physnet_key_space + '/' + f, 1)
+
+        # We need to be wary not to hand the same client to multiple threads;
+        # this etcd_helper and client dies here
+        etcd_helper = None
+        etcd_client = None
+
         # load sw_if_index to macip acl index mappings
         self.load_macip_acl_mapping()
-
-        self.etcd_helper.clear_state(self.state_key_space)
 
         class PortWatcher(EtcdChangeWatcher):
 
@@ -1637,7 +1646,8 @@ class EtcdListener(object):
                         # NB most things will not change on an update.
                         # TODO(ijw): go through the cases.
                         data = json.loads(value)
-                        props = self.data.bind(port,
+                        props = self.data.bind(self.bind_complete,
+                                               port,
                                                data['binding_type'],
                                                data['mac_address'],
                                                data['physnet'],
@@ -1709,6 +1719,17 @@ class EtcdListener(object):
                     LOG.warning('Unexpected key change in etcd '
                                 'port feedback, key %s', key)
 
+            def bind_complete(self, port, props):
+                """Callback when bind completes
+
+                This allows the etcd thread to indicate in etcd to the
+                agent that this port is fully prepared.
+
+                """
+
+                self.etcd_client.write(self.data.state_key_space + '/%s' % port,
+                                       json.dumps(props))
+
         class SecGroupWatcher(EtcdChangeWatcher):
 
             def do_tick(self):
@@ -1748,7 +1769,7 @@ class EtcdListener(object):
                       "on host for secgroup_watcher spoof blocking")
             self.spoof_filter_on_host()
             LOG.debug("Spawning secgroup_watcher..")
-            self.pool.spawn(SecGroupWatcher(self.etcd_client,
+            self.pool.spawn(SecGroupWatcher(self.client_factory.client(),
                                             'secgroup_watcher',
                                             self.secgroup_key_space,
                                             heartbeat=self.AGENT_HEARTBEAT,
@@ -1759,7 +1780,8 @@ class EtcdListener(object):
         # because it means that the ports will be immediately createable
         # as the secgroups are already available.
         LOG.debug("Spawning port_watcher")
-        self.pool.spawn(PortWatcher(self.etcd_client, 'port_watcher',
+        self.pool.spawn(PortWatcher(self.client_factory.client(),
+                                    'port_watcher',
                                     self.port_key_space,
                                     heartbeat=self.AGENT_HEARTBEAT,
                                     data=self).watch_forever)
@@ -1820,15 +1842,9 @@ def main():
               cfg.CONF.ml2_vpp.etcd_port,
               cfg.CONF.ml2_vpp.etcd_user)
 
-    host = nwvpp_utils.parse_host_config(cfg.CONF.ml2_vpp.etcd_host,
-                                         cfg.CONF.ml2_vpp.etcd_port)
+    client_factory = nwvpp_utils.EtcdClientFactory(cfg.CONF.ml2_vpp)
 
-    etcd_client = etcd.Client(host=host,
-                              username=cfg.CONF.ml2_vpp.etcd_user,
-                              password=cfg.CONF.ml2_vpp.etcd_pass,
-                              allow_reconnect=True)
-
-    ops = EtcdListener(cfg.CONF.host, etcd_client, vppf, physnets)
+    ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
 
     ops.process_ops()
 
