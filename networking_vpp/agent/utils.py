@@ -47,49 +47,67 @@ class EtcdHelper(object):
             pass
 
 
-def parse_host_config(etc_host, default_port):
-    """Parse etcd host config (host, host/port, or list of host/port)
+class EtcdClientFactory(object):
 
-    Returns a format suitable for the etcd client creation call.
-    This always uses the list-of-hosts tuple format, even with a single
-    host.
-    """
+    def _parse_host(self, etc_host_elem, default_port):
+        """Parse a single etcd host entry (which can be host or host/port)
 
-    if not isinstance(etc_host, str):
-        raise vpp_agent_exec.InvalidEtcHostsConfig()
+        Returns a format suitable for the etcd client creation call.
+        NB: the client call is documented to take one host, host/port
+        tuple or a tuple of host/port tuples; in fact, it will take
+        a bare host in the tuple form as well.
+        """
 
-    if ETC_HOSTS_DELIMITER in etc_host:
-        hosts = etc_host.split(ETC_HOSTS_DELIMITER)
-    else:
-        hosts = [etc_host]
-
-    etc_hosts = ()
-    for host in hosts:
-        etc_hosts = etc_hosts + (parse_host(host, default_port),)
-
-    return etc_hosts
-
-
-def parse_host(etc_host_elem, default_port):
-    """Parse a single etcd host entry (which can be host or host/port)
-
-    Returns a format suitable for the etcd client creation call.
-    NB: the client call is documented to take one host, host/port
-    tuple or a tuple of host/port tuples; in fact, it will take
-    a bare host in the tuple form as well.
-    """
-
-    if not isinstance(etc_host_elem, str) or etc_host_elem == '':
-        raise vpp_agent_exec.InvalidEtcHostConfig()
-
-    if ETC_PORT_HOST_DELIMITER in etc_host_elem:
-        try:
-            host, port = etc_host_elem.split(ETC_PORT_HOST_DELIMITER)
-            port = int(port)
-            etc_host = (host, port,)
-        except ValueError:
+        if not isinstance(etc_host_elem, str) or etc_host_elem == '':
             raise vpp_agent_exec.InvalidEtcHostConfig()
-    else:
-        etc_host = (etc_host_elem, default_port)
 
-    return etc_host
+        if ETC_PORT_HOST_DELIMITER in etc_host_elem:
+            try:
+                host, port = etc_host_elem.split(ETC_PORT_HOST_DELIMITER)
+                port = int(port)
+                etc_host = (host, port,)
+            except ValueError:
+                raise vpp_agent_exec.InvalidEtcHostConfig()
+        else:
+            etc_host = (etc_host_elem, default_port)
+
+        return etc_host
+
+    def _parse_host_config(self, etc_host, default_port):
+        """Parse etcd host config (host, host/port, or list of host/port)
+
+        Returns a format suitable for the etcd client creation call.
+        This always uses the list-of-hosts tuple format, even with a single
+        host.
+        """
+
+        if not isinstance(etc_host, str):
+            raise vpp_agent_exec.InvalidEtcHostsConfig()
+
+        if ETC_HOSTS_DELIMITER in etc_host:
+            hosts = etc_host.split(ETC_HOSTS_DELIMITER)
+        else:
+            hosts = [etc_host]
+
+        etc_hosts = ()
+        for host in hosts:
+            etc_hosts = etc_hosts + (self._parse_host(host, default_port),)
+
+        return etc_hosts
+
+    def __init__(self, ml2_vpp_conf):
+        hostconf = self._parse_host_config(ml2_vpp_conf.etcd_host,
+                                          ml2_vpp_conf.etcd_port)
+
+        self.hostconf = hostconf
+        self.etcd_user = ml2_vpp_conf.etcd_user
+        self.etcd_pass = ml2_vpp_conf.etcd_pass
+
+    def client(self):
+        etcd_client = \
+            etcd.Client(host=self.hostconf,
+                        username=self.etcd_user,
+                        password=self.etcd_pass,
+                        allow_reconnect=True)
+
+        return etcd_client
