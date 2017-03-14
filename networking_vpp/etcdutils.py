@@ -340,7 +340,7 @@ class EtcdWatcher(object):
                                                 index=self.tick,
                                                 timeout=self.heartbeat)
 
-                if rv:
+                if rv is not None:
                     with self.etcd_data_lock:
 
                         # The processing function is entitled to check all etcd
