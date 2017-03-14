@@ -292,6 +292,12 @@ class VPPMechanismDriver(api.MechanismDriver):
             else:
                 prev_bind = port_context.original_binding_levels[-1]
 
+            # TODO(ijw): this is a race-avoidance tactic in the agent
+            # The agent should not assume that secgroups have been
+            # pushed before the port bind, because it uses two threads
+            # to watch ports and agents independently and sync the results.
+            # When we add this, this code and ensure_secgroups_in_etcd
+            # can die.
             if (current_bind is not None and
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
                 self.ensure_secgroups_in_etcd(port_context)
@@ -316,12 +322,10 @@ class VPPMechanismDriver(api.MechanismDriver):
     def ensure_secgroups_in_etcd(self, port_context):
         """Ensure secgroup key-value is present in etcd if enabled"""
 
-        # TODO(ijw): we will change things so that we populate the initial
-        # security group rules up front and so that the agent can deal with
-        # secgroups arriving after ports, but for now this is a workaround.
-        if self.communicator.secgroup_enabled:
-            sgids = port_context.current.get('security_groups', [])
-            for sgid in sgids:
+        # TODO(ijw): This used to serve the problem of populating secgroups
+        # because there was a bug in secgroup output.  Now, it helps with
+        # agent races when a port is bound before its secgroup ACLs have been
+        # populated.  It can go when the sync issue is addressed.
                 if not self.communicator.secgroup_key_present(sgid):
                     LOG.debug("ML2_VPP: Update port postcommit "
                               "writing missing secgroup %s to etcd" % sgid)
@@ -588,7 +592,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         if resource == resources.SECURITY_GROUP:
             if event == DELETE_COMMIT_TIME:
-                self.delete_secgroup_from_etcd(kwargs['security_group_id'])
+                self.delete_secgroup_from_etcd(context.session, kwargs['security_group_id'])
             elif event == CREATE_COMMIT_TIME:
                 # When Neutron creates a security group it also
                 # attaches rules to it.  We need to sync the rules.
@@ -818,15 +822,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         secgroup_id -- The id of the security group that we want to delete
         """
-        try:
-            LOG.debug("ML2_VPP: Deleting secgroup %s from etcd" %
+        LOG.debug("ML2_VPP: Deleting secgroup %s from etcd" %
                       secgroup_id)
-            secgroup_path = self._secgroup_path(secgroup_id)
-            self.etcd_client.delete(secgroup_path)
-        except etcd.EtcdKeyNotFound:
-            # Just log a message if the key is not found
-            LOG.debug("ML2_VPP: secgroup key %s which we were attempting"
-                      " to delete has disappeared" % secgroup_path)
+        secgroup_path = self._secgroup_path(secgroup_id)
+        db.journal_write(secgroup_path, None)
 
     def _secgroup_path(self, secgroup_id):
         return self.secgroup_key_space + "/" + secgroup_id
