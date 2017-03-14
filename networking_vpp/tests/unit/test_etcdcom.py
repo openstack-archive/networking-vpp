@@ -14,6 +14,7 @@
 
 import mock
 
+import etcd
 from etcd import EtcdResult
 from networking_vpp import config_opts
 from networking_vpp import mech_vpp
@@ -21,7 +22,6 @@ from neutron.plugins.common import constants
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 from oslo_config import cfg
-
 
 FAKE_PORT = {'status': 'DOWN',
              'binding:host_id': '',
@@ -61,15 +61,23 @@ invalid_segment = {
 class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
     _mechanism_drivers = ['vpp']
 
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client')
+    def etcd_client(self):
+        # This factory is intended to make many clients, but we return
+        # one so we can see how it's used
+        return self.client
+
     # to suppress thread creation
     @mock.patch('networking_vpp.mech_vpp.eventlet')
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client.write')
-    @mock.patch('networking_vpp.mech_vpp.etcd.Client.read')
-    def setUp(self, mock_r, mock_w, mock_event, mock_client):
+    @mock.patch('etcd.Client')
+    @mock.patch('networking_vpp.agent.utils.EtcdClientFactory.client')
+    def setUp(self, mock_event, mock_client, mock_make_client):
         super(EtcdAgentCommunicatorTestCase, self).setUp()
+
+        mock_make_client.side_effect = self.etcd_client
+        self.client = etcd.Client()
+
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
-        self.etcd_client = mech_vpp.EtcdAgentCommunicator()
+        self.agent_communicator = mech_vpp.EtcdAgentCommunicator()
 
     def test_find_physnets(self):
         child = {'key': "/networking-vpp/state/vpp0/physnets/testnet",
@@ -93,8 +101,8 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         }}
         result = EtcdResult(**parent)
         result._children = [child]
-        self.etcd_client.etcd_client.read.return_value = result
-        retval = self.etcd_client.find_physnets()
+        self.client.read.return_value = result
+        retval = self.agent_communicator.find_physnets(self.client)
         assert ('vpp0', 'testnet') in retval, \
             "Return value should have contained ('vpp0', 'testnet')"
 
@@ -102,7 +110,7 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         """A trivial test"""
         host = 'vpp0'
         port = {'id': '1234-5678-9012-3456'}
-        assert (self.etcd_client._port_path(host, port) ==
+        assert (self.agent_communicator._port_path(host, port) ==
                 "/networking-vpp/nodes/vpp0/ports/1234-5678-9012-3456")
 
     def given_port_context(self):
@@ -149,7 +157,7 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
             'port_security_enabled': port_security_enabled,
             'fixed_ips': fixed_ips
         }
-        self.etcd_client.bind(
+        self.agent_communicator.bind(
             session,
             port,
             segment,
@@ -157,8 +165,8 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
             binding_type)
         m_db.journal_write.assert_called_once_with(
             session,
-            self.etcd_client._port_path(port_context.host,
-                                        port_context.current),
+            self.agent_communicator._port_path(port_context.host,
+                                               port_context.current),
             test_data)
 
     @mock.patch('networking_vpp.mech_vpp.db')
@@ -167,31 +175,26 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         session = port_context._plugin_context.session
         port = port_context.current
         host = port_context.host
-        self.etcd_client.unbind(
+        self.agent_communicator.unbind(
             session,
             port,
             host)
         m_db.journal_write.assert_called_once_with(
             session,
-            self.etcd_client._port_path(port_context.host,
-                                        port_context.current),
+            self.agent_communicator._port_path(port_context.host,
+                                               port_context.current),
             None)
 
     def test_do_etcd_update_delete(self):
         key = 'test'
         val = None
-        self.etcd_client.do_etcd_update(key, val)
-        self.etcd_client.etcd_client.delete.assert_called_once_with(key)
+        self.agent_communicator.do_etcd_update(self.client, key, val)
+        self.client.delete.assert_called_once_with(key)
 
     def test_do_etcd_update_write(self):
         key = 'test'
         val = 'hello'
-        self.etcd_client.do_etcd_update(key, val)
-        self.etcd_client.etcd_client.write.assert_called_with(
+        self.agent_communicator.do_etcd_update(self.client, key, val)
+        # What's written is JSON, so has extra quotes
+        self.client.write.assert_called_with(
             key, '\"' + val + '\"')
-
-    def test_do_etcd_mkdir(self):
-        path = "/networking-vpp/"
-        self.etcd_client.do_etcd_mkdir(path)
-        self.etcd_client.etcd_client.write.assert_called_with(path,
-                                                              None, dir=True)
