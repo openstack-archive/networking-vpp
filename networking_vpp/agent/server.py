@@ -62,8 +62,6 @@ LOG = logging.getLogger(__name__)
 # A model of a bi-directional VPP ACL corresponding to a secgroup
 VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
 
-# a Mapping of security groups to VPP ACLs
-secgroups = {}     # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 
 # TODO(najoy) Expose the below as a config option
 # Enable stateful reflexive ACLs in VPP which adds automatic reverse rules
@@ -240,6 +238,12 @@ class UnsupportedInterfaceException(Exception):
 
 
 class VPPForwarder(object):
+    """Convert agent requirements into VPP calls
+
+    This class has no interaction with etcd; other classes have no
+    interaction with VPP.  The job of this class is to turn the
+    demands of etcd's data into VPP constructs.
+    """
 
     def __init__(self,
                  physnets,  # physnet_name: interface-name
@@ -254,6 +258,9 @@ class VPPForwarder(object):
         self.physnets = physnets
 
         self.mac_age = mac_age
+
+        # a Mapping of security groups to VPP ACLs
+        self.secgroups = {}  # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
@@ -841,19 +848,16 @@ class VPPForwarder(object):
         # Default action == ADD if the acl indexes are set to ~0
         # VPP ACL indexes correspond to ingress and egress security
         # group rules
-        in_acl_idx, out_acl_idx = 0xffffffff, 0xffffffff
-        if secgroup.id in secgroups:
-            LOG.debug("secgroup_watcher:updating vpp acls for "
-                      "security group %s" % secgroup.id)
-            in_acl_idx, out_acl_idx = secgroups[secgroup.id]
-            LOG.debug("secgroup_watcher:updating vpp input acl idx: %s and "
-                      "output acl idx %s" % (in_acl_idx, out_acl_idx))
-        else:
-            LOG.debug("secgroup_watcher: adding new input and output "
-                      "vpp acls for secgroup %s" % secgroup.id)
+        in_acl_idx, out_acl_idx = \
+            self.secgroups.get(secgroup.id,
+                               VppAcl(0xffffffff, 0xffffffff))
+        LOG.debug("secgroup_watcher:updating vpp input acl idx: %s and "
+                  "output acl idx %s" % (in_acl_idx, out_acl_idx))
+
         in_acl_rules, out_acl_rules = (
             [self._to_acl_rule(r, 0) for r in secgroup.ingress_rules],
             [self._to_acl_rule(r, 1) for r in secgroup.egress_rules])
+
         # If not reflexive_acls create return rules for ingress and egress
         # IPv4/IPv6 tcp/udp traffic
         # Exclude ICMP
@@ -870,10 +874,12 @@ class VPPForwarder(object):
             out_acl_rules = out_acl_rules + in_acl_return_rules
         else:
             LOG.debug("secgroup_watcher: vpp reflexive_acls are enabled")
+
         LOG.debug("secgroup_watcher:ingress ACL rules %s for secgroup %s"
                   % (in_acl_rules, secgroup.id))
         LOG.debug("secgroup_watcher:egress ACL rules %s for secgroup %s"
                   % (out_acl_rules, secgroup.id))
+
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
                                               tag=secgroup_tag(secgroup.id,
                                                                VPP_TO_VM),
@@ -886,9 +892,9 @@ class VPPForwarder(object):
                                                count=len(out_acl_rules))
         LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
                   "for secgroup:%s" % (in_acl_idx, out_acl_idx, secgroup.id))
-        secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
+        self.secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
         LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                  % secgroups)
+                  % self.secgroups)
 
     def acl_delete_on_host(self, secgroup):
         """Deletes the ingress and egress VPP ACLs on host for secgroup
@@ -897,13 +903,13 @@ class VPPForwarder(object):
         secgroup - OpenStack security group ID
         """
         try:
-            for acl_idx in secgroups[secgroup]:
+            for acl_idx in self.secgroups[secgroup]:
                 LOG.debug("secgroup_watcher: deleting VPP ACL %s for "
                           "secgroup %s" % (acl_idx, secgroup))
                 self.vpp.acl_delete(acl_index=acl_idx)
-            del secgroups[secgroup]
+            del self.secgroups[secgroup]
             LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                      % secgroups)
+                      % self.secgroups)
         except KeyError:
             LOG.error("secgroup_watcher: received request to delete "
                       "an unknown security group %s" % secgroup)
@@ -1045,8 +1051,8 @@ class VPPForwarder(object):
             self.vpp.delete_macip_acl(acl_index=port_mac_ip_acl)
         self.port_vpp_acls[sw_if_index]['l23'] = acl_index
 
-    def remove_acls_on_vpp_port(self, sw_if_index):
-        """Removes all L3 and L2 ACLS on the vpp port
+    def remove_acls_on_port(self, sw_if_index):
+        """Removes all security group ACLs on the vpp port
 
         Arguments:-
         sw_if_index - Software index of the port on which ACLs are to be
@@ -1064,6 +1070,16 @@ class VPPForwarder(object):
         except KeyError:
             LOG.debug("No Layer3 ACLs are set on interface %s.. nothing "
                       "to delete", sw_if_index)
+
+    def remove_mac_ip_acl_on_port(self, sw_if_index):
+        """Removes all MAC/IP ACLs on the vpp port
+
+        These ACLs correspond to anti-spoof and allowed-address-pair.
+
+        Arguments:-
+        sw_if_index - Software index of the port on which ACLs are to be
+                      removed
+        """
         try:
             l2_acl_index = self.port_vpp_acls[sw_if_index]['l23']
             LOG.debug("Deleting mac_ip acl %s from interface %s",
@@ -1085,7 +1101,7 @@ class VPPForwarder(object):
         Return: VppAcl(in_idx, out_idx)
         """
         # Check if we have an existing spoof filter deployed on vpp
-        spoof_acl = secgroups.get(COMMON_SPOOF_TAG)
+        spoof_acl = self.secgroups.get(COMMON_SPOOF_TAG)
         # Get the current anti-spoof filter rules. If a spoof filter is
         # present replace rules for good measure, else create a new
         # spoof filter
@@ -1121,10 +1137,10 @@ class VPPForwarder(object):
                 and out_acl_idx != 0xFFFFFFFF and not spoof_acl):
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
             LOG.debug("secgroup_watcher: adding a new spoof_acl %s to "
-                      "secgroups mapping %s", str(spoof_acl), secgroups)
-            secgroups[COMMON_SPOOF_TAG] = spoof_acl
+                      "secgroups mapping %s", str(spoof_acl), self.secgroups)
+            self.secgroups[COMMON_SPOOF_TAG] = spoof_acl
             LOG.debug("secgroup_watcher: current secgroup mapping: %s",
-                      secgroups)
+                      self.secgroups)
         return spoof_acl
 
     def _pack_address(self, ip_addr):
@@ -1241,18 +1257,26 @@ class EtcdListener(object):
         self.pool = eventlet.GreenPool()
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
 
-        # key: if index in VPP; value: (ID, bound-callback, prop-dict) tuple
+        # These data structures are used as readiness indicators.
+        # A port is only in here only if the attachment part of binding
+        # has completed.
+        # key: if index in VPP; value: (ID, bound-callback, vpp-prop-dict)
         self.iface_state = {}
 
-        self.vppf.vhost_ready_callback = self._vhost_ready
+        # Members of this are ports requiring security groups with unsatisfied
+        # requirements.
+        self.iface_awaiting_secgroups = {}
 
-    # The vppf bits
+        # We also need to know if the vhostuser interface has seen a socket
+        # connection: this tells us there's a state change, and there is
+        # a state detection function on self.vppf.
+        self.vppf.vhost_ready_callback = self._vhost_ready
 
     def unbind(self, id):
         self.vppf.unbind_interface_on_host(id)
 
-    def bind(self, callback, id, binding_type, mac_address, physnet,
-             network_type, segmentation_id):
+    def bind(self, bound_callback, id, binding_type, mac_address, physnet,
+             network_type, segmentation_id, security_data):
         """Bind an interface as instructed by ML2 on this host.
 
         The interface as a network and binding type.  Assuming the
@@ -1284,36 +1308,132 @@ class EtcdListener(object):
         # be able to debug with it.  This may not happen
         # immediately because the far end may not have connected.
         iface_idx = props['iface_idx']
-        self.iface_state[iface_idx] = (id, callback, props)
 
-        if (binding_type != 'vhostuser' or
-           self.vppf.vhostuser_linked_up(iface_idx)):
-            # Handle the case where the interface has already been
-            # notified as up, as we need both the up-notification
-            # and bind information ito be ready before we tell Nova
-            # For tap devices, the interface is now ready for a VM
-            # regardless of whether we see the other end.
+        port_security_enabled = security_data.get('port_security_enabled',
+                                                  True)
 
-            # If it's not up now, we'll get a vhost_ready notification
-            # later on.  We can't guarantee that vhost_ready notification
-            # as we may be resyncing and it may have bound in the period
-            # the agent was down.  This covers for that case.
-            self._mark_up(iface_idx)
+        if port_security_enabled:
+            self.iface_awaiting_secgroups[iface_idx] = \
+                security_data.get('secgroups', [])
+        else:
+            self.iface_awaiting_secgroups[iface_idx] = []
 
-        return props
+        self.iface_state[iface_idx] = (id, bound_callback, props)
+
+        self.apply_spoof_macip(id, iface_idx, security_data)
+
+        self.maybe_apply_secgroups(id, iface_idx)
+
+    def apply_spoof_macip(self, iface_idx, security_data):
+        """Apply non-secgroup security to a port
+
+        This is an idempotent function to set up the port security
+        (antispoof and allowed-address-pair) that can be determined
+        solely from the data on the port itself.
+
+        """
+
+        (id, bound_callback, props) = self.iface_state[iface_idx]
+
+        # TODO(ijw): this is a convenience for spotting L3 and DHCP
+        # ports, but it's not the right way
+        is_secured_port = props['binding_type'] == 'vhostuser'
+
+        port_security_enabled = security_data.get('port_security_enabled',
+                                                  True)
+
+        # If (security-groups and port_security)
+        # are enabled and it's a vhostuser port
+        # proceed to set L3/L2 ACLs, else skip security
+        if (self.secgroup_enabled and
+                port_security_enabled and
+                is_secured_port):
+
+            # Set Allowed address pairs and mac-spoof filter
+            aa_pairs = security_data.get('allowed_address_pairs', [])
+            LOG.debug("port_watcher: Setting allowed "
+                      "address pairs %s on port %s "
+                      "sw_if_index %s" %
+                      (aa_pairs,
+                       id,
+                       iface_idx))
+            self.set_mac_ip_acl_on_port(
+                security_data['mac_address'],
+                security_data.get('fixed_ips'),
+                aa_pairs,
+                iface_idx)
+        else:
+            self.remove_mac_ip_acl_on_port(iface_idx)
+
+    def reconsider_port_secgroups(self):
+        """Check current port security state.
+
+        See if any of the ports awaiting security group ACL population can
+        now be secured.
+        """
+
+        # TODO(ijw): could be more efficient in selecting ports to check
+        for iface_idx in self.iface_awaiting_secgroups.keys():
+            self.maybe_apply_secgroups(iface_idx)
+
+    def maybe_apply_secgroups(self, iface_idx):
+
+        """Apply secgroups to a port if all constructs are available
+
+        This is an idempotent function to set up port security.  It
+        relies on the pre-existence of the ACLs corresponding to
+        security groups, so it may or may not be possible to apply
+        security at this moment in time.  If it is, the port is
+        recorded as secure (allowing binding to complete), and if it
+        isn't we will attempt to reapply as more security groups are
+        created.
+
+        It is reapplied if the security group list changes on the
+        port.  It is not reapplied if the security group content is
+        changed, because the ACL number remains the same and therefore
+        so does the port config.
+
+        """
+
+        secgroup_ids = self.iface_awaiting_secgroups.get(iface_idx, [])
+
+        (id, bound_callback, props) = self.iface_state[iface_idx]
+
+        # TODO(ijw): this is a convenience for spotting L3 and DHCP
+        # ports, but it's not the right way
+        is_secured_port = props['binding_type'] == 'vhostuser'
+
+        # If security-groups are enabled and it's a port needing
+        # security proceed to set L3/L2 ACLs, else skip security
+        if (self.secgroup_enabled and
+                is_secured_port and
+                secgroup_ids != []):
+            LOG.debug("port_watcher:Setting secgroups %s "
+                      "on sw_if_index %s for port %s" %
+                      (secgroup_ids,
+                       props['iface_idx'],
+                       id))
+            if not self.maybe_set_acls_on_port(
+                    secgroup_ids,
+                    iface_idx):
+                # The ACLs for secgroups are not yet ready
+                # Leave ourselves in the pending list
+                return
+
+        else:
+            LOG.debug("Clearing port_security on "
+                      "port %s", id)
+            self.vppf.remove_acls_on_port(
+                props['iface_idx'])
+
+        self.iface_awaiting_secgroups.discard(iface_idx)
+        self.maybe_up(iface_idx)
 
     def _vhost_ready(self, sw_if_index):
-        if sw_if_index in self.iface_state:
-            # This index is linked up, and we bound it
-            # earlier.
-            self._mark_up(sw_if_index)
+            self.maybe_up(sw_if_index)
 
-    def _mark_up(self, sw_if_index):
-        """Flag to Nova that an interface is connected.
-
-        Nova watches a key's existence before sending out
-        bind events.  We set the key, and use the value
-        to store debugging information.
+    def maybe_up(self, iface_idx):
+        """Flag to Nova that an interface is connected, if it is
 
         This is a combination of 'we did our bit' and 'the other
         end connected'.  These can happen in either order; if
@@ -1324,9 +1444,24 @@ class EtcdListener(object):
         in sending this multiple times; the watching driver may
         see the key write multiple times and will act accordingly.
         """
-        LOG.debug('marking index %s as ready', str(sw_if_index))
-        (id, callback, props) = self.iface_state[sw_if_index]
-        callback(id, props)
+
+        if iface_idx not in self.iface_state:
+            # Binding hasn't completed
+            return
+
+        (id, bound_callback, props) = self.iface_state[iface_idx]
+
+        if (props['binding_type'] == 'vhostuser' and
+                not self.vppf.is_vhostuser_connected(iface_idx)):
+            # vhostuser connection that hasn't yet found a friend
+            return
+
+        if iface_idx in self.iface_awaiting_secgroups:
+            return
+
+        LOG.debug('marking index %s as ready', id)
+
+        bound_callback(id, props)
 
     def acl_add_replace(self, secgroup, data):
         """Add or replace a VPP ACL.
@@ -1368,14 +1503,14 @@ class EtcdListener(object):
         Get a dump of existing vpp acls
         Read tag info
         populate secgroups data structure
-        secgroups = {secgroup_id : VppAcl(in_idx, out_idx)}
+        self.secgroups = {secgroup_id : VppAcl(in_idx, out_idx)}
         """
         LOG.debug("secgroup_watcher: Populating secgroup to VPP ACL map..")
         # Clear existing secgroups to ACL map for sanity
         LOG.debug("secgroup_watcher: Clearing existing secgroups "
                   "to vpp-acl mappings")
-        global secgroups
-        secgroups = {}
+
+        self.secgroups = {}
         # Example of the acl_map data
         # acl_map: {'net-vpp.secgroup:<uuid>.from-vpp' : acl_idx
         #           'net-vpp.secgroup:<uuid>.to-vpp' : acl_idx,
@@ -1404,23 +1539,23 @@ class EtcdListener(object):
                 # - so it's not installed by the mechdriver at all
                 continue
 
-            vpp_acl = secgroups.get(secgroup_id,
-                                    VppAcl(0xffffffff, 0xffffffff))
+            vpp_acl = self.secgroups.get(secgroup_id,
+                                         VppAcl(0xffffffff, 0xffffffff))
             # secgroup_id will be missing first pass, and should be
             # completed on the second round through.
             if ingress:
-                secgroups[secgroup_id] = vpp_acl._replace(
+                self.secgroups[secgroup_id] = vpp_acl._replace(
                     in_idx=acl_idx)
             else:
-                secgroups[secgroup_id] = vpp_acl._replace(
+                self.secgroups[secgroup_id] = vpp_acl._replace(
                     out_idx=acl_idx)
 
             LOG.debug("secgroup_watcher: secgroup to VPP ACL mapping %s "
                       "constructed by reading "
                       "acl tags and building an acl_map %s"
-                      % (secgroups, acl_map))
+                      % (self.secgroups, acl_map))
 
-        if secgroups == {}:
+        if self.secgroups == {}:
             LOG.debug("secgroup_watcher: We have an empty secgroups "
                       "to acl mapping {}. Possible reason: vpp "
                       "may have been restarted on host.")
@@ -1436,7 +1571,7 @@ class EtcdListener(object):
         """
         self.vppf.spoof_filter_on_host()
 
-    def set_acls_on_port(self, secgroup_ids, sw_if_index):
+    def maybe_set_acls_on_port(self, secgroup_ids, sw_if_index):
         """Compute a vector of input/output ACLs and set it on the VPP port.
 
         Arguments:
@@ -1444,80 +1579,37 @@ class EtcdListener(object):
         sw_if_index - VPP software interface index on which the ACLs will
         be set
 
-        This method is spawned as a greenthread. It looks up the global
-        secgroups to acl mapping to figure out the ACL indexes associated
-        with the secgroup. If the secgroup cannot be found or if the ACL
-        index is invalid i.e. 0xffffffff it will wait for a period of time
-        for this data to become available. This happens mostly in agent
-        restart situations when the secgroups mapping is still being
-        populated by the secgroup watcher thread. It then composes the
-        acl vector and programs the port using vppf.
-        """
-        class InvalidACLError(Exception):
-            """Raised when a VPP ACL is invalid."""
-            pass
+        This method checks the global secgroups to acl mapping to
+        figure out the ACL indexes associated with the secgroup.  It
+        then composes the acl vector and programs the port using vppf.
 
-        class ACLNotFoundError(Exception):
-            """Raised when a VPP ACL is not found for a security group."""
-            pass
+        If the secgroup cannot be found or if the ACL index is invalid
+        i.e. 0xffffffff it will return False. This happens mostly in
+        agent restart situations when the secgroups mapping is still
+        being populated by the secgroup watcher thread, but since the
+        port and secgroup threads are independent it can happen at any
+        moment.
+
+        """
 
         # A list of VppAcl namedtuples to be set on the port
         vpp_acls = []
         for secgroup_id in secgroup_ids:
-            try:
-                acl = secgroups[secgroup_id]
-                # If any one or both indices are invalid wait for a valid acl
-                if (acl.in_idx == 0xFFFFFFFF or acl.out_idx == 0xFFFFFFFF):
-                    LOG.debug("port_watcher: Waiting for a valid vpp acl "
-                              "corresponding to secgroup %s" % secgroup_id)
-                    raise InvalidACLError
-                else:
-                    vpp_acls.append(acl)
-            except (KeyError, InvalidACLError):
-                # Here either the secgroup_id is not present or acl is invalid
-                acl = None
-                # Wait for the mapping in secgroups to populate
-                # This is required because it may take sometime for the
-                # secgroup-worker thread to build and populate the
-                # security-groups to vpp-acl map
-                timeout = eventlet.timeout.Timeout(60, False)
-                found = False
-                with timeout:  # Do not raise eventlet Exc.
-                    while True and not found:
-                        acl = secgroups.get(secgroup_id)
-                        # cancel timeout if acl and both its indices are valid
-                        if (acl and acl.in_idx != 0xFFFFFFFF
-                                and acl.out_idx != 0xFFFFFFFF):
-                                LOG.debug("port_watcher: Found a valid vpp "
-                                          "acl %s for "
-                                          "secgroup %s" % (acl, secgroup_id))
-                                timeout.cancel()
-                                found = True  # Req. for non-greenthread runs
-                        else:  # sleep and wait for the ACL
-                            LOG.debug("port_watcher: Waiting 2 secs to "
-                                      "for the secgroup: %s to VppAcl "
-                                      "mapping to populate" % secgroup_id)
-                            time.sleep(2)
-                # Check for valid ACL and indices after timeout, append to list
-                if (acl and acl.in_idx != 0xFFFFFFFF
-                        and acl.out_idx != 0xFFFFFFFF):
-                        LOG.debug("port_watcher: Found VppAcl %s for "
-                                  "secgroup %s" % (acl, secgroup_id))
-                        vpp_acls.append(acl)
-                else:
-                    LOG.error("port_watcher: Unable to locate a valid VPP ACL"
-                              "for secgroup %s in secgroups mapping %s after "
-                              "waiting several seconds for the mapping to "
-                              "populate" % (secgroup_id, secgroups))
-                    raise ACLNotFoundError("Could not find an ACL for "
-                                           "Secgroup %s" % secgroup_id)
-            except (ACLNotFoundError, Exception) as e:
-                LOG.error("port_watcher: ran into an exception while "
-                          "setting secgroup_ids %s on vpp port %s "
-                          "- details %s" % (secgroup_ids, sw_if_index, e))
+            acl = self.secgroups.get(secgroup_id)
+            # If any one or both indices are invalid wait for a valid acl
+            if (not acl or
+                    acl.in_idx == 0xFFFFFFFF or
+                    acl.out_idx == 0xFFFFFFFF):
+                LOG.debug("port_watcher: Waiting for a valid vpp acl "
+                          "corresponding to secgroup %s" % secgroup_id)
+                return False
+            else:
+                vpp_acls.append(acl)
+
         LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
                   "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
         self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
+        return True
 
     def set_mac_ip_acl_on_port(self, mac_address, fixed_ips,
                                allowed_address_pairs, sw_if_index):
@@ -1603,6 +1695,9 @@ class EtcdListener(object):
         # load sw_if_index to macip acl index mappings
         self.load_macip_acl_mapping()
 
+        binder = BindNotifier(self.client_factory)
+        self.pool.spawn(binder.run)
+
         class PortWatcher(EtcdChangeWatcher):
 
             def do_tick(self):
@@ -1620,7 +1715,8 @@ class EtcdListener(object):
                 This implements the state in VPP and notes the key/value
                 that VPP has implemented in self.implemented_state.
                 """
-                LOG.warn('Key change: %s', key)
+
+                LOG.debug('Key change: %s', key)
 
                 # Matches a port key, gets host and uuid
                 m = re.match(self.data.port_key_space + '/([^/]+)$', key)
@@ -1631,8 +1727,9 @@ class EtcdListener(object):
                     if action == 'delete':
                         # Removing key == desire to unbind
                         self.data.unbind(port)
-                        LOG.debug("port_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
+
+                        # Unlike bindings, unbindings are immediate.
+
                         try:
                             self.etcd_client.delete(
                                 self.data.state_key_space + '/%s'
@@ -1643,16 +1740,25 @@ class EtcdListener(object):
                             pass
                     else:
                         # Create or update == bind
-                        # NB most things will not change on an update.
-                        # TODO(ijw): go through the cases.
+
+                        # In EtcdListener, bind *ensures correct
+                        # binding* and is idempotent.  It will also
+                        # fix up security if the security state has
+                        # changed.  NB most things will not change on
+                        # an update.
+
                         data = json.loads(value)
-                        props = self.data.bind(self.bind_complete,
-                                               port,
-                                               data['binding_type'],
-                                               data['mac_address'],
-                                               data['physnet'],
-                                               data['network_type'],
-                                               data['segmentation_id'])
+                        props = self.data.bind(
+                            self.data.binder.add_notification,
+                            port,
+                            data['binding_type'],
+                            data['mac_address'],
+                            data['physnet'],
+                            data['network_type'],
+                            data['segmentation_id'],
+                            data  # TODO(ijw) convert incoming to security fmt
+                            )
+
                         if props is None:
                             # The binding failed for some reason (typically
                             # a problem with physnet config); we don't quit,
@@ -1664,71 +1770,9 @@ class EtcdListener(object):
                             # Until then, this etcd key will be ignored.
                             return
 
-                        # If (security-groups and port_security)
-                        # are enabled and it's a vhostuser port
-                        # proceed to set L3/L2 ACLs, else skip security
-                        if (self.data.secgroup_enabled
-                                and data.get('port_security_enabled', True)
-                                and data['binding_type'] == 'vhostuser'):
-                            LOG.debug("port_watcher: known secgroup to acl "
-                                      "mappings %s" % secgroups)
-                            security_groups = data.get('security_groups', [])
-                            LOG.debug("port_watcher:Setting secgroups %s "
-                                      "on sw_if_index %s for port %s" %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port))
-                            self.data.set_acls_on_port(
-                                security_groups,
-                                props['iface_idx'])
-                            LOG.debug("port_watcher: setting secgroups "
-                                      "%s on sw_if_index %s for port %s " %
-                                      (security_groups,
-                                       props['iface_idx'],
-                                       port))
-                            # Set Allowed address pairs and mac-spoof filter
-                            aa_pairs = data.get('allowed_address_pairs', [])
-                            LOG.debug("port_watcher: Setting allowed "
-                                      "address pairs %s on port %s "
-                                      "sw_if_index %s" %
-                                      (aa_pairs,
-                                       port,
-                                       props['iface_idx']))
-                            self.data.set_mac_ip_acl_on_port(
-                                data['mac_address'],
-                                data.get('fixed_ips'),
-                                aa_pairs,
-                                props['iface_idx'])
-                            LOG.debug("port_watcher: setting allowed-addr-"
-                                      "pairs %s on sw_if_index %s for "
-                                      "port %s" %
-                                      (aa_pairs,
-                                       props['iface_idx'],
-                                       port))
-                        self.data.vppf.vpp.ifup(props['iface_idx'])
-                        # Clear ACLs on vhostuser port if port_security
-                        # is disabled
-                        if (not data.get('port_security_enabled', True)
-                                and data['binding_type'] == 'vhostuser'):
-                            LOG.debug("Removing port_security on "
-                                      "port %s", port)
-                            self.data.vppf.remove_acls_on_vpp_port(
-                                props['iface_idx'])
-
                 else:
                     LOG.warning('Unexpected key change in etcd '
                                 'port feedback, key %s', key)
-
-            def bind_complete(self, port, props):
-                """Callback when bind completes
-
-                This allows the etcd thread to indicate in etcd to the
-                agent that this port is fully prepared.
-
-                """
-
-                self.etcd_client.write(self.data.state_key_space + '/%s' % port,
-                                       json.dumps(props))
 
         class SecGroupWatcher(EtcdChangeWatcher):
 
@@ -1747,16 +1791,14 @@ class EtcdListener(object):
                         LOG.debug("secgroup_watcher: deleting secgroup %s"
                                   % secgroup)
                         self.data.acl_delete(secgroup)
-                        LOG.debug("secgroup watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
                     else:
                         # create or update a secgroup == add_replace vpp acl
                         data = json.loads(value)
                         LOG.debug("secgroup_watcher: add_replace secgroup %s"
                                   % secgroup)
                         self.data.acl_add_replace(secgroup, data)
-                        LOG.debug("secgroup_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
+
+                        self.data.reconsider_port_secgroups()
                 else:
                     LOG.warning('secgroup_watcher: Unexpected change in '
                                 'etcd secgroup feedback for key %s' % key)
@@ -1787,6 +1829,52 @@ class EtcdListener(object):
                                     data=self).watch_forever)
 
         self.pool.waitall()
+
+
+class BindNotifier(object):
+    """A thread to return bind-complete notifications to the server.
+
+    This notifies the completion of a bind by writing a state key with
+    the details of VPP's config (the other end doesn't care about the
+    content, only the key's presence, so this is purely a debugging
+    issue) to etcd.
+
+    """
+
+    def __init__(self, client_factory, state_key_space):
+        #  An infinite queue over which we receive notifications
+        self.notifications = eventlet.queue.Queue()
+
+        self.etcd_client = client_factory.Client()
+
+    def add_notification(self, id, content):
+        """Queue a notification for sending to Nova
+
+        Nova watches a key's existence before sending out bind events.
+        We set the key, and use the value to store debugging
+        information.
+
+        """
+
+        self.notifications.put((id, content,))
+
+    def run(self):
+        while(True):
+            try:
+                ent = self.notifications.get()
+
+                (port, props) = ent
+
+                self.etcd_client.write(
+                    self.data.state_key_space + '/%s' % port,
+                    json.dumps(props))
+            except Exception:
+                # We must keep running, but we don't expect problems
+                LOG.exception("exception in bind-notify thread")
+                # If there are problems, retry the notification later.
+                # There's no issue if we do this multiple times.
+                self.add_notification(ent)
+                pass
 
 
 class VPPRestart(object):
