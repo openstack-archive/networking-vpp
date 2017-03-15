@@ -62,9 +62,6 @@ LOG = logging.getLogger(__name__)
 # A model of a bi-directional VPP ACL corresponding to a secgroup
 VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
 
-# a Mapping of security groups to VPP ACLs
-secgroups = {}     # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
-
 # TODO(najoy) Expose the below as a config option
 # Enable stateful reflexive ACLs in VPP which adds automatic reverse rules
 # When False, reverse rules are added by the vpp-agent and
@@ -254,6 +251,9 @@ class VPPForwarder(object):
         self.physnets = physnets
 
         self.mac_age = mac_age
+
+        # a Mapping of security groups to VPP ACLs
+        self.secgroups = {}  # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
@@ -842,10 +842,10 @@ class VPPForwarder(object):
         # VPP ACL indexes correspond to ingress and egress security
         # group rules
         in_acl_idx, out_acl_idx = 0xffffffff, 0xffffffff
-        if secgroup.id in secgroups:
+        if secgroup.id in self.secgroups:
             LOG.debug("secgroup_watcher:updating vpp acls for "
                       "security group %s" % secgroup.id)
-            in_acl_idx, out_acl_idx = secgroups[secgroup.id]
+            in_acl_idx, out_acl_idx = self.secgroups[secgroup.id]
             LOG.debug("secgroup_watcher:updating vpp input acl idx: %s and "
                       "output acl idx %s" % (in_acl_idx, out_acl_idx))
         else:
@@ -886,9 +886,9 @@ class VPPForwarder(object):
                                                count=len(out_acl_rules))
         LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
                   "for secgroup:%s" % (in_acl_idx, out_acl_idx, secgroup.id))
-        secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
+        self.secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
         LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                  % secgroups)
+                  % self.secgroups)
 
     def acl_delete_on_host(self, secgroup):
         """Deletes the ingress and egress VPP ACLs on host for secgroup
@@ -897,23 +897,87 @@ class VPPForwarder(object):
         secgroup - OpenStack security group ID
         """
         try:
-            for acl_idx in secgroups[secgroup]:
+            for acl_idx in self.secgroups[secgroup]:
                 LOG.debug("secgroup_watcher: deleting VPP ACL %s for "
                           "secgroup %s" % (acl_idx, secgroup))
                 self.vpp.acl_delete(acl_index=acl_idx)
-            del secgroups[secgroup]
+            del self.secgroups[secgroup]
             LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                      % secgroups)
+                      % self.secgroups)
         except KeyError:
             LOG.error("secgroup_watcher: received request to delete "
                       "an unknown security group %s" % secgroup)
         except Exception as e:
             LOG.error("Exception while deleting ACL %s" % e)
 
+    def populate_secgroup_acl_mappings(self):
+        """From vpp acl dump, populate the secgroups to VppACL mapping.
+
+        Get a dump of existing vpp ACLs that are tagged, by tag
+        Decode tag info
+        populate secgroups data structure relating UUID of secgroup to ACL
+        self.secgroups = {secgroup_id : VppAcl(in_idx, out_idx)}
+        """
+        LOG.debug("secgroup_watcher: Populating secgroup to VPP ACL map..")
+        # Clear existing secgroups to ACL map for sanity
+        LOG.debug("secgroup_watcher: Clearing existing secgroups "
+                  "to vpp-acl mappings")
+
+        self.secgroups = {}
+        # Example of the acl_map data
+        # acl_map: {'net-vpp.secgroup:<uuid>.from-vpp' : acl_idx
+        #           'net-vpp.secgroup:<uuid>.to-vpp' : acl_idx,
+        #           'net-vpp.common_spoof.from-vpp': acl_idx }
+        acl_map = self.get_secgroup_acl_map()
+        for item, acl_idx in acl_map.items():
+            # Tags can be one of ours, or one something else set
+            # decode_* functions attempt to match the tags to one of our
+            # formats, and returns None if that's not a format it matches.
+
+            secgroup_id, direction = decode_secgroup_tag(item)
+            if secgroup_id is None:
+                # Check if this is one of our common spoof ACL tag
+                # If so, get the tag direction and set the secgroup_id to
+                # COMMON_SPOOF_TAG so the correct spoof ACL can be read
+                direction = decode_common_spoof_tag(item)
+                if direction is not None:
+                    # But it is a valid spoof tag
+                    secgroup_id = COMMON_SPOOF_TAG
+                    ingress = direction == VPP_TO_VM
+            else:  # one of our valid secgroup ACL tag
+                ingress = direction == VPP_TO_VM
+
+            if secgroup_id is None:
+                # This is neither a security group or a spoof
+                # - so it's not installed by the mechdriver at all
+                continue
+
+            vpp_acl = self.secgroups.get(secgroup_id,
+                                         VppAcl(0xffffffff, 0xffffffff))
+            # secgroup_id will be missing first pass, and should be
+            # completed on the second round through.
+            if ingress:
+                self.secgroups[secgroup_id] = vpp_acl._replace(
+                    in_idx=acl_idx)
+            else:
+                self.secgroups[secgroup_id] = vpp_acl._replace(
+                    out_idx=acl_idx)
+
+            LOG.debug("secgroup_watcher: secgroup to VPP ACL mapping %s "
+                      "constructed by reading "
+                      "acl tags and building an acl_map %s"
+                      % (self.secgroups, acl_map))
+
+        if self.secgroups == {}:
+            LOG.debug("secgroup_watcher: We have an empty secgroups "
+                      "to acl mapping {}. Possible reason: vpp "
+                      "may have been restarted on host.")
+
     def get_secgroup_acl_map(self):
-        """Read VPP ACL tag data, construct and return an acl_map
+        """Read VPP ACL tag data, construct and return an acl_map based on tag
 
         acl_map: {secgroup_tag : acl_idx}
+
         """
         acl_map = {}
         try:
@@ -938,7 +1002,92 @@ class VPPForwarder(object):
             raise
         return acl_map
 
-    def set_acls_on_vpp_port(self, vpp_acls, sw_if_index):
+    def set_acls_on_port(self, secgroup_ids, sw_if_index):
+        """Compute a vector of input/output ACLs and set it on the VPP port.
+
+        Arguments:
+        secgroup_ids - OpenStack Security Group IDs
+        sw_if_index - VPP software interface index on which the ACLs will
+        be set
+
+        This method is spawned as a greenthread. (TODO(ijw): no, it
+        isn't.)  It looks up the global secgroups to acl mapping to
+        figure out the ACL indexes associated with the secgroup. If
+        the secgroup cannot be found or if the ACL index is invalid
+        i.e. 0xffffffff it will wait for a period of time for this
+        data to become available. This happens mostly in agent restart
+        situations when the secgroups mapping is still being populated
+        by the secgroup watcher thread. It then composes the acl
+        vector and programs the port using vppf.
+
+        """
+        class InvalidACLError(Exception):
+            """Raised when a VPP ACL is invalid."""
+            pass
+
+        class ACLNotFoundError(Exception):
+            """Raised when a VPP ACL is not found for a security group."""
+            pass
+
+        # A list of VppAcl namedtuples to be set on the port
+        vpp_acls = []
+        for secgroup_id in secgroup_ids:
+            try:
+                acl = self.secgroups[secgroup_id]
+                # If any one or both indices are invalid wait for a valid acl
+                if (acl.in_idx == 0xFFFFFFFF or acl.out_idx == 0xFFFFFFFF):
+                    LOG.debug("port_watcher: Waiting for a valid vpp acl "
+                              "corresponding to secgroup %s" % secgroup_id)
+                    raise InvalidACLError
+                else:
+                    vpp_acls.append(acl)
+            except (KeyError, InvalidACLError):
+                # Here either the secgroup_id is not present or acl is invalid
+                acl = None
+                # Wait for the mapping in secgroups to populate
+                # This is required because it may take sometime for the
+                # secgroup-worker thread to build and populate the
+                # security-groups to vpp-acl map
+                timeout = eventlet.timeout.Timeout(60, False)
+                found = False
+                with timeout:  # Do not raise eventlet Exc.
+                    while True and not found:
+                        acl = self.secgroups.get(secgroup_id)
+                        # cancel timeout if acl and both its indices are valid
+                        if (acl and acl.in_idx != 0xFFFFFFFF
+                                and acl.out_idx != 0xFFFFFFFF):
+                                LOG.debug("port_watcher: Found a valid vpp "
+                                          "acl %s for "
+                                          "secgroup %s" % (acl, secgroup_id))
+                                timeout.cancel()
+                                found = True  # Req. for non-greenthread runs
+                        else:  # sleep and wait for the ACL
+                            LOG.debug("port_watcher: Waiting 2 secs to "
+                                      "for the secgroup: %s to VppAcl "
+                                      "mapping to populate" % secgroup_id)
+                            time.sleep(2)
+                # Check for valid ACL and indices after timeout, append to list
+                if (acl and acl.in_idx != 0xFFFFFFFF
+                        and acl.out_idx != 0xFFFFFFFF):
+                        LOG.debug("port_watcher: Found VppAcl %s for "
+                                  "secgroup %s" % (acl, secgroup_id))
+                        vpp_acls.append(acl)
+                else:
+                    LOG.error("port_watcher: Unable to locate a valid VPP ACL"
+                              "for secgroup %s in secgroups mapping %s after "
+                              "waiting several seconds for the mapping to "
+                              "populate" % (secgroup_id, self.secgroups))
+                    raise ACLNotFoundError("Could not find an ACL for "
+                                           "Secgroup %s" % secgroup_id)
+            except (ACLNotFoundError, Exception) as e:
+                LOG.error("port_watcher: ran into an exception while "
+                          "setting secgroup_ids %s on vpp port %s "
+                          "- details %s" % (secgroup_ids, sw_if_index, e))
+        LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
+                  "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
+        self._set_acls_on_vpp_port(vpp_acls, sw_if_index)
+
+    def _set_acls_on_vpp_port(self, vpp_acls, sw_if_index):
         """Build a vector of VPP ACLs and set it on the port
 
         Arguments -
@@ -1085,7 +1234,7 @@ class VPPForwarder(object):
         Return: VppAcl(in_idx, out_idx)
         """
         # Check if we have an existing spoof filter deployed on vpp
-        spoof_acl = secgroups.get(COMMON_SPOOF_TAG)
+        spoof_acl = self.secgroups.get(COMMON_SPOOF_TAG)
         # Get the current anti-spoof filter rules. If a spoof filter is
         # present replace rules for good measure, else create a new
         # spoof filter
@@ -1121,10 +1270,10 @@ class VPPForwarder(object):
                 and out_acl_idx != 0xFFFFFFFF and not spoof_acl):
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
             LOG.debug("secgroup_watcher: adding a new spoof_acl %s to "
-                      "secgroups mapping %s", str(spoof_acl), secgroups)
-            secgroups[COMMON_SPOOF_TAG] = spoof_acl
+                      "secgroups mapping %s", str(spoof_acl), self.secgroups)
+            self.secgroups[COMMON_SPOOF_TAG] = spoof_acl
             LOG.debug("secgroup_watcher: current secgroup mapping: %s",
-                      secgroups)
+                      self.secgroups)
         return spoof_acl
 
     def _pack_address(self, ip_addr):
@@ -1362,69 +1511,6 @@ class EtcdListener(object):
         LOG.debug("secgroup_watcher: deleting secgroup %s" % secgroup)
         self.vppf.acl_delete_on_host(secgroup)
 
-    def populate_secgroup_acl_mappings(self):
-        """From vpp acl dump, populate the secgroups to VppACL mapping.
-
-        Get a dump of existing vpp acls
-        Read tag info
-        populate secgroups data structure
-        secgroups = {secgroup_id : VppAcl(in_idx, out_idx)}
-        """
-        LOG.debug("secgroup_watcher: Populating secgroup to VPP ACL map..")
-        # Clear existing secgroups to ACL map for sanity
-        LOG.debug("secgroup_watcher: Clearing existing secgroups "
-                  "to vpp-acl mappings")
-        global secgroups
-        secgroups = {}
-        # Example of the acl_map data
-        # acl_map: {'net-vpp.secgroup:<uuid>.from-vpp' : acl_idx
-        #           'net-vpp.secgroup:<uuid>.to-vpp' : acl_idx,
-        #           'net-vpp.common_spoof.from-vpp': acl_idx }
-        acl_map = self.vppf.get_secgroup_acl_map()
-        for item, acl_idx in acl_map.items():
-            # Tags can be one of ours, or one something else set
-            # decode_* functions attempt to match the tags to one of our
-            # formats, and returns None if that's not a format it matches.
-
-            secgroup_id, direction = decode_secgroup_tag(item)
-            if secgroup_id is None:
-                # Check if this is one of our common spoof ACL tag
-                # If so, get the tag direction and set the secgroup_id to
-                # COMMON_SPOOF_TAG so the correct spoof ACL can be read
-                direction = decode_common_spoof_tag(item)
-                if direction is not None:
-                    # But it is a valid spoof tag
-                    secgroup_id = COMMON_SPOOF_TAG
-                    ingress = direction == VPP_TO_VM
-            else:  # one of our valid secgroup ACL tag
-                ingress = direction == VPP_TO_VM
-
-            if secgroup_id is None:
-                # This is neither a security group or a spoof
-                # - so it's not installed by the mechdriver at all
-                continue
-
-            vpp_acl = secgroups.get(secgroup_id,
-                                    VppAcl(0xffffffff, 0xffffffff))
-            # secgroup_id will be missing first pass, and should be
-            # completed on the second round through.
-            if ingress:
-                secgroups[secgroup_id] = vpp_acl._replace(
-                    in_idx=acl_idx)
-            else:
-                secgroups[secgroup_id] = vpp_acl._replace(
-                    out_idx=acl_idx)
-
-            LOG.debug("secgroup_watcher: secgroup to VPP ACL mapping %s "
-                      "constructed by reading "
-                      "acl tags and building an acl_map %s"
-                      % (secgroups, acl_map))
-
-        if secgroups == {}:
-            LOG.debug("secgroup_watcher: We have an empty secgroups "
-                      "to acl mapping {}. Possible reason: vpp "
-                      "may have been restarted on host.")
-
     def spoof_filter_on_host(self):
         """Deploy anti-spoofing ingress and egress ACLs on VPP.
 
@@ -1435,89 +1521,6 @@ class EtcdListener(object):
         to secgroups mapping
         """
         self.vppf.spoof_filter_on_host()
-
-    def set_acls_on_port(self, secgroup_ids, sw_if_index):
-        """Compute a vector of input/output ACLs and set it on the VPP port.
-
-        Arguments:
-        secgroup_ids - OpenStack Security Group IDs
-        sw_if_index - VPP software interface index on which the ACLs will
-        be set
-
-        This method is spawned as a greenthread. It looks up the global
-        secgroups to acl mapping to figure out the ACL indexes associated
-        with the secgroup. If the secgroup cannot be found or if the ACL
-        index is invalid i.e. 0xffffffff it will wait for a period of time
-        for this data to become available. This happens mostly in agent
-        restart situations when the secgroups mapping is still being
-        populated by the secgroup watcher thread. It then composes the
-        acl vector and programs the port using vppf.
-        """
-        class InvalidACLError(Exception):
-            """Raised when a VPP ACL is invalid."""
-            pass
-
-        class ACLNotFoundError(Exception):
-            """Raised when a VPP ACL is not found for a security group."""
-            pass
-
-        # A list of VppAcl namedtuples to be set on the port
-        vpp_acls = []
-        for secgroup_id in secgroup_ids:
-            try:
-                acl = secgroups[secgroup_id]
-                # If any one or both indices are invalid wait for a valid acl
-                if (acl.in_idx == 0xFFFFFFFF or acl.out_idx == 0xFFFFFFFF):
-                    LOG.debug("port_watcher: Waiting for a valid vpp acl "
-                              "corresponding to secgroup %s" % secgroup_id)
-                    raise InvalidACLError
-                else:
-                    vpp_acls.append(acl)
-            except (KeyError, InvalidACLError):
-                # Here either the secgroup_id is not present or acl is invalid
-                acl = None
-                # Wait for the mapping in secgroups to populate
-                # This is required because it may take sometime for the
-                # secgroup-worker thread to build and populate the
-                # security-groups to vpp-acl map
-                timeout = eventlet.timeout.Timeout(60, False)
-                found = False
-                with timeout:  # Do not raise eventlet Exc.
-                    while True and not found:
-                        acl = secgroups.get(secgroup_id)
-                        # cancel timeout if acl and both its indices are valid
-                        if (acl and acl.in_idx != 0xFFFFFFFF
-                                and acl.out_idx != 0xFFFFFFFF):
-                                LOG.debug("port_watcher: Found a valid vpp "
-                                          "acl %s for "
-                                          "secgroup %s" % (acl, secgroup_id))
-                                timeout.cancel()
-                                found = True  # Req. for non-greenthread runs
-                        else:  # sleep and wait for the ACL
-                            LOG.debug("port_watcher: Waiting 2 secs to "
-                                      "for the secgroup: %s to VppAcl "
-                                      "mapping to populate" % secgroup_id)
-                            time.sleep(2)
-                # Check for valid ACL and indices after timeout, append to list
-                if (acl and acl.in_idx != 0xFFFFFFFF
-                        and acl.out_idx != 0xFFFFFFFF):
-                        LOG.debug("port_watcher: Found VppAcl %s for "
-                                  "secgroup %s" % (acl, secgroup_id))
-                        vpp_acls.append(acl)
-                else:
-                    LOG.error("port_watcher: Unable to locate a valid VPP ACL"
-                              "for secgroup %s in secgroups mapping %s after "
-                              "waiting several seconds for the mapping to "
-                              "populate" % (secgroup_id, secgroups))
-                    raise ACLNotFoundError("Could not find an ACL for "
-                                           "Secgroup %s" % secgroup_id)
-            except (ACLNotFoundError, Exception) as e:
-                LOG.error("port_watcher: ran into an exception while "
-                          "setting secgroup_ids %s on vpp port %s "
-                          "- details %s" % (secgroup_ids, sw_if_index, e))
-        LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
-                  "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
-        self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
 
     def set_mac_ip_acl_on_port(self, mac_address, fixed_ips,
                                allowed_address_pairs, sw_if_index):
@@ -1631,8 +1634,6 @@ class EtcdListener(object):
                     if action == 'delete':
                         # Removing key == desire to unbind
                         self.data.unbind(port)
-                        LOG.debug("port_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
                         try:
                             self.etcd_client.delete(
                                 self.data.state_key_space + '/%s'
@@ -1670,15 +1671,13 @@ class EtcdListener(object):
                         if (self.data.secgroup_enabled
                                 and data.get('port_security_enabled', True)
                                 and data['binding_type'] == 'vhostuser'):
-                            LOG.debug("port_watcher: known secgroup to acl "
-                                      "mappings %s" % secgroups)
                             security_groups = data.get('security_groups', [])
                             LOG.debug("port_watcher:Setting secgroups %s "
                                       "on sw_if_index %s for port %s" %
                                       (security_groups,
                                        props['iface_idx'],
                                        port))
-                            self.data.set_acls_on_port(
+                            self.data.vppf.set_acls_on_port(
                                 security_groups,
                                 props['iface_idx'])
                             LOG.debug("port_watcher: setting secgroups "
@@ -1747,16 +1746,12 @@ class EtcdListener(object):
                         LOG.debug("secgroup_watcher: deleting secgroup %s"
                                   % secgroup)
                         self.data.acl_delete(secgroup)
-                        LOG.debug("secgroup watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
                     else:
                         # create or update a secgroup == add_replace vpp acl
                         data = json.loads(value)
                         LOG.debug("secgroup_watcher: add_replace secgroup %s"
                                   % secgroup)
                         self.data.acl_add_replace(secgroup, data)
-                        LOG.debug("secgroup_watcher: known secgroup to acl "
-                                  "mappings %s" % secgroups)
                 else:
                     LOG.warning('secgroup_watcher: Unexpected change in '
                                 'etcd secgroup feedback for key %s' % key)
@@ -1764,7 +1759,7 @@ class EtcdListener(object):
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
                       "performing secgroup_watcher lookups")
-            self.populate_secgroup_acl_mappings()
+            self.vppf.populate_secgroup_acl_mappings()
             LOG.debug("Adding ingress/egress spoof filters "
                       "on host for secgroup_watcher spoof blocking")
             self.spoof_filter_on_host()
