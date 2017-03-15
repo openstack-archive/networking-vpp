@@ -29,6 +29,7 @@ import time
 
 from etcdutils import EtcdElection
 from networking_vpp.agent import utils as nwvpp_utils
+from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
 from networking_vpp.compat import portbindings
@@ -38,7 +39,6 @@ from networking_vpp.etcdutils import EtcdChangeWatcher
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
-from neutron import context as n_context
 from neutron.db import api as neutron_db_api
 from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api

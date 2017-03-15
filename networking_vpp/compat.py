@@ -44,6 +44,16 @@ except ImportError:
     n_exec = neutron.common.exceptions
 
 try:
+    # Ocata_
+    import neutron_lib.context
+
+    context = neutron_lib.context
+except ImportError:
+    import neutron.context
+
+    context = neutron.context
+
+try:
     n_const.UUID_PATTERN
 except AttributeError:
     HEX_ELEM = '[0-9A-Fa-f]'
