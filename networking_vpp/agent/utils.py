@@ -97,7 +97,7 @@ class EtcdClientFactory(object):
 
     def __init__(self, ml2_vpp_conf):
         hostconf = self._parse_host_config(ml2_vpp_conf.etcd_host,
-                                          ml2_vpp_conf.etcd_port)
+                                           ml2_vpp_conf.etcd_port)
 
         self.hostconf = hostconf
         self.etcd_user = ml2_vpp_conf.etcd_user
