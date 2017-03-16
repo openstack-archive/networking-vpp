@@ -87,6 +87,61 @@ class VppL3RouterPlugin(
                          vpp_floatingip_dict)
         self.communicator.kick()
 
+    def _get_router_intf_details(self, context, router_id, interface_info,
+                                 router_dict):
+        # Returns a router dictionary populated with network and
+        # subnet information for the associated subnet
+
+        # Get vlan id for this subnet's network
+        subnet = self._core_plugin.get_subnet(
+            context, interface_info['subnet_id'])
+        network = self._core_plugin.get_network(
+            context, subnet['network_id'])
+        router_dict['segmentation_id'] = network[provider.SEGMENTATION_ID]
+        router_dict['net_type'] = network[provider.NETWORK_TYPE]
+        router_dict['physnet'] = network[provider.PHYSICAL_NETWORK]
+        # Get VRF corresponding to the router
+        vrf_id = db.get_router_vrf(context.session, router_id)
+        router_dict['vrf_id'] = vrf_id
+        # Get internal gateway address for this subnet
+        router_dict['gateway_ip'] = subnet['gateway_ip']
+        # Get prefix and type for this subnet
+        router_dict['is_ipv6'] = False
+        address = ip_network(subnet['cidr'])
+        if address.version == 6:
+            router_dict['is_ipv6'] = True
+        router_dict['prefixlen'] = address.prefixlen
+
+    def _write_interface_journal(self, context, router_id, router_dict):
+        etcd_dir = (server.LEADIN + '/nodes/' + self.l3_host + '/' +
+                    server.ROUTER_INTF_DIR + '/' + router_id)
+        db.journal_write(context.session, etcd_dir, router_dict)
+        self.communicator.kick()
+
+    def _write_router_journal(self, context, router_id, router_dict):
+        etcd_dir = (server.LEADIN + '/nodes/' + self.l3_host + '/' +
+                    server.ROUTER_DIR + '/' + router_id)
+        router_dict['vrf_id'] = db.get_router_vrf(context.session, router_id)
+        # Get the external network details
+        network = self._core_plugin.get_network(
+            context, router_dict['external_gateway_info']['network_id'])
+        # Grab the physnet for the network
+        router_dict['external_physnet'] = network[provider.PHYSICAL_NETWORK]
+        # Grab all external subnets' gateway IPs
+        # This is added to the router dictionary in the format:
+        # [(Router's IP Address from the external network's subnet,
+        #   External Subnet's prefix)]
+        fixed_ips = router_dict['external_gateway_info']['external_fixed_ips']
+        gateways = []
+        for fixed_ip in fixed_ips:
+            subnet = self._core_plugin.get_subnet(
+                context, fixed_ip['subnet_id'])
+            gateways.append((fixed_ip['ip_address'],
+                            ip_network(subnet['cidr']).prefixlen))
+        router_dict['gateways'] = gateways
+        db.journal_write(context.session, etcd_dir, router_dict)
+        self.communicator.kick()
+
     def get_plugin_type(self):
         return constants.L3
 
@@ -102,13 +157,38 @@ class VppL3RouterPlugin(
                 context, router)
             # Allocate VRF for this router
             db.add_router_vrf(context.session, router_dict['id'])
-
+            if router_dict.get('external_gateway_info', False):
+                self._write_router_journal(
+                    context, router_dict['id'], router_dict)
         return router_dict
+
+    def update_router(self, context, router_id, router):
+        # Get the old router for comparison
+        old_router = self.get_router(context, router_id)
+        new_router = super(VppL3RouterPlugin, self).update_router(
+            context, router_id, router)
+        # Check if the gateway changed
+        ext_gw = 'external_gateway_info'
+        if old_router[ext_gw] != new_router[ext_gw]:
+            # Check if the gateway has been removed
+            if not new_router[ext_gw]:
+                # Populate values from the old router
+                new_router[ext_gw] = old_router[ext_gw]
+                new_router['delete'] = True
+            # Update dictionary values
+            self._write_router_journal(context, router_id, new_router)
+
+        return new_router
 
     def delete_router(self, context, router_id):
         session = db_api.get_session()
         with session.begin(subtransactions=True):
+            router = self.get_router(context, router_id)
             super(VppL3RouterPlugin, self).delete_router(context, router_id)
+            if router.get('external_gateway_info', False):
+                router['delete'] = True
+                self._write_router_journal(context, router_id,
+                                           router)
             # Delete VRF allocation for this router
             db.delete_router_vrf(context.session, router_id)
 
@@ -148,42 +228,6 @@ class VppL3RouterPlugin(
             if org_fip_dict.get('port_id') is not None:
                 self._process_floatingip(context, org_fip_dict, 'disassociate')
 
-    def _get_router_intf_details(self, context, router_id, interface_info,
-                                 router_dict):
-        # Returns a router dictionary populated with network and
-        # subnet information for the associated subnet
-
-        # Get vlan id for this subnet's network
-        subnet = self._core_plugin.get_subnet(
-            context, interface_info['subnet_id'])
-        network = self._core_plugin.get_network(
-            context, subnet['network_id'])
-        router_dict['segmentation_id'] = network[provider.SEGMENTATION_ID]
-        router_dict['net_type'] = network[provider.NETWORK_TYPE]
-        # Get VRF corresponding to the router
-        vrf_id = db.get_router_vrf(context.session, router_id)
-        router_dict['vrf_id'] = vrf_id
-        # Get internal gateway address for this subnet
-        router_dict['gateway_ip'] = subnet['gateway_ip']
-        # Get prefix and type for this subnet
-        router_dict['is_ipv6'] = False
-        address = ip_network(subnet['cidr'])
-        if address.version == 6:
-            router_dict['is_ipv6'] = True
-        router_dict['prefixlen'] = address.prefixlen
-
-        # Get physnet corresponding to the L3 host
-        for (host, physnet) in self.communicator.find_physnets():
-            if host == self.l3_host:
-                router_dict['physnet'] = physnet
-                break
-
-    def _write_journal_row(self, context, router_id, router_dict):
-        etcd_dir = (server.LEADIN + '/nodes/' + self.l3_host + '/' +
-                    server.ROUTER_INTF_DIR + '/' + router_id)
-        db.journal_write(context.session, etcd_dir, router_dict)
-        self.communicator.kick()
-
     def add_router_interface(self, context, router_id, interface_info):
         session = db_api.get_session()
         with session.begin(subtransactions=True):
@@ -195,7 +239,7 @@ class VppL3RouterPlugin(
             router_dict['loopback_mac'] = mac
             self._get_router_intf_details(context, router_id,
                                           interface_info, router_dict)
-            self._write_journal_row(context, router_id, router_dict)
+            self._write_interface_journal(context, router_id, router_dict)
 
         return new_router
 
@@ -209,6 +253,6 @@ class VppL3RouterPlugin(
             router_dict['delete'] = True
             self._get_router_intf_details(context, router_id,
                                           interface_info, router_dict)
-            self._write_journal_row(context, router_id, router_dict)
+            self._write_interface_journal(context, router_id, router_dict)
 
         return new_router
