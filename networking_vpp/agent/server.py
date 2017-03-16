@@ -1167,6 +1167,57 @@ class VPPForwarder(object):
                 self.vpp.set_snat_on_interface(loopback_idx, is_add=0)
             self.vpp.set_snat_on_interface(external_idx, is_inside=0, is_add=0)
 
+    def create_router_external_gateway_on_host(self, router):
+        """Creates the external gateway for the router.
+
+        Add the specified external gateway IP address as a SNAT
+        external IP address within the router's VRF.
+        """
+        # Set the external physnet as a SNAT outside interface
+        if_idx = self.get_if_for_physnet(router['external_physnet'])
+        # Check if this interface is already set to outside
+        int_list = self.vpp.get_snat_interfaces()
+        if not if_idx[1] in int_list:
+            self.vpp.set_snat_on_interface(if_idx[1], is_inside=0)
+
+        # Grab all snat and physnet addresses
+        addrs = self.vpp.get_snat_addresses()
+        physnet_ip_addrs = self.vpp.get_interface_ip_addresses(if_idx[1])
+
+        for addr in router['gateways']:
+            if not addr[0] in addrs:
+                self.vpp.add_del_snat_address(
+                    self._pack_address(addr[0]), router['vrf_id'])
+
+            # Set the Subnet gateway as external network gateway address
+            # Check if this address is already set on the external
+            if not str(addr[1]) in [ip[0] for ip in physnet_ip_addrs]:
+                self.vpp.set_interface_ip(
+                    if_idx[1], self._pack_address(addr[1]), int(addr[2]))
+
+    def delete_router_external_gateway_on_host(self, router):
+        """Delete the external IP address from the router.
+
+        Deletes the specified external gateway IP address from the
+        SNAT external IP pool from this router's VRF.
+        """
+        if_idx = self.get_if_for_physnet(router['external_physnet'])
+        # Grab all snat and physnet addresses
+        addrs = self.vpp.get_snat_addresses()
+        physnet_ip_addrs = self.vpp.get_interface_ip_addresses(if_idx[1])
+
+        for addr in router['gateways']:
+            # Delete external snat addresses for the router
+            if addr[0] in addrs:
+                self.vpp.add_del_snat_address(
+                    self._pack_address(addr[0]), router['vrf_id'],
+                    is_add=False)
+
+            # Delete router external gateway from external interface
+            if str(addr[1]) in [ip[0] for ip in physnet_ip_addrs]:
+                self.vpp.del_interface_ip(
+                    if_idx[1], self._pack_address(addr[1]), int(addr[2]))
+
     def create_router_interface_on_host(self, router):
         """Create a router on the local host.
 
@@ -1176,6 +1227,8 @@ class VPPForwarder(object):
         net_data = self.ensure_network_on_host(
             router['physnet'], router['net_type'], router['segmentation_id'])
         net_br_idx = net_data['bridge_domain_id']
+        # Get a list of all SNAT interfaces
+        int_list = self.vpp.get_snat_interfaces()
         # Check if a loopback is already set as the BVI for this bridge
         br_bvi = self.vpp.get_bridge_bvi(net_br_idx)
         if br_bvi:
@@ -1184,8 +1237,12 @@ class VPPForwarder(object):
         else:
             loopback_idx = self.vpp.create_loopback(router['loopback_mac'])
             self.vpp.set_loopback_bridge_bvi(loopback_idx, net_br_idx)
-            self.vpp.set_loopback_vrf(loopback_idx, router['vrf_id'],
-                                      router['is_ipv6'])
+            self.vpp.set_interface_vrf(loopback_idx, router['vrf_id'],
+                                       router['is_ipv6'])
+            # Set this BVI as an inside SNAT interface
+            # Only if it's not already set
+            if loopback_idx not in int_list:
+                self.vpp.set_snat_on_interface(loopback_idx)
 
         # Check if the BVI interface has the IP address for this
         # subnet's gateway
@@ -1197,9 +1254,9 @@ class VPPForwarder(object):
 
         if not found:
             # Add this IP address to this BVI interface
-            self.vpp.set_loopback_ip(loopback_idx,
-                                     self._pack_address(router['gateway_ip']),
-                                     router['prefixlen'], router['is_ipv6'])
+            self.vpp.set_interface_ip(loopback_idx,
+                                      self._pack_address(router['gateway_ip']),
+                                      router['prefixlen'], router['is_ipv6'])
         return loopback_idx
 
     def delete_router_interface_on_host(self, router):
@@ -1218,7 +1275,7 @@ class VPPForwarder(object):
             addresses = self.vpp.get_interface_ip_addresses(bvi_if_idx)
             if len(addresses) > 1:
                 # Dont' delete the BVI, only remove one IP from it
-                self.vpp.del_loopback_ip(
+                self.vpp.del_interface_ip(
                     bvi_if_idx, self._pack_address(router['gateway_ip']),
                     router['prefixlen'], router['is_ipv6'])
             else:
@@ -1577,8 +1634,7 @@ class EtcdListener(object):
                     vpp_acls.append(acl)
             except (KeyError, InvalidACLError):
                 # Here either the secgroup_id is not present or acl is invalid
-                acl = None
-                # Wait for the mapping in secgroups to populate
+                acl = None  # Wait for the mapping in secgroups to populate
                 # This is required because it may take sometime for the
                 # secgroup-worker thread to build and populate the
                 # security-groups to vpp-acl map
@@ -1844,6 +1900,14 @@ class EtcdListener(object):
             def do_tick(self):
                 pass
 
+            def _del_key(self, key):
+                try:
+                    self.etcd_client.delete(key)
+                except etcd.EtcdKeyNotFound:
+                    # Gone is fine; if we didn't delete it
+                    # it's no problem
+                    pass
+
             def key_change(self, action, key, value):
                 LOG.debug("router_watcher: doing work for %s %s %s" %
                           (action, key, value))
@@ -1881,6 +1945,22 @@ class EtcdListener(object):
                         else:
                             self.data.vppf.disassociate_floatingip(
                                 floatingip_dict)
+                        self._del_key(self.data.router_key_space +
+                                      '/interface/%s' % router_id)
+                elif m and m.group(1) == 'router':
+                    router_id = m.group(2)
+                    router = json.loads(value)
+                    if router.get('delete', False):
+                        # Delete an external gateway
+                        self.data.vppf.delete_router_external_gateway_on_host(
+                            router)
+                    elif action == 'delete':
+                        self._del_key(self.data.router_key_space +
+                                      '/router/%s' % router_id)
+                    else:
+                        # Add the external gateway
+                        self.data.vppf.create_router_external_gateway_on_host(
+                            router)
                 else:
                     LOG.warn('Unexpected key change in etcd router feedback,'
                              ' key %s' % key)
