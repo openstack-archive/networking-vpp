@@ -582,24 +582,24 @@ class VPPInterface(object):
         self.call_vpp('sw_interface_set_l2_bridge', rx_sw_if_index=loopback,
                       bd_id=bridge_id, shg=0, bvi=True, enable=True)
 
-    def set_loopback_vrf(self, loopback, vrf_id, is_ipv6=False):
-        # Set the loopback interface's VRF to the routers's table id
+    def set_interface_vrf(self, if_idx, vrf_id, is_ipv6=False):
+        # Set the interface's VRF to the routers's table id
         # allocated by neutron.
-        self.call_vpp('sw_interface_set_table', sw_if_index=loopback,
+        self.call_vpp('sw_interface_set_table', sw_if_index=if_idx,
                       vrf_id=vrf_id, is_ipv6=is_ipv6)
 
-    def set_loopback_ip(self, loopback_idx, ip, prefixlen, is_ipv6=False):
-        # Set the loopback's IP address, usually the subnet's
+    def set_interface_ip(self, if_idx, ip, prefixlen, is_ipv6=False):
+        # Set the itnerface IP address, usually the subnet's
         # gateway IP.
         self.call_vpp('sw_interface_add_del_address',
-                      sw_if_index=loopback_idx, is_add=True, is_ipv6=is_ipv6,
+                      sw_if_index=if_idx, is_add=True, is_ipv6=is_ipv6,
                       del_all=False, address_length=prefixlen,
                       address=ip)
 
-    def del_loopback_ip(self, loopback_idx, ip, prefixlen, is_ipv6=False):
-        # Delete an ip address from the speficied loopback interface
+    def del_interface_ip(self, if_idx, ip, prefixlen, is_ipv6=False):
+        # Delete an ip address from the speficied interface
         self.call_vpp('sw_interface_add_del_address',
-                      sw_if_index=loopback_idx, is_add=False, is_ipv6=is_ipv6,
+                      sw_if_index=if_idx, is_add=False, is_ipv6=is_ipv6,
                       del_all=False, address_length=prefixlen,
                       address=ip)
 
@@ -640,6 +640,17 @@ class VPPInterface(object):
                              v6_addr[4]))
         return int_addrs
 
+    def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
+        self.call_vpp('snat_interface_add_del_feature',
+                      sw_if_index=sw_if_index,
+                      is_inside=is_inside,
+                      is_add=is_add)
+
+    def add_del_snat_address(self, ip_addr, vrf_id, is_add=True):
+        self.call_vpp('snat_add_address_range', first_ip_address=ip_addr,
+                      last_ip_address=ip_addr, vrf_id=vrf_id, is_add=is_add,
+                      is_ip4=True)
+
     def get_snat_interfaces(self):
         snat_interface_list = []
         snat_interfaces = self.call_vpp('snat_interface_dump')
@@ -649,12 +660,6 @@ class VPPInterface(object):
 
     def get_snat_static_mappings(self):
         return self.call_vpp('snat_static_mapping_dump')
-
-    def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
-        self.call_vpp('snat_interface_add_del_feature',
-                      sw_if_index=sw_if_index,
-                      is_inside=is_inside,
-                      is_add=is_add)
 
     def set_snat_static_mapping(self, local_ip, external_ip, is_add=1):
         local_ip = str(ipaddress.IPv4Address(local_ip).packed)
@@ -668,3 +673,11 @@ class VPPInterface(object):
                       vrf_id=0,
                       is_add=is_add,
                       is_ip4=1)
+
+    def get_snat_addresses(self):
+        ret_addrs = []
+        addresses = self.call_vpp('snat_address_dump')
+        for addr in addresses:
+            ret_addrs.append(str(ipaddress.ip_address(addr[3][:4]).exploded))
+
+        return ret_addrs

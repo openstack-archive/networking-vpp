@@ -247,6 +247,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                  net_type, seg_id)
         assert (retval == expected_val)
 
+    def _get_mock_router(self):
+        # Return a mock router with a gateway
+        return {'external_physnet': 'physnet1', 'net_type': 'vlan',
+                'vrf_id': 5, 'gateways': [('50.0.0.3', '50.0.0.1', 24)]}
+
     def _get_mock_router_interface(self):
         # Return a mock IPv4 router interface.
         return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
@@ -282,9 +287,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 router['loopback_mac'])
             self.vpp.vpp.set_loopback_bridge_bvi.assert_called_once_with(
                 loopback_idx, 'fake_dom_id')
-            self.vpp.vpp.set_loopback_vrf.assert_called_once_with(
+            self.vpp.vpp.set_interface_vrf.assert_called_once_with(
                 loopback_idx, router['vrf_id'], router['is_ipv6'])
-            self.vpp.vpp.set_loopback_ip.assert_called_once_with(
+            self.vpp.vpp.set_interface_ip.assert_called_once_with(
                 loopback_idx, self.vpp._pack_address(router['gateway_ip']),
                 router['prefixlen'], router['is_ipv6'])
 
@@ -304,8 +309,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
                 self.vpp.vpp.create_loopback.assert_not_called()
                 self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
-                self.vpp.vpp.set_loopback_vrf.assert_not_called()
-                self.vpp.vpp.set_loopback_ip.assert_not_called()
+                self.vpp.vpp.set_interface_vrf.assert_not_called()
+                self.vpp.vpp.set_interface_ip.assert_not_called()
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
@@ -323,8 +328,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
                 self.vpp.vpp.create_loopback.assert_not_called()
                 self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
-                self.vpp.vpp.set_loopback_vrf.assert_not_called()
-                self.vpp.vpp.set_loopback_ip.assert_called_once_with(
+                self.vpp.vpp.set_interface_vrf.assert_not_called()
+                self.vpp.vpp.set_interface_ip.assert_called_once_with(
                     5, self.vpp._pack_address(router['gateway_ip']),
                     router['prefixlen'], router['is_ipv6'])
 
@@ -360,9 +365,134 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 return_value=return_ip_list):
                 self.vpp.delete_router_interface_on_host(router)
                 self.vpp.vpp.delete_loopback.assert_not_called()
-                self.vpp.vpp.del_loopback_ip.assert_called_once_with(
+                self.vpp.vpp.del_interface_ip.assert_called_once_with(
                     5, self.vpp._pack_address(router['gateway_ip']),
                     router['prefixlen'], router['is_ipv6'])
+
+    def test_create_router_external_gateway_on_host(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[]):
+                self.vpp.create_router_external_gateway_on_host(router)
+                self.vpp.vpp.add_del_snat_address.assert_called_once_with(
+                    self.vpp._pack_address(router['gateways'][0][0]),
+                    router['vrf_id'])
+                self.vpp.vpp.set_snat_on_interface.assert_called_once_with(
+                    5, is_inside=0)
+                self.vpp.vpp.set_interface_ip.assert_called_once_with(
+                    5, self.vpp._pack_address(router['gateways'][0][1]),
+                    router['gateways'][0][2])
+
+    def test_create_router_external_gateway_with_snat_interface_set(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[5]):
+                self.vpp.create_router_external_gateway_on_host(router)
+                self.vpp.vpp.add_del_snat_address.assert_called_once_with(
+                    self.vpp._pack_address(router['gateways'][0][0]),
+                    router['vrf_id'])
+                self.vpp.vpp.set_snat_on_interface.assert_not_called()
+                self.vpp.vpp.set_interface_ip.assert_called_once_with(
+                    5, self.vpp._pack_address(router['gateways'][0][1]),
+                    router['gateways'][0][2])
+
+    def test_create_router_external_gateway_with_snat_int_and_ip_set(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[5]):
+                with mock.patch.object(
+                    self.vpp.vpp, 'get_snat_addresses',
+                    return_value=[router['gateways'][0][0]]):
+                    self.vpp.create_router_external_gateway_on_host(router)
+                    self.vpp.vpp.add_del_snat_address.assert_not_called()
+                    self.vpp.vpp.set_snat_on_interface.assert_not_called()
+                    self.vpp.vpp.set_interface_ip.assert_called_once_with(
+                        5, self.vpp._pack_address(router['gateways'][0][1]),
+                        router['gateways'][0][2])
+
+    def test_create_router_external_gateway_snat_int_ip_and_ext_gw_set(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[5]):
+                with mock.patch.object(
+                    self.vpp.vpp, 'get_snat_addresses',
+                    return_value=[router['gateways'][0][0]]):
+                    with mock.patch.object(
+                        self.vpp.vpp, 'get_interface_ip_addresses',
+                        return_value=[(router['gateways'][0][1],
+                                       router['gateways'][0][2])]):
+                        self.vpp.create_router_external_gateway_on_host(router)
+                        self.vpp.vpp.add_del_snat_address.assert_not_called()
+                        self.vpp.vpp.set_snat_on_interface.assert_not_called()
+                        self.vpp.vpp.set_interface_ip.assert_not_called()
+
+    def test_delete_router_external_gateway_on_host(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[5]):
+                with mock.patch.object(
+                    self.vpp.vpp, 'get_snat_addresses',
+                    return_value=[router['gateways'][0][0]]):
+                    with mock.patch.object(
+                        self.vpp.vpp, 'get_interface_ip_addresses',
+                        return_value=[(router['gateways'][0][1],
+                                       router['gateways'][0][2])]):
+                        self.vpp.delete_router_external_gateway_on_host(router)
+                        (self.vpp.vpp.add_del_snat_address.
+                            assert_called_once_with(
+                                self.vpp._pack_address(
+                                    router['gateways'][0][0]),
+                                router['vrf_id'], is_add=False))
+                        self.vpp.vpp.del_interface_ip.assert_called_once_with(
+                            5,
+                            self.vpp._pack_address(router['gateways'][0][1]),
+                            router['gateways'][0][2])
+
+    def test_delete_router_external_gateway_no_snat_addr(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[5]):
+                with mock.patch.object(
+                    self.vpp.vpp, 'get_snat_addresses',
+                    return_value=[]):
+                    with mock.patch.object(
+                        self.vpp.vpp, 'get_interface_ip_addresses',
+                        return_value=[(router['gateways'][0][1],
+                                       router['gateways'][0][2])]):
+                        self.vpp.delete_router_external_gateway_on_host(router)
+                        self.vpp.vpp.add_del_snat_address.assert_not_called()
+                        self.vpp.vpp.del_interface_ip.assert_called_once_with(
+                            5,
+                            self.vpp._pack_address(router['gateways'][0][1]),
+                            router['gateways'][0][2])
+
+    def test_delete_router_external_gateway_no_snat_addr_and_no_ext_gw(self):
+        router = self._get_mock_router()
+        with mock.patch.object(self.vpp, 'get_if_for_physnet',
+                               return_value=('TenGe1/0', 5)):
+            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                                   return_value=[5]):
+                with mock.patch.object(
+                    self.vpp.vpp, 'get_snat_addresses',
+                    return_value=[]):
+                    with mock.patch.object(
+                        self.vpp.vpp, 'get_interface_ip_addresses',
+                        return_value=[]):
+                        self.vpp.delete_router_external_gateway_on_host(router)
+                        self.vpp.vpp.add_del_snat_address.assert_not_called()
+                        self.vpp.vpp.del_interface_ip.assert_not_called()
 
     def test_v4_router_interface_create_on_host(self):
         self._test_create_router_interface_on_host(
