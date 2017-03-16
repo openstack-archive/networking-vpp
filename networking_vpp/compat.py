@@ -66,7 +66,6 @@ try:
 
     model_base = neutron_lib.db.model_base
     directory = neutron_lib.plugins.directory
-
 except ImportError:
     import neutron.db.model_base
     import neutron.manager
