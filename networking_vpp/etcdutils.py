@@ -333,6 +333,7 @@ class EtcdWatcher(object):
                 # the timeout with eventlet.Timeout
                 # Most of the time, we timeout thanks to etcd client,
                 # if we timeout due to eventlet, we have an ugly error message
+                rv = None
                 with eventlet.Timeout(self.heartbeat + 5, False):
                     rv = self.etcd_client.watch(self.watch_path,
                                                 recursive=True,
