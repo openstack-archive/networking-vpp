@@ -89,6 +89,4 @@ function clean_etcd() {
 
     sleep 2 # settle time for the daemon
     etcdctl rm --recursive /networking-vpp 2>/dev/null
-
-    done
 }
