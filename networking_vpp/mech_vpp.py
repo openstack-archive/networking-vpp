@@ -337,9 +337,6 @@ class VPPMechanismDriver(api.MechanismDriver):
 @six.add_metaclass(abc.ABCMeta)
 class AgentCommunicator(object):
 
-    def __init__(self):
-        self.recursive = False
-
     @abstractmethod
     def bind(self, port, segment, host, binding_type):
         pass
@@ -370,21 +367,9 @@ class AgentCommunicator(object):
         context = n_context.get_admin_context()
 
         plugin = directory.get_plugin()
-        # Bodge TODO(ijw)
-        if self.recursive:
-            # This happens right now because when we update the port
-            # status, we update the port and the update notification
-            # comes through to here.
-            # TODO(ijw) wants a more permanent fix, because this only
-            # happens due to the threading model.  We should be
-            # spotting relevant changes in postcommit.
-            LOG.warning('ML2_VPP: recursion check hit on activating port')
-        else:
-            self.recursive = True
-            plugin.update_port_status(context, port_id,
-                                      n_const.PORT_STATUS_ACTIVE,
-                                      host=host)
-            self.recursive = False
+        plugin.update_port_status(context, port_id,
+                                  n_const.PORT_STATUS_ACTIVE,
+                                  host=host)
 
 
 # If no-one from Neutron talks to us in this long, get paranoid and check the
