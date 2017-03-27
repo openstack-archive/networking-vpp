@@ -292,19 +292,11 @@ class VPPMechanismDriver(api.MechanismDriver):
             else:
                 prev_bind = port_context.original_binding_levels[-1]
 
-            # TODO(ijw): this is a race-avoidance tactic in the agent
-            # The agent should not assume that secgroups have been
-            # pushed before the port bind, because it uses two threads
-            # to watch ports and agents independently and sync the results.
-            # When we add this, this code and ensure_secgroups_in_etcd
-            # can die.
             if (current_bind is not None and
                current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
-                self.ensure_secgroups_in_etcd(port_context)
                 self.communicator.kick()
             elif (prev_bind is not None and
                   prev_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
-                self.ensure_secgroups_in_etcd(port_context)
                 self.communicator.kick()
 
     def delete_port_precommit(self, port_context):
@@ -318,20 +310,6 @@ class VPPMechanismDriver(api.MechanismDriver):
 
     def delete_port_postcommit(self, port_context):
         self.communicator.kick()
-
-    def ensure_secgroups_in_etcd(self, port_context):
-        """Ensure secgroup key-value is present in etcd if enabled"""
-
-        # TODO(ijw): This used to serve the problem of populating secgroups
-        # because there was a bug in secgroup output.  Now, it helps with
-        # agent races when a port is bound before its secgroup ACLs have been
-        # populated.  It can go when the sync issue is addressed.
-        sgids = port_context.current.get('security_groups', [])
-        for sgid in sgids:
-            self.communicator.send_sg_updates(
-                port_context._plugin_context,
-                [sgid]
-                )
 
 
 @six.add_metaclass(abc.ABCMeta)
