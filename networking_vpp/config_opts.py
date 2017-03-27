@@ -40,6 +40,11 @@ vpp_opts = [
                help=_("Username for etcd authentication")),
     cfg.StrOpt('etcd_pass', default=None,
                help=_("Password for etcd authentication")),
+    # TODO(ijw): make false default
+    cfg.BoolOpt('etcd_insecure_explicit_disable_https', default=True,
+                help=_("Use TLS to access etcd")),
+    cfg.StrOpt('etcd_ca_cert', default=None,
+               help=_("etcd CA certificate file path")),
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
     cfg.StrOpt('vhost_user_dir', default='/tmp',

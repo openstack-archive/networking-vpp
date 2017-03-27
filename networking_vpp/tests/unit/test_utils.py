@@ -30,6 +30,9 @@ class FakeConfig(object):
         self.etcd_user = user
         self.etcd_pass = pw
 
+        self.etcd_insecure_explicit_disable_https = True
+        self.etcd_cacert = None
+
 
 class TestAgentUtils(base.BaseTestCase):
 
@@ -38,20 +41,20 @@ class TestAgentUtils(base.BaseTestCase):
 
             cf = utils.EtcdClientFactory(fk)
 
-            return cf.hostconf
+            return cf.etcd_args['host']
 
     def test_pass_user_password(self):
         # The defaults
         fk = FakeConfig('host', 1, None, None)
         cf = utils.EtcdClientFactory(fk)
-        self.assertThat(cf.etcd_user, matchers.Equals(None))
-        self.assertThat(cf.etcd_pass, matchers.Equals(None))
+        self.assertThat(cf.etcd_args['username'], matchers.Equals(None))
+        self.assertThat(cf.etcd_args['password'], matchers.Equals(None))
 
         # When set
         fk = FakeConfig('host', 1, 'uuu', 'ppp')
         cf = utils.EtcdClientFactory(fk)
-        self.assertThat(cf.etcd_user, matchers.Equals('uuu'))
-        self.assertThat(cf.etcd_pass, matchers.Equals('ppp'))
+        self.assertThat(cf.etcd_args['username'], matchers.Equals('uuu'))
+        self.assertThat(cf.etcd_args['password'], matchers.Equals('ppp'))
 
     def test_parse_empty_host_config(self):
         """Test parse_host_config with empty value """
