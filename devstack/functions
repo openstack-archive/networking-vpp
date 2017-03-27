@@ -33,12 +33,12 @@ EOF
       # We have some very poor skills hacking this file - we add but don't substitute
       # and we don't make any attempt to parse the file, so this works with default
       # configs and not generally otherwise
-      user="$(id -un)"
-      sudo sed -i "/api-segment  *{/a\ \ uid $user" /etc/vpp/startup.conf
       sudo sed -i "/dpdk  *{/a\ \ dev $VPP_INT_PCI_DEV" /etc/vpp/startup.conf
   else
       die $LINENO "VPP_STARTUP_CONFIG or VPP_INT_PCI_DEV must be set"
   fi
+  user="$(id -un)"
+  sudo sed -i "/api-segment  *{/a\ \ uid $user" /etc/vpp/startup.conf
 }
 
 function start_vpp {
