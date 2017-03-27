@@ -82,9 +82,9 @@ function install_vpp_agent {
 }
 
 function init_vpp_agent {
-    # sudo for now, as it needs to connect to VPP and for that requires root privs
-    # to share its shmem comms channel
-    run_process $agent_service_name "sudo $VPP_CP_BINARY --config-file /$Q_PLUGIN_CONF_FILE"
+    # The VPP startup file should specify that this user is authorised to access the
+    # api segment, and if we're installing we fix that
+    run_process $agent_service_name "$VPP_CP_BINARY --config-file /$Q_PLUGIN_CONF_FILE"
 }
 
 function configure_vpp_agent {
