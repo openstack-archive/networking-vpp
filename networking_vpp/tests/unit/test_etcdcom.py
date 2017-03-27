@@ -15,7 +15,6 @@
 import mock
 
 import etcd
-from etcd import EtcdResult
 from networking_vpp import config_opts
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
@@ -78,33 +77,6 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
 
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
         self.agent_communicator = mech_vpp.EtcdAgentCommunicator()
-
-    def test_find_physnets(self):
-        child = {'key': "/networking-vpp/state/vpp0/physnets/testnet",
-                 'value': "1",
-                 'expiration': None,
-                 'ttl': None,
-                 'modifiedIndex': 5,
-                 'createdIndex': 1,
-                 'newKey': False,
-                 'dir': False,
-                 }
-        parent = {"node": {
-            'key': "/networking-vpp",
-            'value': None,
-            'expiration': None,
-            'ttl': None,
-            'modifiedIndex': 5,
-            'createdIndex': 1,
-            'newKey': False,
-            'dir': False,
-        }}
-        result = EtcdResult(**parent)
-        result._children = [child]
-        self.client.read.return_value = result
-        retval = self.agent_communicator.find_physnets(self.client)
-        assert ('vpp0', 'testnet') in retval, \
-            "Return value should have contained ('vpp0', 'testnet')"
 
     def test_port_path(self):
         """A trivial test"""

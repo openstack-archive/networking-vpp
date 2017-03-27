@@ -17,7 +17,6 @@
 import mock
 
 import etcd
-from etcd import EtcdResult
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
 from neutron.plugins.ml2 import driver_api as api
@@ -147,37 +146,6 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
         segment = port_context.segments_to_bind[1]
         assert(self.mech.check_segment(segment, host) is False), \
             "Return value should have been False"
-
-    def test_physnet_known(self):
-        child = {'key': "/networking-vpp/state/vpp0/physnets/testnet",
-                 'value': "1",
-                 'expiration': None,
-                 'ttl': None,
-                 'modifiedIndex': 5,
-                 'createdIndex': 1,
-                 'newKey': False,
-                 'dir': False,
-                 }
-        parent = {"node": {
-            'key': "/networking-vpp",
-            'value': None,
-            'expiration': None,
-            'ttl': None,
-            'modifiedIndex': 5,
-            'createdIndex': 1,
-            'newKey': False,
-            'dir': False,
-        }}
-        result = EtcdResult(**parent)
-        result._children = [child]
-        host = 'vpp0'
-        physnet = 'testnet'
-        self.client.read.return_value = result
-        self.mech.communicator.physical_networks = \
-            self.mech.communicator.find_physnets(self.client)
-        assert(self.mech.physnet_known(host, physnet) is True), \
-            "Return value for host [%s] and net [%s] should have been True" % (
-                host, physnet)
 
     def test_check_vlan_transparency(self):
         # shrircha: this is useless, as the function simply returns false.
