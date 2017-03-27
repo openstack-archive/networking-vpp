@@ -211,7 +211,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         return True
 
     def physnet_known(self, host, physnet):
-        return (host, physnet) in self.communicator.physical_networks
+        return self.communicator.find_physnet(host, physnet)
 
     def check_vlan_transparency(self, port_context):
         """Check if the network supports vlan transparency.
@@ -406,10 +406,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
     all information on each bound port on the compute node.
     (Unbound ports are homeless, so the act of unbinding is
     the deletion of this entry.)
-    LEADIN/state/nodes/X - return state of the VPP
-    LEADIN/state/nodes/X/alive - heartbeat back
-    LEADIN/state/nodes/X/ports - port information.
-    LEADIN/state/nodes/X/physnets - physnets on node
+    LEADIN/state/X - return state of the VPP
+    LEADIN/state/X/alive - heartbeat back
+    LEADIN/state/X/ports - port information.
+    LEADIN/state/X/physnets - physnets on node
     Specifically a key here (regardless of value) indicates
     the port has been bound and is receiving traffic.
     """
@@ -444,8 +444,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if self.secgroup_enabled:
             self.register_secgroup_event_handler()
 
-        self.physical_networks = self.find_physnets(etcd_client)
-
         # TODO(ijw): .../state/<host> lists all known hosts, and they
         # heartbeat when they're functioning
 
@@ -469,18 +467,22 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.return_thread = self.make_return_worker()
         self.forward_thread = self.make_forward_worker()
 
-    def find_physnets(self, etcd_client):
-        physical_networks = set()
-        for rv in etcd_client.read(LEADIN, recursive=True).children:
-            # Find all known physnets
-            m = re.match(self.state_key_space + '/([^/]+)/physnets/([^/]+)$',
-                         rv.key)
-            if m:
-                host = m.group(1)
-                net = m.group(2)
-                physical_networks.add((host, net))
+    def find_physnet(self, host, physnet):
+        """Identify if an agent can connect to the physical network
 
-        return physical_networks
+        This can fail if the agent hasn't been configured for that
+        physnet, or if the agent isn't alive.
+        """
+
+        # TODO(ijw): we use an on-the-fly created client so that we
+        # don't have threading problems from the caller.
+        try:
+            etcd_client = self.client_factory.client()
+            etcd_client.read('%s/state/%s/alive' % (LEADIN, host))
+            etcd_client.read('%s/state/%s/physnets/%s' % (LEADIN, host, physnet))
+        except etcd.EtcdKeyNotFound:
+            return False
+        return True
 
     def register_secgroup_event_handler(self):
         """Subscribe a handler to process secgroup change notifications
