@@ -1013,7 +1013,17 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         # Nova doesn't much care when ports go away.
                         pass
                     else:
+                        # While this is strictly true and we're
+                        # allowed to do it now...
                         self.data.notify_bound(port, host)
+                        # TODO(ijw): Nova isn't always listening at
+                        # this point, In our vhostuser case, this
+                        # callback turns up before Nova starts waiting
+                        # (the VM's up and QEMU is ready; binding
+                        # completes) so the signal arrives before the
+                        # wait even starts.  Send a late message as
+                        # well - duplicates are harmlessly ignored.
+                        eventlet.spawn_after(4, self.data.notify_bound, port, host)
                 else:
                     # Matches a port key, gets host and uuid
                     m = re.match(self.data.state_key_space + '/([^/]+)/alive$',
