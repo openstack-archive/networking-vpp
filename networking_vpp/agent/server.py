@@ -1010,7 +1010,7 @@ class VPPForwarder(object):
             raise
         return acl_map
 
-    def set_acls_on_port(self, secgroup_ids, sw_if_index):
+    def maybe_set_acls_on_port(self, secgroup_ids, sw_if_index):
         """Compute a vector of input/output ACLs and set it on the VPP port.
 
         Arguments:
@@ -1018,82 +1018,37 @@ class VPPForwarder(object):
         sw_if_index - VPP software interface index on which the ACLs will
         be set
 
-        This method is spawned as a greenthread. (TODO(ijw): no, it
-        isn't.)  It looks up the global secgroups to acl mapping to
-        figure out the ACL indexes associated with the secgroup. If
-        the secgroup cannot be found or if the ACL index is invalid
-        i.e. 0xffffffff it will wait for a period of time for this
-        data to become available. This happens mostly in agent restart
-        situations when the secgroups mapping is still being populated
-        by the secgroup watcher thread. It then composes the acl
-        vector and programs the port using vppf.
+        This method checks the global secgroups to acl mapping to
+        figure out the ACL indexes associated with the secgroup.  It
+        then composes the acl vector and programs the port using vppf.
+
+        If the secgroup cannot be found or if the ACL index is invalid
+        i.e. 0xffffffff it will return False. This happens mostly in
+        agent restart situations when the secgroups mapping is still
+        being populated by the secgroup watcher thread, but since the
+        port and secgroup threads are independent it can happen at any
+        moment.
 
         """
-        class InvalidACLError(Exception):
-            """Raised when a VPP ACL is invalid."""
-            pass
-
-        class ACLNotFoundError(Exception):
-            """Raised when a VPP ACL is not found for a security group."""
-            pass
 
         # A list of VppAcl namedtuples to be set on the port
         vpp_acls = []
         for secgroup_id in secgroup_ids:
-            try:
-                acl = self.secgroups[secgroup_id]
-                # If any one or both indices are invalid wait for a valid acl
-                if (acl.in_idx == 0xFFFFFFFF or acl.out_idx == 0xFFFFFFFF):
-                    LOG.debug("port_watcher: Waiting for a valid vpp acl "
-                              "corresponding to secgroup %s" % secgroup_id)
-                    raise InvalidACLError
-                else:
-                    vpp_acls.append(acl)
-            except (KeyError, InvalidACLError):
-                # Here either the secgroup_id is not present or acl is invalid
-                acl = None
-                # Wait for the mapping in secgroups to populate
-                # This is required because it may take sometime for the
-                # secgroup-worker thread to build and populate the
-                # security-groups to vpp-acl map
-                timeout = eventlet.timeout.Timeout(60, False)
-                found = False
-                with timeout:  # Do not raise eventlet Exc.
-                    while True and not found:
-                        acl = self.secgroups.get(secgroup_id)
-                        # cancel timeout if acl and both its indices are valid
-                        if (acl and acl.in_idx != 0xFFFFFFFF
-                                and acl.out_idx != 0xFFFFFFFF):
-                                LOG.debug("port_watcher: Found a valid vpp "
-                                          "acl %s for "
-                                          "secgroup %s" % (acl, secgroup_id))
-                                timeout.cancel()
-                                found = True  # Req. for non-greenthread runs
-                        else:  # sleep and wait for the ACL
-                            LOG.debug("port_watcher: Waiting 2 secs to "
-                                      "for the secgroup: %s to VppAcl "
-                                      "mapping to populate" % secgroup_id)
-                            time.sleep(2)
-                # Check for valid ACL and indices after timeout, append to list
-                if (acl and acl.in_idx != 0xFFFFFFFF
-                        and acl.out_idx != 0xFFFFFFFF):
-                        LOG.debug("port_watcher: Found VppAcl %s for "
-                                  "secgroup %s" % (acl, secgroup_id))
-                        vpp_acls.append(acl)
-                else:
-                    LOG.error("port_watcher: Unable to locate a valid VPP ACL"
-                              "for secgroup %s in secgroups mapping %s after "
-                              "waiting several seconds for the mapping to "
-                              "populate" % (secgroup_id, self.secgroups))
-                    raise ACLNotFoundError("Could not find an ACL for "
-                                           "Secgroup %s" % secgroup_id)
-            except (ACLNotFoundError, Exception) as e:
-                LOG.error("port_watcher: ran into an exception while "
-                          "setting secgroup_ids %s on vpp port %s "
-                          "- details %s" % (secgroup_ids, sw_if_index, e))
+            acl = self.secgroups.get(secgroup_id)
+            # If any one or both indices are invalid wait for a valid acl
+            if (not acl or
+                    acl.in_idx == 0xFFFFFFFF or
+                    acl.out_idx == 0xFFFFFFFF):
+                LOG.debug("port_watcher: Waiting for a valid vpp acl "
+                          "corresponding to secgroup %s" % secgroup_id)
+                return False
+            else:
+                vpp_acls.append(acl)
+
         LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
                   "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
         self._set_acls_on_vpp_port(vpp_acls, sw_if_index)
+        return True
 
     def _set_acls_on_vpp_port(self, vpp_acls, sw_if_index):
         """Build a vector of VPP ACLs and set it on the port
@@ -1465,7 +1420,7 @@ class EtcdListener(object):
 
         if port_security_enabled:
             self.iface_awaiting_secgroups[iface_idx] = \
-                security_data.get('secgroups', [])
+                security_data.get('security_groups', [])
         else:
             self.iface_awaiting_secgroups[iface_idx] = []
 
@@ -1546,7 +1501,7 @@ class EtcdListener(object):
 
         """
 
-        secgroup_ids = self.iface_awaiting_secgroups.get(iface_idx, [])
+        secgroup_ids = self.iface_awaiting_secgroups[iface_idx]
 
         (id, bound_callback, props) = self.iface_state[iface_idx]
 
@@ -1564,7 +1519,7 @@ class EtcdListener(object):
                       (secgroup_ids,
                        props['iface_idx'],
                        id))
-            if not self.maybe_set_acls_on_port(
+            if not self.vppf.maybe_set_acls_on_port(
                     secgroup_ids,
                     iface_idx):
                 # The ACLs for secgroups are not yet ready
@@ -1660,46 +1615,6 @@ class EtcdListener(object):
         to secgroups mapping
         """
         self.vppf.spoof_filter_on_host()
-
-    def maybe_set_acls_on_port(self, secgroup_ids, sw_if_index):
-        """Compute a vector of input/output ACLs and set it on the VPP port.
-
-        Arguments:
-        secgroup_ids - OpenStack Security Group IDs
-        sw_if_index - VPP software interface index on which the ACLs will
-        be set
-
-        This method checks the global secgroups to acl mapping to
-        figure out the ACL indexes associated with the secgroup.  It
-        then composes the acl vector and programs the port using vppf.
-
-        If the secgroup cannot be found or if the ACL index is invalid
-        i.e. 0xffffffff it will return False. This happens mostly in
-        agent restart situations when the secgroups mapping is still
-        being populated by the secgroup watcher thread, but since the
-        port and secgroup threads are independent it can happen at any
-        moment.
-
-        """
-
-        # A list of VppAcl namedtuples to be set on the port
-        vpp_acls = []
-        for secgroup_id in secgroup_ids:
-            acl = self.secgroups.get(secgroup_id)
-            # If any one or both indices are invalid wait for a valid acl
-            if (not acl or
-                    acl.in_idx == 0xFFFFFFFF or
-                    acl.out_idx == 0xFFFFFFFF):
-                LOG.debug("port_watcher: Waiting for a valid vpp acl "
-                          "corresponding to secgroup %s" % secgroup_id)
-                return False
-            else:
-                vpp_acls.append(acl)
-
-        LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
-                  "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
-        self.vppf.set_acls_on_vpp_port(vpp_acls, sw_if_index)
-        return True
 
     def set_mac_ip_acl_on_port(self, mac_address, fixed_ips,
                                allowed_address_pairs, sw_if_index):
