@@ -335,7 +335,7 @@ class VPPInterface(object):
 
                 # Spot vhostuser changes, specifically
                 for name, data in self.get_vhostusers():
-                    if data.num_regions > 0:  # connected, near as we can tell
+                    if data.sock_errno == 0:  # connected, near as we can tell
                         ifs[data.sw_if_index] = data
                 seen = set(ifs.keys())
 
