@@ -322,6 +322,12 @@ class VPPForwarder(object):
 
     ########################################
 
+    def ifup(self, ifidx):
+        """Proxy for VPP's ifup."""
+        self.vpp.ifup(ifidx)
+
+    ########################################
+
     def get_if_for_physnet(self, physnet):
         ifname = self.physnets.get(physnet, None)
         if ifname is None:
@@ -1538,15 +1544,18 @@ class EtcdListener(object):
             self.maybe_up(sw_if_index)
 
     def maybe_up(self, iface_idx):
-        """Flag to Nova that an interface is connected, if it is
+        """Flag that an interface is connected, if it is
 
         This is a combination of 'we did our bit' and 'the other
         end connected'.  These can happen in either order; if
         we resync, we recheck our binding but the other end
         may have connected already.
 
+        This both tells Nova the interface is ready and brings the
+        interface up in VPP.
+
         There is nothing wrong (other than a bit of inefficiency)
-        in sending this multiple times; the watching driver may
+        in sending this to Nova multiple times; the watching driver may
         see the key write multiple times and will act accordingly.
         """
 
@@ -1566,6 +1575,7 @@ class EtcdListener(object):
 
         LOG.debug('marking index %s as ready', id)
 
+        self.vppf.ifup(iface_idx)
         bound_callback(id, props)
 
     def acl_add_replace(self, secgroup, data):
