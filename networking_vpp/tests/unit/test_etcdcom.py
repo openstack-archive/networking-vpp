@@ -76,7 +76,11 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         self.client = etcd.Client()
 
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
-        self.agent_communicator = mech_vpp.EtcdAgentCommunicator()
+
+        def callback(host, port):
+            pass
+        self.agent_communicator = mech_vpp.EtcdAgentCommunicator(
+            callback)
 
     def test_port_path(self):
         """A trivial test"""
