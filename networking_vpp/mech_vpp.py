@@ -49,6 +49,13 @@ try:
 except ImportError:
     from neutron.db import securitygroups_db as securitygroup
 
+try:
+    # Newton (?) and on - prior to this we set state up, after this we
+    # block ML2 from setting state to up
+    from neutron.db import provisioning_blocks
+except ImportError:
+    global provisioning_blocks
+    provisioning_blocks = None
 
 # Liberty doesn't support precommit events.  We fix that here.
 # 'commit time' is defined (by us alone) as 'when you should
@@ -79,7 +86,7 @@ class VPPMechanismDriver(api.MechanismDriver):
 
     def initialize(self):
         cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
-        self.communicator = EtcdAgentCommunicator()
+        self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""
@@ -165,7 +172,7 @@ class VPPMechanismDriver(api.MechanismDriver):
                 port_context.set_binding(segment[api.ID],
                                          vif_type,
                                          vif_details)
-                LOG.debug("ML2_VPP: Bound using segment: %s", segment)
+                LOG.debug("ML2_VPP: Bind selected using segment: %s", segment)
                 return
 
     def check_segment(self, segment, host):
@@ -270,6 +277,56 @@ class VPPMechanismDriver(api.MechanismDriver):
                                        port_context.host,
                                        binding_type)
 
+                # TODO(ijw): for some reason this has an original host
+                # in here so we can't spot the first binding
+                LOG.error('host = %s orig = %s', 
+                          port_context.host, port_context.original_host)
+
+                # TODO(ijW): The agent driver checks for a change of
+                # host, but we're oddly seeing that the orig_host is
+                # always set.  Should confirm if this is a problem or
+                # not.
+                self._insert_provisioning_block(port_context)
+
+    def port_bind_complete(self, port_id, host):
+        """Tell things that the port is truly bound.
+
+        This is a callback called by the etcd communicator.
+
+        """
+        LOG.debug('bind complete on %s', port_id)
+        self._release_provisioning_block(host, port_id)
+
+    def _insert_provisioning_block(self, context):
+        if provisioning_blocks is None:
+            # Functionality not available in this version of Neutron
+            return
+
+        # we insert a status barrier to prevent the port from transitioning
+        # to active until the agent reports back that the wiring is done
+        port = context.current
+        if port['status'] == n_const.PORT_STATUS_ACTIVE:
+            # no point in putting in a block if the status is already ACTIVE
+            return
+
+        provisioning_blocks.add_provisioning_component(
+            context._plugin_context, port['id'], resources.PORT,
+            provisioning_blocks.L2_AGENT_ENTITY)
+
+    def _release_provisioning_block(self, host, port_id):
+        context = n_context.get_admin_context()
+
+        if provisioning_blocks is None:
+            # Without provisioning_blocks support, it's our job (not
+            # ML2's) to make the port active.
+            plugin = directory.get_plugin()
+            plugin.update_port_status(context, port_id,
+                                      n_const.PORT_STATUS_ACTIVE, host)
+        else:
+            provisioning_blocks.provisioning_complete(
+                context, port_id, resources.PORT,
+                provisioning_blocks.L2_AGENT_ENTITY)
+
     def update_port_postcommit(self, port_context):
         """Work to do, post-DB commit, when updating a port
 
@@ -323,32 +380,6 @@ class AgentCommunicator(object):
     def unbind(self, port, host):
         pass
 
-    def notify_bound(self, port_id, host):
-        """Tell things that the port is truly bound.
-
-        You want to call this when you're certain that the VPP
-        on the far end has definitely bound the port, and has
-        dropped a vhost-user socket where it can be found.
-
-        You want to do this then specifically because libvirt
-        will hang, because qemu ignores its monitor port,
-        when qemu is waiting for a partner to connect with on
-        its vhost-user interfaces.  It can't start the VM - that
-        requires information from its partner it can't guess at -
-        but it shouldn't hang the monitor - nevertheless...
-
-        In the case your comms protocol is sucky, call it at
-        the end of a bind() and everything will probably be
-        fine.  Probably.
-        """
-
-        context = n_context.get_admin_context()
-
-        plugin = directory.get_plugin()
-        plugin.update_port_status(context, port_id,
-                                  n_const.PORT_STATUS_ACTIVE,
-                                  host=host)
-
 
 # If no-one from Neutron talks to us in this long, get paranoid and check the
 # database for work.  We might have missed the kick (or another
@@ -392,12 +423,29 @@ class EtcdAgentCommunicator(AgentCommunicator):
     the port has been bound and is receiving traffic.
     """
 
-    def __init__(self):
+    def __init__(self, notify_bound):
         super(EtcdAgentCommunicator, self).__init__()
         LOG.debug("Using etcd host:%s port:%s user:%s password:***" %
                   (cfg.CONF.ml2_vpp.etcd_host,
                    cfg.CONF.ml2_vpp.etcd_port,
                    cfg.CONF.ml2_vpp.etcd_user,))
+
+        # This is a function that is called when a port has been
+        # notified from the agent via etcd as completely attached.
+
+        # We call this when we're certain that the VPP on the far end
+        # has definitely bound the port, and has dropped a vhost-user
+        # socket where it can be found.
+
+        # This is more important than it seems, becaus libvirt will
+        # hang, because qemu ignores its monitor port, when qemu is
+        # waiting for a partner to connect with on its vhost-user
+        # interfaces.  It can't start the VM - that requires
+        # information from its partner it can't guess at - but it
+        # shouldn't hang the monitor - nevertheless...  So we notify
+        # when the port is there and ready, and qemu is never put into
+        # this state by Nova.
+        self.notify_bound = notify_bound
 
         self.client_factory = nwvpp_utils.EtcdClientFactory(cfg.CONF.ml2_vpp)
 
@@ -991,18 +1039,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         # Nova doesn't much care when ports go away.
                         pass
                     else:
-                        # While this is strictly true and we're
-                        # allowed to do it now...
                         self.data.notify_bound(port, host)
-                        # TODO(ijw): Nova isn't always listening at
-                        # this point, In our vhostuser case, this
-                        # callback turns up before Nova starts waiting
-                        # (the VM's up and QEMU is ready; binding
-                        # completes) so the signal arrives before the
-                        # wait even starts.  Send a late message as
-                        # well - duplicates are harmlessly ignored.
-                        eventlet.spawn_after(4, self.data.notify_bound,
-                                             port, host)
                 else:
                     # Matches a port key, gets host and uuid
                     m = re.match(self.data.state_key_space + '/([^/]+)/alive$',
