@@ -158,7 +158,9 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
 
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.unbind')
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.bind')
-    def test_update_port_precommit(self, m_bind, m_unbind):
+    @mock.patch('networking_vpp.mech_vpp.VPPMechanismDriver.'
+                '_insert_provisioning_block')
+    def test_update_port_precommit(self, m_bind, m_unbind, m_insert_block):
         port_context = self.given_port_context()
         current_bind = port_context.binding_levels[-1]
         self.mech.update_port_precommit(port_context)
@@ -184,6 +186,8 @@ class VPPMechanismDriverTestCase(base.BaseTestCase):
             current_bind[api.BOUND_SEGMENT],
             port_context.host,
             'vhostuser')
+        self.mech._insert_provisioning_block.assert_called_once_with(
+            port_context)
         self.mech.communicator.unbind.assert_not_called()
 
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.kick')
