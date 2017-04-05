@@ -93,5 +93,5 @@ function clean_etcd() {
     # TODO(ijw): deal with username and password
 
     sleep 2 # settle time for the daemon
-    etcdctl rm --recursive /networking-vpp 2>/dev/null
+    etcdctl rm --recursive /networking-vpp 2>/dev/null ||:
 }
