@@ -1895,8 +1895,12 @@ def main():
                           "physnet2:<interface>"
                           )
                 sys.exit(1)
+
+    # Convert to the minutes unit that VPP uses:
+    # (we round *up*)
+    mac_age_min = int((cfg.CONF.ml2_vpp.mac_age + 59) / 60)
     vppf = VPPForwarder(physnets,
-                        mac_age=cfg.CONF.ml2_vpp.mac_age,
+                        mac_age=mac_age_min,
                         tap_wait_time=cfg.CONF.ml2_vpp.tap_wait_time,
                         vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,
                         vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
