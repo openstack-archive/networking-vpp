@@ -27,7 +27,6 @@ import re
 import six
 import time
 
-from etcdutils import EtcdElection
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
@@ -36,6 +35,7 @@ from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp.etcdutils import EtcdChangeWatcher
+from networking_vpp.etcdutils import EtcdElection
 from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
