@@ -229,7 +229,7 @@ class EtcdWatcher(object):
         self.etcd_data = None
 
         # Get the initial state of etcd.
-        self.init_resync_start()
+        self.expected_keys = self.init_resync_start()
         self.refresh_all_data()
 
         # NB needs the lock to run safely.
@@ -255,20 +255,41 @@ class EtcdWatcher(object):
 
         Whatever is being driven by the etcd data, this is a good time
         to find out what state it's currently in.  It may be
-        persisting data over a restart of the process watching etcd.
+        persisting data over a restart of this process watching etcd,
+        so things that are no longer in etcd (for which we won't have
+        seen deletes in the downtime) are now gone.  This is only
+        needed initially; if a resync is required while we're running,
+        we've tracked the etcd content and we know what has gone away.
+
+        Returns: None for no cleanup, or a set of keys expected
         """
-        pass
+        return None
 
     def init_resync_end(self, short_keys):
-        """Overrideable function when the first resync ends
+        """Clean up stale data
 
-        Whatever is being driven by the etcd data, this is a good time
-        to clean up its state based on what was originally discovered
-        and what we now know etcd wants.
+        When we start up, we need to bring controlled elements
+        into line with what etcd wants.  We've already gone
+        through the keys in etcd that currently exist and made
+        sure that the they are correctly configured, but we now
+        need to remove any structures that correspond to items
+        no longer in etcd.
+
+        This may be overridden to add functionality.
 
         short_keys - an iterator for all the keys found in etcd
         """
-        pass
+
+        if self.expected_keys is None:
+            # Resync has not been implemented for this
+            # TODO(ijw): we should make it mandatory for resync
+            # which means expected_resync_start will become
+            # abstract.
+            return
+
+            stale_keys = self.expected_keys - set(short_keys)
+            for f in stale_keys:
+                self.removed(f)
 
     def do_work(self, action, key, value):
 
