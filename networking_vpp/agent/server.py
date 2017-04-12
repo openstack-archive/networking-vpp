@@ -380,6 +380,8 @@ class VPPForwarder(object):
         this has already been done.
         """
 
+        # On resync, we will be recreating our datastructure.
+        # On general activity we skip to the chase.
         if (physnet, net_type, seg_id) not in self.networks:
             net = self.ensure_network_in_vpp(physnet, net_type, seg_id)
             if net:
@@ -527,7 +529,7 @@ class VPPForwarder(object):
             return False
         return True
 
-    def ensure_bridge(self, bridge_name):
+    def ensure_kernel_bridge(self, bridge_name):
         """Create a bridge unless it already exists."""
         # _bridge_exists_and_ensure_up instead of device_exists is used here
         # because there are cases where the bridge exists but it's not UP,
@@ -623,8 +625,9 @@ class VPPForwarder(object):
 
         # TODO(ijw): someone somewhere ought to be sorting
         # the MTUs out
-        br = self.ensure_bridge(bridge_name)
+        br = self.ensure_kernel_bridge(bridge_name)
 
+        # TODO(ijw) idempotency
         # This is the external TAP device that will be
         # created by Nova or an agent, say the DHCP agent
         # later in time.
@@ -639,6 +642,10 @@ class VPPForwarder(object):
             # It's definitely there, we made it ourselves
             pass
         else:
+            # TODO(ijw): it may exist, but we may need to create it
+            # - and what exists may be wrong so we may have to
+            # recreate it
+            # TODO(ijw): idempotency
             LOG.debug('creating port %s as type %s',
                       uuid, if_type)
 
@@ -747,6 +754,8 @@ class VPPForwarder(object):
                       'could not be configured')
             # Returning None allows us to deal with the uplink
             # side of a failed binding in the caller.
+            # For resyncs, the port exists but it's not in a bridge domain
+            # and is down, which is the best we can offer.
             return None
         net_br_idx = net_data['bridge_domain_id']
         props = self.ensure_interface_on_host(if_type, uuid, mac)
@@ -2039,6 +2048,105 @@ class EtcdListener(object):
 
         self.maybe_apply_secgroups(iface_idx)
 
+    def vpp_restart_prepare(self):
+        """On a restart, find bound ports and clean up half-bindings
+
+        Does the following:
+        - fixes uplink interfaces from VPP where they've changed in
+          config or where the config didn't fully get pushed
+          to VPPFowarder
+        - deletes ports and networks from VPP where the
+          the physical network is no longer configured
+        - deletes ports where the binding is not clean
+          (we may have terminated one VPP call into the binding)
+        - returns a list of the remaining ports
+          (they may now be unbound, or bound differently)
+
+        Ports intended to be bound will have .bind() called later
+        in the resync, which will correcly populate VPPForwarder
+        structures and fix bindings whose type has changed; ports
+        that are no longer needed will be unbound.
+
+        Returns a set of bound ports
+        """
+
+        bound_ports = set()
+
+        ports = []
+        # One uplink per network
+        uplink_ports_configured = []
+        # One physnet can serve multiple uplinks
+        physnet_ports_configured = {}
+        for f in self.vppf.get_interfaces():
+
+            # Find uplink ports on OpenStack networks
+            uplink_data = decode_uplink_tag(f['tag'])
+            if uplink_data is not None:
+                net_type, seg_id = uplink_data
+                uplink_ports_configured.append([net_type, seg_id, f['sw_if_index'],
+                   f['sw_if_index'] if f['sup_sw_if_idx'] is None else f['sup_sw_if_idx']])
+
+            # Find physical network ports
+            physnet_name = decode_physnet_if_tag(f['tag'])
+            if if_name is not None:
+                physnet_ports_configured['physnet_name'] = f['sw_if_index']
+
+            # Find downlink ports
+            port_id = decode_port_tag[f['tag']]
+            if port_id is not None:
+                ports[port_id] = f['sw_if_index']
+
+        def clean_up_physnet_link(physnet_name, if_index):
+            # We need to clean up this physnet, its
+            # subinterfaces and their bridge domains.
+            uplinks = [x in uplink_ports_configured if x[3] == if_index]
+            for net_type, seg_id, uplink_if_idx, _ in uplinks:
+                self.delete_network_bridge_on_host(net_type, uplink_if_idx, uplink_if_idx)
+                # This will remove ports from bridges, which means
+                # that they may be rebound back into networks later
+                # or may be deleted if no longer used.
+
+            # In case the physnet was used as a flat network:
+            self.delete_network_bridge_on_host('flat', if_index, if_index)
+
+            # Untag the original physnet interface,
+            #  which is no longer used as a physnet
+            self.vpp.set_interface_tag(if_index, None)
+
+            # Remove the uplink references
+            uplink_ports_configured = [x in uplink_ports_configured if x[3] != if_index]
+
+        # Identify physical networks where the interface has changed
+        # and remove all VPP structures that refer to the old interface
+        for name, if_name in self.physnets.items():
+            if_index = self.vpp.self.vpp.get_ifidx_by_name(if_name)
+            if if_index != physnet_ports_configured[name]:
+                # Previously created but no longer correct:
+                # the configuration has changed and this
+                # physnet now points to another uplink.
+                clean_up_physnet_link(if_index)
+
+        # Identify physical networks where the configuration has been
+        # removed
+        physnet_if_idxes = [self.vpp.self.vpp.get_ifidx_by_name(if_name)
+                            for if_name in self.physnets.values()]
+        for net_type, seg_id, sw_if_index, sup_sw_if_idx in physnet_ports_configured:
+            if sup_sw_if_idx not in physnet_if_idxes:
+            self.delete_network_bridge_on_host(net_type, sw_if_index, sw_if_index)
+
+        # physnet_ports_configured is now dead, as is uplink_ports_configured
+
+        # The remaining networks (with uplinks and bridge domains) are functional,
+        # and idempotent binding will do nothing to interfaces in the right bridges.
+        # and move those in the wrong bridges.  Dead bridges have been deleted and
+        # binding will find a new home for the interfaces that still exist.
+
+        # At present, there's no such thing as a 'bad' port, since it's either
+        # created and tagged (in which case we found it) or not created.  It may
+        # be outside a bridge at this point, but that's fine.  Report all ports
+        # so that the resync and resync_end will deal with them.
+        return ports
+
     def apply_spoof_macip(self, iface_idx, security_data):
         """Apply non-secgroup security to a port
 
@@ -2382,6 +2490,19 @@ class EtcdListener(object):
                 self.etcd_client.write(LEADIN + '/state/%s/alive' %
                                        self.data.host,
                                        1, ttl=3 * self.heartbeat)
+
+            def init_resync_start(self):
+                """Identify known ports in VPP
+
+                We are beginning a resync because the agent has
+                restarted.  We should be fixing VPP with the least
+                disruption possible so that traffic being passed by VPP
+                on currently configured ports is not disrupted.  As such,
+                this goes to find correctly configured ports (which -
+                if still required - will be left alone) and removes
+                structures that have been partially or incorrectly set up.
+                """
+                self.expected_keys = self.data.vpp_restart_prepare()
 
             def removed(self, port):
                 # Removing key == desire to unbind
