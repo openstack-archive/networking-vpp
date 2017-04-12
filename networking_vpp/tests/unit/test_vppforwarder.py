@@ -142,8 +142,23 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.networks = {(physnet, 'flat', None): {'bridge_domain_id': 1,
                                                        'if_physnet': 'physint',
                                                        'network_type': 'flat'}}
+        self.vpp.vpp.get_bridge_domains.return_value = {1: []}
+
         self.vpp.delete_network_on_host(physnet, 'flat')
+
         self.vpp.vpp.delete_bridge_domain.assert_called_once_with(1)
+
+    def test_delete_network_on_host_nobridge(self):
+        physnet = 'test'
+        self.vpp.networks = {(physnet, 'flat', None): {'bridge_domain_id': 1,
+                                                       'if_physnet': 'physint',
+                                                       'network_type': 'flat'}}
+        self.vpp.vpp.get_bridge_domains.return_value = {}
+
+        self.vpp.delete_network_on_host(physnet, 'flat')
+
+        assert not self.vpp.vpp.delete_bridge_domain.called, \
+            'delete_bridge_domain should not have been called'
 
     @mock.patch('networking_vpp.agent.server.ip_lib')
     def test_bridge_exists_and_ensure_up(self, m_ip_lib):
@@ -154,19 +169,19 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder._bridge_exists_and_ensure_up'
         )
-    def test_ensure_bridge_found(self, m_br_ex, m_br_lib):
+    def test_ensure_kernel_bridge_found(self, m_br_ex, m_br_lib):
         m_br_ex.return_value = True
-        self.vpp.ensure_bridge('test_ensure_br_f')
+        self.vpp.ensure_kernel_bridge('test_ensure_br_f')
         assert m_br_lib.BridgeDevice.called_once_with('test_ensure_br_f')
 
     @mock.patch('networking_vpp.agent.server.bridge_lib')
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder._bridge_exists_and_ensure_up'
         )
-    def test_ensure_bridge(self, m_br_ex, m_br_lib):
+    def test_ensure_kernel_bridge(self, m_br_ex, m_br_lib):
         m_br_ex.return_value = False
         m_br_lib.BridgeDevice.setfd.return_value = False
-        self.vpp.ensure_bridge('test_ensure_br')
+        self.vpp.ensure_kernel_bridge('test_ensure_br')
         assert m_br_lib.BridgeDevice.addbr.called_once_with('test_ensure_br')
 
     @mock.patch('networking_vpp.agent.server.bridge_lib')
@@ -205,7 +220,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                         expected_tag)
         assert (retval == self.vpp.interfaces[uuid])
 
-    @mock.patch('networking_vpp.agent.server.VPPForwarder.ensure_bridge')
+    @mock.patch('networking_vpp.agent.server.'
+                'VPPForwarder.ensure_kernel_bridge')
     def test_ensure_interface_on_host_plugtap(self, m_en_br):
         if_type = 'plugtap'
         uuid = 'fakeuuid'
@@ -215,7 +231,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.create_tap.assert_called_once_with('vppfakeuuid',
                                                         mac,
                                                         expected_tag)
-        self.vpp.ensure_bridge.assert_called_once_with('br-fakeuuid')
+        self.vpp.ensure_kernel_bridge.assert_called_once_with('br-fakeuuid')
         assert (retval == self.vpp.interfaces[uuid])
 
     def test_ensure_interface_on_host_vhostuser(self):
@@ -788,7 +804,12 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.networks[('uplink', 'vxlan', 5000)] = mock_net_data
         self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
         self.vpp.gpe_map['remote_map'] = {}
+        # Nominates an empty bridge that must be deleted
+        # We no longer delete bridges that don't exist
+        self.vpp.vpp.get_bridge_domains.return_value = {70000: []}
+
         self.vpp.unbind_interface_on_host(port_uuid)
+
         self.vpp.vpp.del_lisp_local_mac.assert_called_once_with(
             mock_props['mac'],
             mock_net_data['segmentation_id'],
