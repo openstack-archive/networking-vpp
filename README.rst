@@ -25,7 +25,8 @@ anyone that wants to join the project can make sense of it.
 Your questions answered
 -----------------------
 
-### How do I use it?
+How do I use it?
+~~~~~~~~~~~~~~~~
 
 There's a devstack plugin. You can add this plugin to your local.conf
 and see it working. The devstack plugin now takes care of
@@ -53,11 +54,13 @@ We've made some effort to make this backward-compatible so that it will
 work with older stable branches as well as the current master branch of
 Neutron. You should find this will work with Newton, Mitaka and Liberty.
 
-### How do I do devstack, then?
+How do I do devstack, then?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Before you start, add the following to your kernel options and reboot.
 
-> iommu=pt intel\_iommu=on
+::
+    iommu=pt intel\_iommu=on
 
 You will need to set some configuration items in your local.conf to get
 the system running.
@@ -76,52 +79,52 @@ do one of two things:
 
 I recommend the following bits of configuration and use them when I'm
 testing. Make a 'local.conf' in your devstack directory that looks
-something like this:
+something like this::
 
-> [[local|localrc]]
-> \# We are going to use memory in the system for 2M hugepages.  Pick
-> \# a number you can afford to lose.  Here we're taking 2500 pages
-> \# (about 5GB of memory) which works well in my 8GB test VM.
-> NR\_HUGEPAGES=2500
->
-> disable\_service q-agt \# we're not using OVS or LB
-> enable\_plugin networking-vpp https://github.com/openstack/networking-vpp
-> Q\_PLUGIN=ml2
-> Q\_USE\_SECGROUP=True
-> Q\_ML2\_PLUGIN\_MECHANISM\_DRIVERS=vpp
-> Q\_ML2\_PLUGIN\_TYPE\_DRIVERS=vlan,flat
-> Q\_ML2\_TENANT\_NETWORK\_TYPE=vlan
-> ML2\_VLAN\_RANGES=physnet:100:200
-> MECH\_VPP\_PHYSNETLIST=physnet:tap-0:1000:2000
->
-> [[post-config|\$NOVA\_CONF]]
-> [DEFAULT]
-> \# VPP uses some memory internally.  reserved\_huge\_pages
-> \# tells Nova that we cannot allocate the last 512 pages
-> \# (1GB) of memory to VMs, because in practice it will be
-> \# used already and those VMs won't start.  If you tweak
-> \# the VPP options you can reduce this number, and 1GB is
-> \# probably too much for a test VM, but it's the default
-> \# for a 2 core machine.
-> reserved_huge_pages=node:0,size:2048,count:64
+    [[local|localrc]]
+    # We are going to use memory in the system for 2M hugepages.  Pick
+    # a number you can afford to lose.  Here we're taking 2500 pages
+    # (about 5GB of memory) which works well in my 8GB test VM.
+    NR\_HUGEPAGES=2500
 
-and a 'startup.conf' file like this:
+    disable\_service q-agt \# we're not using OVS or LB
+    enable\_plugin networking-vpp https://github.com/openstack/networking-vpp
+    Q\_PLUGIN=ml2
+    Q\_USE\_SECGROUP=True
+    Q\_ML2\_PLUGIN\_MECHANISM\_DRIVERS=vpp
+    Q\_ML2\_PLUGIN\_TYPE\_DRIVERS=vlan,flat
+    Q\_ML2\_TENANT\_NETWORK\_TYPE=vlan
+    ML2\_VLAN\_RANGES=physnet:100:200
+    MECH\_VPP\_PHYSNETLIST=physnet:tap-0:1000:2000
 
-> unix {
->   nodaemon
->   log /tmp/vpp.log
->   full-coredump
->   startup-config /etc/vpp-startup.conf
-> }
-> 
-> api-trace {
->   on
-> }
-> 
-> dpdk {
->         socket-mem 128
-> }
-> 
+    [[post-config|\$NOVA\_CONF]]
+    [DEFAULT]
+    # VPP uses some memory internally.  reserved\_huge\_pages
+    # tells Nova that we cannot allocate the last 512 pages
+    # (1GB) of memory to VMs, because in practice it will be
+    # used already and those VMs won't start.  If you tweak
+    # the VPP options you can reduce this number, and 1GB is
+    # probably too much for a test VM, but it's the default
+    # for a 2 core machine.
+    reserved_huge_pages=node:0,size:2048,count:64
+
+and a 'startup.conf' file like this::
+
+    unix {
+      nodaemon
+      log /tmp/vpp.log
+      full-coredump
+      startup-config /etc/vpp-startup.conf
+    }
+
+    api-trace {
+      on
+    }
+
+    dpdk {
+            socket-mem 128
+    }
+
 
 There are a few settings up there you might want to tweak.
 
@@ -154,9 +157,9 @@ you will end up with scheduling problems.
 
 Secondly, you need to sort out an 'uplink' port.  This is the port on
 your VM that is used to connect the OpenStack VMs to the world.  The
-above startup.conf has the line:
+above startup.conf has the line::
 
-> MECH\_VPP\_PHYSNETLIST=physnet:tap-0:1000:2000
+    MECH\_VPP\_PHYSNETLIST=physnet:tap-0:1000:2000
 
 That *tap-0* is the name of a VPP interface, and you can change it to
 suit your setup.
@@ -179,16 +182,17 @@ the tenant networks from outside of VPP (though you can still use the
 'ip netns exec' trick through router namespaces). You can run two VMs
 and talk between them by logging in on the console, for instance.
 
-If you need a 'loop0' interface, you have to make VPP create it at startup.  Add the following line to your startup.conf file:
+If you need a 'loop0' interface, you have to make VPP create it at startup.
+Add the following line to your startup.conf file::
 
-> unix {
-> ...
->     startup-config /etc/vpp-commands.txt
-> }
+    unix {
+    ...
+        startup-config /etc/vpp-commands.txt
+    }
 
-And create that /etc/vpp-commands.txt containing the line
+And create that /etc/vpp-commands.txt containing the line::
 
-> create loopback interface
+    create loopback interface
 
 A third option is half way between the other two.  You can use *tap-0*
 in your configuration, and make a Linux kernel TAP device to connect
@@ -199,9 +203,10 @@ VLAN subinterfaces you care to create.  You can even set up masquerade
 rules so that your VMs can talk to the world though your machine's
 kernel NIC.
 
-To use a TAP device, set up the vpp-commands.txt file as above but put in the line
+To use a TAP device, set up the vpp-commands.txt file as above but put in the
+line::
 
-> tap connect uplink
+    tap connect uplink
 
 When VPP runs, it will create a new TAP interface 'uplink', which you
 can being up, address, bridge, etc. as you see fit.  That device is
@@ -209,20 +214,23 @@ bridged to the VLANs that the VMs are attached to.
 
 After all this, run ./stack.sh to make devstack run.
 
-### But VPP won't start!
+But VPP won't start!
+~~~~~~~~~~~~~~~~~~~~
 
-You may need to add the kernel command line option 
+You may need to add the kernel command line option::
 
-> iommu=pt
+    iommu=pt
 
 to your kernel before VPP starts.  It depends on the Linux deployment
 you're using.  Refer to the VPP documentation if you need more help.
 
-### What overlays does it support?
+What overlays does it support?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Today, it supports VLANs and flat networks.
 
-### How does it work?
+How does it work?
+~~~~~~~~~~~~~~~~~
 
 networking-vpp provides the glue from the Neutron server process to a
 set of agents that control, and the agents that turn Neutron's needs
@@ -247,7 +255,8 @@ anything of related interest, like security groups. If any of these
 things changes, the agent implements the desired state in VPP. If the
 agent restarts, it reads the whole state and loads it into VPP.
 
-### Can you walk me through port binding?
+Can you walk me through port binding?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This mechanism driver doesn't do anything at all until Neutron needs to
 drop traffic on a compute host, so the only thing it's really interested
@@ -290,7 +299,8 @@ Additionally, there are some helper calls to determine if this mechanism
 driver, in conjunction with the other ones on the system, needs to do
 anything. In some cases it may not be responsible for the port at all.
 
-### How does it talk to VPP?
+How does it talk to VPP?
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 This uses the Python API module that comes with VPP (vpp\_papi). VPP has
 an admin channel, implemented in shared memory, to exchange control
@@ -299,13 +309,15 @@ thin layer between that shared memory system and a set of Python APIs.
 We add our own internal layer of Python to turn vpp's low level
 communcations into something a little easier to work with.
 
-### What does it support?
+What does it support?
+~~~~~~~~~~~~~~~~~~~~~
 
 For now, assume it moves packets to where they need to go. unless
 they're firewalled, in which case it doesn't. It also integrates
 properly with stock ML2 L3, DHCP and Metadata functionality.
 
-### What have you just done?
+What have you just done?
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 The most interesting improvement since last time is security - this is
 new with the ACL functionality added for VPP 17.01. This includes
@@ -313,7 +325,8 @@ security groups, the anti-spoof filters (including the holes for things
 like DHCP), the allowed address pair extension and the port security
 flag.
 
-### Any known issues?
+Any known issues?
+~~~~~~~~~~~~~~~~~
 
 In general, check the bugs at
 <https://bugs.launchpad.net/networking-vpp> - but worth noting:
@@ -329,7 +342,8 @@ In general, check the bugs at
    traffic as it happens. At the moment, you'll most commonly see this
    on software upgrades. See below for what we're doing about this.
 
-### What are you doing next?
+What are you doing next?
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 We also keep our job list in <https://bugs.launchpad.net/networking-vpp>
 anything starting 'RFE' is a 'request for enhancement'.
@@ -362,7 +376,8 @@ network driver, like sorting out MTU configuration.
 At the moment, the agent runs as root. We want to lower its privilege to
 improve security.
 
-### What can I do to help?
+What can I do to help?
+~~~~~~~~~~~~~~~~~~~~~~
 
 At the least, just use it! The more you try things out, the more we find
 out what we've done wrong and the better we can make it.
@@ -378,7 +393,8 @@ start, and there are TODO comments in the code, along with a handful of,
 er, 'deliberate' mistakes we put into the code to keep you interested
 (*ahem*).
 
-### Why didn't you use the ML2 agent framework for this driver?
+Why didn't you use the ML2 agent framework for this driver?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Neutron's agent framework is based on communicating via RabbitMQ. This
 can lead to issues of scale when there are more than a few compute hosts
@@ -392,9 +408,9 @@ listeners. etcd stores the data of how the network should be and the
 agents try to achieve that (and also report their status back via etcd).
 One nice feature of this is that anyone can check how well the system is
 working - both sorts of update can be watched in real time with the
-command
+command::
 
-> etcdctl watch --recursive --forever /
+    etcdctl watch --recursive --forever /
 
 The driver and agents should deal with disconnections across the board,
 and the agents know that they must resync themselves with the desired
