@@ -14,7 +14,7 @@
 #    under the License.
 
 # Note that it does *NOT* at this point have a persistent database, so
-# restarting this process will make Gluon forget about every port it's
+# restarting this process will make net-vpp forget about every port it's
 # learned, which will not do your system much good (the data is in the
 # global 'backends' and 'ports' objects).  This is for simplicity of
 # demonstration; we have a second codebase already defined that is
