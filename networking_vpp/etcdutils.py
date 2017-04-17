@@ -266,7 +266,7 @@ class EtcdWatcher(object):
         to clean up its state based on what was originally discovered
         and what we now know etcd wants.
 
-        short_keys - an iterator for the keys
+        short_keys - an iterator for all the keys found in etcd
         """
         pass
 
