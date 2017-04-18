@@ -96,7 +96,7 @@ something like this::
     Q_ML2_PLUGIN_TYPE_DRIVERS=vlan,flat
     Q_ML2_TENANT_NETWORK_TYPE=vlan
     ML2_VLAN_RANGES=physnet:100:200
-    MECH_VPP_PHYSNETLIST=physnet:tap-0:1000:2000
+    MECH_VPP_PHYSNETLIST=physnet:tap-0
 
     [[post-config|$NOVA_CONF]]
     [DEFAULT]
@@ -158,9 +158,9 @@ you will end up with scheduling problems.
 
 Secondly, you need to sort out an 'uplink' port.  This is the port on
 your VM that is used to connect the OpenStack VMs to the world.  The
-above ``startup.conf`` has the line::
+above ``local.conf`` has the line::
 
-    MECH_VPP_PHYSNETLIST=physnet:tap-0:1000:2000
+    MECH_VPP_PHYSNETLIST=physnet:tap-0
 
 That *tap-0* is the name of a VPP interface, and you can change it to
 suit your setup.
@@ -170,7 +170,7 @@ kernel and use it as the uplink.  If you have a DPDK compatible 1Gbit
 card, the interface is typically *GigabitEthernet2/2/0* - but this
 does depend a bit on your hardware setup, so you may need to run
 devstack, then run the command 'sudo vppctl show int' - which will
-list the interfaces that VPP found - fix the ``startup.conf`` file and try
+list the interfaces that VPP found - fix the ``local.conf`` file and try
 again.  (If your situation is especially unusual, you will need to go
 look at VPP's documentation at <http://wiki.fd.io/> to work out how
 VPP chooses its interfaces and things about how its passthrough
@@ -218,12 +218,21 @@ After all this, run ``./stack.sh`` to make devstack run.
 But VPP won't start!
 ~~~~~~~~~~~~~~~~~~~~
 
+To check whether VPP has started run ``ps -ef`` and look for::
+
+    /usr/bin/vpp -c /etc/vpp/startup.conf
+
 You may need to add the kernel command line option::
 
     iommu=pt
 
 to your kernel before VPP starts.  It depends on the Linux deployment
 you're using.  Refer to the VPP documentation if you need more help.
+
+If running on VirtualBox you will need to use an experimental option
+to allow SSE4.2 passthrough from the host CPU to the VM. Refer to
+the `VirtualBox Manual <https://www.virtualbox.org/manual/ch09.html#sse412passthrough>`_
+ for details.
 
 What overlays does it support?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
