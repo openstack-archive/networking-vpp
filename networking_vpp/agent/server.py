@@ -2310,10 +2310,24 @@ class EtcdListener(object):
 
             def removed(self, port):
                 # Removing key == desire to unbind
-                # Get seg_id and mac to delete any gpe mappings
-                seg_id = self.data.vppf.interfaces[port]['net_data'][
-                    'segmentation_id']
-                mac = self.data.vppf.interfaces[port]['mac']
+
+                try:
+                    port = self.data.vppf.interfaces[port]
+                    port_net = port['net_data']
+                    is_vxlan = port_net['network_type'] == 'vxlan'
+
+                    if is_vxlan:
+                        # Get seg_id and mac to delete any gpe mappings
+                        seg_id = port_net['segmentation_id']
+                        mac = port['mac']
+                except KeyError:
+                    # On initial resync, this information may not
+                    # be available; also, the network may not
+                    # be vxlan
+                    if is_vxlan:
+                        LOG.warn('Unable to delete GPE mappings for port')
+                    is_vxlan = False
+
                 self.data.unbind(port)
 
                 # Unlike bindings, unbindings are immediate.
@@ -2322,9 +2336,10 @@ class EtcdListener(object):
                     self.etcd_client.delete(
                         self.data.state_key_space + '/%s'
                         % port)
-                    self.etcd_client.delete(
-                        self.data.gpe_key_space + '/%s/%s/%s'
-                        % (seg_id, self.data.host, mac))
+                    if is_vxlan:
+                        self.etcd_client.delete(
+                            self.data.gpe_key_space + '/%s/%s/%s'
+                            % (seg_id, self.data.host, mac))
                 except etcd.EtcdKeyNotFound:
                     # Gone is fine; if we didn't delete it
                     # it's no problem
