@@ -118,12 +118,27 @@ def VPP_TAG(tag):
 # tap and vhost interfaces: port:<uuid>
 # Uplink Connectivity: uplink:<net_type>.<seg_id>
 
+
+# MAX_PHYSNET_LENGTH + the tag format must be <= the 64 bytes of a VPP tag
+MAX_PHYSNET_LENGTH = 32
+TAG_PHYSNET_IF_PREFIX = VPP_TAG('physnet:')
 TAG_UPLINK_PREFIX = VPP_TAG('uplink:')
 TAG_L2IFACE_PREFIX = VPP_TAG('port:')
 
 
 def get_vhostuser_name(uuid):
     return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
+
+
+def physnet_if_tag(physnet_name):
+    return TAG_PHYSNET_IF_PREFIX + physnet_name
+
+
+def decode_physnet_if_tag(tag):
+    if tag is None:
+        return None
+    m = re.match('^' + TAG_PHYSNET_IF_PREFIX + '([^.]+)$', tag)
+    return None if m is None else m.group(1)
 
 
 def uplink_tag(net_type, seg_id):
@@ -331,6 +346,7 @@ class VPPForwarder(object):
     ########################################
 
     def get_if_for_physnet(self, physnet):
+        """"Find (and mark used) the interface for a physnet"""
         ifname = self.physnets.get(physnet, None)
         if ifname is None:
             LOG.error('Physnet %s requested but not in config',
@@ -341,6 +357,7 @@ class VPPForwarder(object):
             LOG.error('Physnet %s interface %s does not '
                       'exist in VPP', physnet, ifname)
             return None, None
+        self.vpp.set_interface_tag(ifidx, physnet_if_tag(physnet))
         return ifname, ifidx
 
     def ensure_network_on_host(self, physnet, net_type, seg_id):
@@ -401,8 +418,11 @@ class VPPForwarder(object):
             raise Exception('network type %s not supported', net_type)
 
         # Mark this interface so that we can spot it on resync
-        self.vpp.set_interface_tag(if_upstream,
-                                   uplink_tag(net_type, seg_id))
+        if net_type != 'flat':
+            # We tag if we're a subinterface, but the physnet interface
+            # takes precedence otherwise
+            self.vpp.set_interface_tag(if_upstream,
+                                       uplink_tag(net_type, seg_id))
 
         # Our bridge IDs have one upstream interface in so we simply use
         # that ID as their domain ID
@@ -2216,7 +2236,6 @@ def main():
         if f:
             try:
                 (k, v) = f.split(':')
-                physnets[k] = v
             except Exception:
                 LOG.error("Could not parse physnet to interface mapping "
                           "check the format in the config file: "
@@ -2224,6 +2243,11 @@ def main():
                           "physnet2:<interface>"
                           )
                 sys.exit(1)
+            if len(v) > MAX_PHYSNET_LENGTH:
+                LOG.error("Physnet '%s' is longer than %d characters.",
+                          v, MAX_PHYSNET_LENGTH)
+                sys.exit(1)
+            physnets[k] = v
 
     # Convert to the minutes unit that VPP uses:
     # (we round *up*)

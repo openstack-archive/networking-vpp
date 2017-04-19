@@ -114,8 +114,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.ensure_network_on_host('test_net', 'flat', '1')
         self.vpp.vpp.ifup.assert_called_once_with(720)
+        # Flat networks should tag with just the physnet mark
         self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            720, 'net-vpp.uplink:flat.1')
+            720, 'net-vpp.physnet:test_net')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -125,8 +126,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.ensure_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
-        self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            740, 'net-vpp.uplink:vlan.1')
+        # This will tag the physnet interface and the network uplink.
+        assert(sorted(self.vpp.vpp.set_interface_tag.mock_calls) ==
+               sorted([mock.call(740, 'net-vpp.uplink:vlan.1'),
+                       mock.call(720, 'net-vpp.physnet:test_net')]))
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
