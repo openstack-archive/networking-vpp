@@ -26,18 +26,17 @@ conn = connection.from_config()
 etcd_client = etcd.Client(port=2379)
 
 
-def printobj(obj):
-    print('Class: %s' % type(obj).__name__)
-    pprint.pprint(obj.__dict__)
-    print()
-
 port_paths = set()
 
 for port in conn.network.ports():
     id = port.id
 
     binding_host = port.binding_host_id
-    if binding_host is not None:
+    if binding_host is not None and binding_host != '':
+
+        if port.binding_vif_type == 'binding_failed':
+            print('WARN: binding failed on %s' % id)
+            continue
 
         port_path_in_etcd = '/networking-vpp/nodes/%s/ports/%s' \
                             % (binding_host, id)
@@ -54,8 +53,15 @@ for port in conn.network.ports():
                 "mac_address": port.mac_address,
                 "network_type": network.provider_network_type,
                 "physnet": network.provider_physical_network,
-                "binding_type": port.binding_vif_type
+                "binding_type": port.binding_vif_type,
+                "allowed_address_pairs": port.allowed_address_pairs,
+                "fixed_ips": port.fixed_ips,
+                "port_security_enabled": port.is_port_security_enabled,
+                "security_groups": port.security_group_ids,
             }
+            if port.ip_address is not None:
+                expected_data["ip_address"] = port.ip_address,
+
             etcd_value = json.loads(port_in_etcd.value)
             problems = []
             for f in sorted(expected_data.keys()):
@@ -72,14 +78,13 @@ for port in conn.network.ports():
             for f in sorted(etcd_value.keys()):
                 problems.append('Key %s in etcd with value %s; unexpected' %
                                 (f, str(etcd_value[f])))
-                printobj(port)
 
             if problems:
                 print('FAIL on port %s content:' % id, '; '.join(problems))
             else:
                 print('OK: port %s as expected' % id)
         except etcd.EtcdKeyNotFound:
-            print('WARN: port path "%s" corresponding to a bound port is ' +
+            print('WARN: port path "%s" corresponding to a bound port is '
                   'not in etcd' % port_path_in_etcd)
     else:
         print('OK: skipping unbound port %s' % id)
