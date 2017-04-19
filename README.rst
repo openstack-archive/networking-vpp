@@ -309,6 +309,28 @@ Additionally, there are some helper calls to determine if this mechanism
 driver, in conjunction with the other ones on the system, needs to do
 anything. In some cases it may not be responsible for the port at all.
 
+How do I enable the vpp-router plugin?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+NOTE: As of release 17.04 The native L3 service plugin (``vpp-router``) is
+      experimental. Use it for *evaluation and development purposes only*.
+
+To enable the vpp-router plugin add the following in neutron.conf::
+
+    service_plugins = vpp-router
+
+And make sure the *Openstack L3 agent is not running*. You will need to nominate
+a host to act as the Layer 3 gateway host in ml2_conf.ini::
+
+    [ml2_vpp]
+    l3_host = <my_l3_gateway_host.domain>
+
+The L3 host will need L2 adjacency and connectivity to the compute hosts to
+terminate tenant VLANs and route traffic properly.
+
+*The vpp-agent acts as a common L2 and L3 agent so it needs to be started on
+the L3 host as well*.
+
 How does it talk to VPP?
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -368,10 +390,10 @@ whose ports are correctly configured. This is work soon to come; you'll
 find the patch in the patch queue and you're welcome to pitch in and
 help.
 
-We will be implementing L3 in VPP. In this case, using the same etcd
-and agent and an additiional Neutron L3 driver, you'll be able to use
-VPP to create Neutron routers complete with NAT and floating
-IPs. There's already an early version in the patch queue.
+We will be hardening the native L3 router implementation (vpp-router) in
+future releases. This will include fixes to the etcd communication routines,
+support for resync and high availablilty. Support for L3 extensions like
+extraroute etc. will also be added to the service plugin.
 
 We will be implementing an overlay using LISP GPE, which has better
 horizontal scale than VLAN based overlays.
