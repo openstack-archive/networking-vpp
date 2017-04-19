@@ -378,8 +378,10 @@ class VPPForwarder(object):
         """
 
         if (physnet, net_type, seg_id) not in self.networks:
-            self.networks[(physnet, net_type, seg_id)] = \
-                self.ensure_network_in_vpp(physnet, net_type, seg_id)
+            net = self.ensure_network_in_vpp(physnet, net_type, seg_id)
+            if net:
+                self.networks[(physnet, net_type, seg_id)] = net
+
         return self.networks.get((physnet, net_type, seg_id), None)
 
     def ensure_network_in_vpp(self, physnet, net_type, seg_id):
@@ -462,27 +464,52 @@ class VPPForwarder(object):
         return rv
 
     def delete_network_on_host(self, physnet, net_type, seg_id=None):
-        net = self.networks.get((physnet, net_type, seg_id), None)
+        net = self.networks.get((physnet, net_type, seg_id,), None)
         if net is not None:
+            bridge_domain_id = net['bridge_domain_id']
+            uplink_if_idx = net.get('if_uplink_idx', None)
 
-            self.vpp.delete_bridge_domain(net['bridge_domain_id'])
-            if net['network_type'] == 'vlan':
-                ifidx = net['if_uplink_idx']
-                self.vpp.delete_vlan_subif(ifidx)
-            elif net['network_type'] == 'vxlan':
+            if net['network_type'] == 'vxlan':
+                # TODO(ijw): this needs reconsidering for resync
+                # network cleanup cases - it won't be called if it
+                # lives here - but for now, these rely on local
+                # caches of GPE data we programmed.
+
                 LOG.debug("Deleting vni %s from GPE map", seg_id)
                 self.gpe_map[gpe_lset_name]['vnis'].remove(seg_id)
                 # Delete all remote mappings corresponding to this VNI
                 self.clear_remote_gpe_mappings(seg_id)
                 # Delete VNI to bridge domain mapping
                 self.delete_gpe_vni_to_bridge_mapping(seg_id,
-                                                      net['bridge_domain_id']
+                                                      bridge_domain_id
                                                       )
                 LOG.debug('Current gpe mapping %s', self.gpe_map)
 
-            self.networks.pop((physnet, net_type, seg_id))
+            self.delete_network_bridge_on_host(net_type, bridge_domain_id,
+                                               uplink_if_idx)
+
+            # We may not know of this network (if we're dealing with
+            # resync on restart, for instance); delete a record
+            # if one exists.
+            self.networks.pop((physnet, net_type, seg_id,))
         else:
             LOG.warning("Delete Network: network is unknown to agent")
+
+    def delete_network_bridge_on_host(self, net_type, bridge_domain_id,
+                                      uplink_if_idx):
+        """Delete a bridge corresponding to a network from VPP
+
+        Usable on restart - uses nothing but the data in VPP.
+        """
+        # If there are ports still in this network, disable them
+        # They may be deleted later (if at startup) or they may
+        # be rebound to another bridge domain
+        if_idxes = self.vpp.get_interfaces_in_bridge_domain(bridge_domain_id)
+        self.vpp.ifdown(if_idxes)
+        self.vpp.remove_from_bridge_domain(if_idxes)
+        self.vpp.delete_bridge_domain(bridge_domain_id)
+        if net_type == 'vlan':
+            self.vpp.delete_vlan_subif(uplink_if_idx)
 
     ########################################
     # stolen from LB driver
@@ -672,9 +699,15 @@ class VPPForwarder(object):
         return self.interfaces[uuid]
 
     def ensure_interface_in_vpp_bridge(self, net_br_idx, iface_idx):
+        """Idempotently ensure that a bridge contains an interface
+
+        The interface must exist, but we ensure the bridge exists and
+        that the interface is in it
+        """
         self.ensure_bridge_domain_in_vpp(net_br_idx)
+
         # Adding an interface to a bridge does nothing if it's
-        # already in there
+        # already in there, and moves it if it's in another
         self.vpp.add_to_bridge(net_br_idx, iface_idx)
 
     def ensure_bridge_domain_in_vpp(self, bridge_idx):
