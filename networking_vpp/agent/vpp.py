@@ -478,6 +478,13 @@ class VPPInterface(object):
                       n_input=0,
                       acls=[])
 
+    def get_interface_acls(self, sw_if_index):
+        t = self.call_vpp('acl_interface_list_dump',
+                          sw_if_index=sw_if_index)
+        # We're dumping one interface
+        t = t[0]
+        return t.acls[:t.n_input], t.acls[t.n_input:]
+
     def set_macip_acl_on_interface(self, sw_if_index, acl_index):
         self.call_vpp('macip_acl_interface_add_del',
                       is_add=1,
