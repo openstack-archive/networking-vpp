@@ -115,6 +115,10 @@ def VPP_TAG(tag):
 # tap and vhost interfaces: port:<uuid>
 # Uplink Connectivity: uplink:<net_type>.<seg_id>
 
+
+# MAX_PHYSNET_LENGTH + the tag format must be <= the 64 bytes of a VPP tag
+MAX_PHYSNET_LENGTH = 32
+TAG_PHYSNET_IF_PREFIX = VPP_TAG('physnet:')
 TAG_UPLINK_PREFIX = VPP_TAG('uplink:')
 TAG_L2IFACE_PREFIX = VPP_TAG('port:')
 
@@ -123,8 +127,19 @@ def get_vhostuser_name(uuid):
     return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
 
 
-def uplink_tag(net_type, seg_id):
-    return TAG_UPLINK_PREFIX + '%s.%s' % (net_type, seg_id)
+def physnet_if_tag(physnet_name):
+    return TAG_PHYSNET_IF_PREFIX + physnet_name
+
+
+def decode_physnet_if_tag(tag):
+    if tag is None:
+        return None
+    m = re.match('^' + TAG_PHYSNET_IF_PREFIX + '([^.]+)$', tag)
+    return None if m is None else m.group(1)
+
+
+def uplink_tag(physnet, net_type, seg_id):
+    return TAG_UPLINK_PREFIX + '%s.%s.%s' % (physnet, net_type, seg_id)
 
 
 def decode_uplink_tag(tag):
@@ -134,8 +149,8 @@ def decode_uplink_tag(tag):
     """
     if tag is None:
         return None  # not tagged
-    m = re.match('^' + TAG_UPLINK_PREFIX + '([^.]+)\.([^.]+)$', tag)
-    return None if m is None else (m.group(1), m.group(2))
+    m = re.match('^' + TAG_UPLINK_PREFIX + '([^.]+)\.([^.]+)\.([^.]+)$', tag)
+    return None if m is None else (m.group(1), m.group(2), m.group(3))
 
 
 def port_tag(port_uuid):
@@ -341,6 +356,7 @@ class VPPForwarder(object):
     ########################################
 
     def get_if_for_physnet(self, physnet):
+        """"Find (and mark used) the interface for a physnet"""
         ifname = self.physnets.get(physnet, None)
         if ifname is None:
             LOG.error('Physnet %s requested but not in config',
@@ -351,6 +367,7 @@ class VPPForwarder(object):
             LOG.error('Physnet %s interface %s does not '
                       'exist in VPP', physnet, ifname)
             return None, None
+        self.vpp.set_interface_tag(ifidx, physnet_if_tag(physnet))
         return ifname, ifidx
 
     def ensure_network_on_host(self, physnet, net_type, seg_id):
@@ -385,58 +402,64 @@ class VPPForwarder(object):
         # to two bridges that will likely not do as required
 
         if net_type == 'flat':
-            if_upstream = ifidx
+            if_uplink = ifidx
 
-            LOG.debug('Adding upstream interface-idx:%s-%s to bridge '
-                      'for flat networking', intf, if_upstream)
-            self.ensure_interface_in_vpp_bridge(if_upstream, if_upstream)
-            bridge_idx = if_upstream
+            LOG.debug('Adding uplink interface-idx:%s-%s to bridge '
+                      'for flat networking', intf, if_uplink)
+            bridge_idx = if_uplink
+            self.ensure_interface_in_vpp_bridge(bridge_idx, if_uplink)
+
+            # This interface has a physnet tag already.  Don't overwrite.
 
         elif net_type == 'vlan':
-            LOG.debug('Adding upstream interface %s vlan %s '
+            LOG.debug('Adding uplink interface %s vlan %s '
                       'to bridge for vlan networking', intf, seg_id)
             # Besides the vlan sub-interface we need to also bring
             # up the primary uplink interface for Vlan networking
             self.vpp.ifup(ifidx)
-            if_upstream = self.vpp.get_vlan_subif(intf, seg_id)
-            if if_upstream is None:
-                if_upstream = self.vpp.create_vlan_subif(ifidx, seg_id)
-            # Our bridge IDs have one upstream interface in so we simply use
+            if_uplink = self.vpp.get_vlan_subif(intf, seg_id)
+            if if_uplink is None:
+                if_uplink = self.vpp.create_vlan_subif(ifidx, seg_id)
+            # Our bridge IDs have one uplink interface in so we simply use
             # that ID as their domain ID
             # This means we can find them on resync from the tagged interface
-            self.ensure_interface_in_vpp_bridge(if_upstream, if_upstream)
-            bridge_idx = if_upstream
+            bridge_idx = if_uplink
+            self.ensure_interface_in_vpp_bridge(bridge_idx, if_uplink)
+
+            self.vpp.set_interface_tag(if_uplink,
+                                       uplink_tag(physnet, net_type, seg_id))
+
+            self.vpp.ifup(if_uplink)
 
         elif net_type == 'vxlan':
-            if_upstream = ifidx
-            self.ensure_gpe_uplink()
+            # VXLAN bridges have no uplink interface at all.
+            # We link the bridge directly to the GPE code.
+
+            self.ensure_gpe_link()
             bridge_idx = self.bridge_idx_for_lisp_segment(seg_id)
             self.ensure_bridge_domain_in_vpp(bridge_idx)
             self.ensure_gpe_vni_to_bridge_mapping(seg_id, bridge_idx)
 
+            # We attach the bridge to GPE without use of an uplink interface
+            # as we affect forwarding in the bridge.
+            if_uplink = None
+
         else:
             raise Exception('network type %s not supported', net_type)
 
-        # Mark this interface so that we can spot it on resync
-        # Flat and GPE networks, we have just one uplink, without a seg_id
-        # So to tag flat and GPE networks, we use the physnet name instead of
-        # the seg_id
-        if net_type == 'vlan':
-            self.vpp.set_interface_tag(if_upstream,
-                                       uplink_tag(net_type, seg_id))
-        else:
-            self.vpp.set_interface_tag(if_upstream,
-                                       uplink_tag(net_type, physnet))
-        self.vpp.ifup(if_upstream)
-
-        return {
+        rv = {
+            'physnet': physnet,
+            'if_physnet': intf,
             'bridge_domain_id': bridge_idx,
-            'if_upstream': intf,
-            'if_upstream_idx': if_upstream,
             'network_type': net_type,
             'segmentation_id': seg_id,
-            'physnet': physnet,
         }
+
+        if if_uplink is not None:
+            self.vpp.ifup(if_uplink)
+            rv['if_uplink_idx'] = if_uplink,
+
+        return rv
 
     def delete_network_on_host(self, physnet, net_type, seg_id=None):
         net = self.networks.get((physnet, net_type, seg_id), None)
@@ -444,8 +467,7 @@ class VPPForwarder(object):
 
             self.vpp.delete_bridge_domain(net['bridge_domain_id'])
             if net['network_type'] == 'vlan':
-                ifidx = self.vpp.get_ifidx_by_name(net['if_upstream']
-                                                   + '.' + str(seg_id))
+                ifidx = net['if_uplink_idx']
                 self.vpp.delete_vlan_subif(ifidx)
             elif net['network_type'] == 'vxlan':
                 LOG.debug("Deleting vni %s from GPE map", seg_id)
@@ -1332,7 +1354,7 @@ class VPPForwarder(object):
 
             # Return the internal and external interface indexes.
             return (self.vpp.get_bridge_bvi(net_br_idx),
-                    external_network_data['if_upstream_idx'])
+                    external_network_data['if_uplink_idx'])
         else:
             LOG.error('Failed to get internal network data. Verify that the '
                       'router interface on the private network was created.')
@@ -1348,7 +1370,7 @@ class VPPForwarder(object):
             (physnet, external_net_type, external_segmentation_id), None)
         if external_network_data:
             physnet_ip_addrs = self.vpp.get_interface_ip_addresses(
-                external_network_data['if_upstream_idx'])
+                external_network_data['if_uplink_idx'])
             if not physnet_ip_addrs:
                 self.delete_network_on_host(
                     physnet, external_net_type, external_segmentation_id)
@@ -1729,23 +1751,23 @@ class VPPForwarder(object):
             if segmentation_id == vni:
                 self.delete_remote_gpe_mapping(vni, mac)
 
-    def ensure_gpe_uplink(self):
+    def ensure_gpe_link(self):
         """Ensures that the GPE uplink interface is present and configured.
 
         Returns:-
         The software_if_index of the GPE uplink functioning as the underlay
         """
-        intf, if_upstream = self.get_if_for_physnet(self.gpe_locators)
+        intf, if_physnet = self.get_if_for_physnet(self.gpe_locators)
         LOG.debug('Setting vxlan gpe underlay attachment interface: %s',
                   intf)
-        if if_upstream is None:
+        if if_physnet is None:
             LOG.error('Cannot create a vxlan GPE network because the gpe_'
                       'locators config value:%s is broken. Make sure this '
                       'value is set to a valid physnet name used as the '
                       'GPE underlay interface',
                       self.gpe_locators)
             sys.exit(1)
-        self.vpp.ifup(if_upstream)
+        self.vpp.ifup(if_physnet)
         # Set the underlay IP address using the gpe_src_cidr config option
         # setting in the config file
         LOG.debug('Configuring GPE underlay ip address %s on '
@@ -1753,13 +1775,13 @@ class VPPForwarder(object):
         (self.gpe_underlay_addr,
          self.gpe_underlay_mask) = self.gpe_src_cidr.split('/')
         self.vpp.set_interface_address(
-            sw_if_index=if_upstream,
+            sw_if_index=if_physnet,
             is_ipv6=1 if ip_network(unicode(self.gpe_underlay_addr)
                                     ).version == 6 else 0,
             address_length=int(self.gpe_underlay_mask),
             address=self._pack_address(self.gpe_underlay_addr)
             )
-        return (intf, if_upstream)
+        return (intf, if_physnet)
 
     def ensure_gpe_underlay(self):
         """Ensures that the GPE locator and locator sets are present in VPP
@@ -1781,24 +1803,24 @@ class VPPForwarder(object):
         if not locators:
             LOG.debug('Creating GPE locator set %s', gpe_lset_name)
             self.vpp.add_lisp_locator_set(gpe_lset_name)
-        _, if_upstream = self.ensure_gpe_uplink()
+        _, if_physnet = self.ensure_gpe_link()
         # Add the underlay interface to the locator set
         LOG.debug('Adding GPE locator for interface %s to locator-'
-                  'set %s', if_upstream, gpe_lset_name)
+                  'set %s', if_physnet, gpe_lset_name)
         # Remove any stale locators from the locator set, which may
         # be due to a configuration change
         locator_indices = locators[0]['sw_if_idxs'] if locators else []
         LOG.debug("Current gpe locator indices: %s", locator_indices)
         for sw_if_index in locator_indices:
-            if sw_if_index != if_upstream:
+            if sw_if_index != if_physnet:
                 self.vpp.del_lisp_locator(
                     locator_set_name=gpe_lset_name,
                     sw_if_index=sw_if_index)
         # Add the locator interface to the locator set if not present
-        if not locators or if_upstream not in locator_indices:
+        if not locators or if_physnet not in locator_indices:
             self.vpp.add_lisp_locator(
                 locator_set_name=gpe_lset_name,
-                sw_if_index=if_upstream
+                sw_if_index=if_physnet
                 )
         return self.vpp.get_lisp_local_locators(gpe_lset_name)
 
@@ -2588,7 +2610,6 @@ def main():
         if f:
             try:
                 (k, v) = f.split(':')
-                physnets[k] = v
             except Exception:
                 LOG.error("Could not parse physnet to interface mapping "
                           "check the format in the config file: "
@@ -2596,6 +2617,11 @@ def main():
                           "physnet2:<interface>"
                           )
                 sys.exit(1)
+            if len(v) > MAX_PHYSNET_LENGTH:
+                LOG.error("Physnet '%s' is longer than %d characters.",
+                          v, MAX_PHYSNET_LENGTH)
+                sys.exit(1)
+            physnets[k] = v
 
     # Convert to the minutes unit that VPP uses:
     # (we round *up*)
