@@ -278,6 +278,9 @@ class VPPForwarder(object):
         # a Mapping of security groups to VPP ACLs
         self.secgroups = {}  # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 
+        # ACLs we ought to delete
+        self.deferred_delete_secgroups = set()
+
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
         self.vxlan_bcast_addr = vxlan_bcast_addr
@@ -1000,25 +1003,62 @@ class VPPForwarder(object):
         LOG.debug("secgroup_watcher: current secgroup mapping: %s"
                   % self.secgroups)
 
+        # If this is on the pending delete list it shouldn't be now
+        self.deferred_delete_acls.discard(secgroup_id)
+
     def acl_delete_on_host(self, secgroup):
         """Deletes the ingress and egress VPP ACLs on host for secgroup
+
+        This may delete up front or it may defer (and delete when it's
+        next called, which is adequately fast) if there's a port using
+        the ACL.
 
         Arguments:
         secgroup - OpenStack security group ID
         """
-        try:
-            for acl_idx in self.secgroups[secgroup]:
-                LOG.debug("secgroup_watcher: deleting VPP ACL %s for "
-                          "secgroup %s" % (acl_idx, secgroup))
-                self.vpp.acl_delete(acl_index=acl_idx)
-            del self.secgroups[secgroup]
-            LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                      % self.secgroups)
-        except KeyError:
-            LOG.error("secgroup_watcher: received request to delete "
-                      "an unknown security group %s" % secgroup)
-        except Exception as e:
-            LOG.error("Exception while deleting ACL %s" % e)
+
+        # Attempt both the current ACL and any more ACLs that have been
+        # previously deferred:
+        self.deferred_delete_secgroups.add(secgroup)
+
+        remaining_secgroups = set()
+        for secgroup in self.deferred_delete_secgroups:
+
+            try:
+                secgroup_acls = self.secgroups[secgroup]
+            except KeyError:
+                LOG.error("secgroup_watcher: received request to delete "
+                          "an unknown security group %s" % secgroup)
+                # This security group doesn't exist, don't add to the
+                # deferred list
+                continue
+
+            try:
+                used = False
+                for iface in self.vpp.get_interfaces():
+                    in_acls, out_acls = self.vpp.get_interface_acls(iface.sw_if_index)
+                    for acl_idx in secgroup_acls:
+                        if acl_idx in in_acls or acl in out_acls:
+                            used = True
+                            break
+                if used:
+                    LOG.debug('deferring delete of acls for secgroup %s'
+                              ' as a port is using them', secgroup)
+                    remaining_secgroups.add(secgroup)
+                else:
+                    for acl_idx in secgroup_acls:
+                        LOG.debug("secgroup_watcher: deleting VPP ACL %s for "
+                                  "secgroup %s" % (acl_idx, secgroup))
+                        self.vpp.acl_delete(acl_index=acl_idx)
+                    del self.secgroups[secgroup]
+                    LOG.debug("secgroup_watcher: current secgroup mapping: %s"
+                          % self.secgroups)
+            except Exception as e:
+                LOG.error("Exception while deleting ACL %s" % e)
+                # We could defer this again but it's probably better
+                # we move on.  Orphaned ACLs are not the end of the world.
+
+        self.deferred_delete_secgroups = secgroup_acls
 
     def populate_secgroup_acl_mappings(self):
         """From vpp acl dump, populate the secgroups to VppACL mapping.
