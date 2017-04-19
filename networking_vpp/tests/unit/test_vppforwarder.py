@@ -65,12 +65,14 @@ class VPPForwarderTestCase(base.BaseTestCase):
         assert (len(server.port_tag(uuid)) <= 64), 'TAG len must be <= 64'
 
     def test_uplink_tag_len(self):
-        assert (len(server.uplink_tag('flat', 'physnet1')) <= 64), \
+        longest_physnet = '1234567890123456789012'
+        assert (len(server.uplink_tag(longest_physnet, 'flat', None)) <= 64), \
             'TAG len for flat networks  must be <= 64'
         max_vlan_id = 4095
-        assert (len(server.uplink_tag('vlan', max_vlan_id)) <= 64), \
+        assert (len(server.uplink_tag(longest_physnet, 'vlan', max_vlan_id)) <= 64), \
             'TAG len for vlan overlays must be <= 64'
-        assert (len(server.uplink_tag('vxlan', 'physnet2')) <= 64), \
+        max_vxlan_id = 16777215
+        assert (len(server.uplink_tag(longest_physnet, 'vxlan', max_vxlan_id)) <= 64), \
             'TAG len for vxlan overlays must be <= 64'
 
     def test_decode_port_tag(self):
@@ -113,8 +115,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.ensure_network_on_host('test_net', 'flat', '0')
         self.vpp.vpp.ifup.assert_called_once_with(720)
+        # Flat networks should tag with just the physnet mark
         self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            720, 'net-vpp.uplink:flat.test_net')
+            720, 'net-vpp.physnet:test_net')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -124,8 +127,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
         net_length = len(self.vpp.networks)
         self.vpp.ensure_network_on_host('test_net', 'vlan', '1')
         self.vpp.vpp.ifup.assert_called_with(740)
-        self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            740, 'net-vpp.uplink:vlan.1')
+        # This will tag the physnet interface and the network uplink.
+        self.assertEqual(
+            sorted([mock.call(740, 'net-vpp.uplink:test_net.vlan.1'),
+                    mock.call(720, 'net-vpp.physnet:test_net')]),
+            sorted(self.vpp.vpp.set_interface_tag.mock_calls))
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
         assert (len(self.vpp.networks) == 1 + net_length), \
@@ -554,7 +560,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         """
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_upstream_idx': 'fake_up_idx'}
+                                          'if_uplink_idx': 'fake_up_idx'}
         self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
                               INTERNAL_SEGMENATION_ID):
                              {'bridge_domain_id': 1}}
@@ -579,7 +585,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         """
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_upstream_idx': 4}
+                                          'if_uplink_idx': 4}
         self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
                               INTERNAL_SEGMENATION_ID):
                              {'bridge_domain_id': 1}}
@@ -612,7 +618,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         """
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_upstream_idx': 'fake_up_idx'}
+                                          'if_uplink_idx': 'fake_up_idx'}
         self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
                               INTERNAL_SEGMENATION_ID):
                              {'bridge_domain_id': 1}}
@@ -635,7 +641,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         """
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_upstream_idx': 'fake_up_idx'}
+                                          'if_uplink_idx': 'fake_up_idx'}
         self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
                               INTERNAL_SEGMENATION_ID):
                              {'bridge_domain_id': 1}}
@@ -654,7 +660,6 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def test_ensure_gpe_network_on_host(self):
         self.vpp.networks = {}
         self.vpp.mac_age = 300
-        gpe_tag = "net-vpp.uplink:vxlan"
         self.vpp.gpe_locators = "uplink"
         physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
         self.vpp.physnets = {"uplink": "test_iface"}
@@ -669,17 +674,16 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.set_interface_address.assert_called_once_with(
             sw_if_index=720, is_ipv6=0,
             address_length=24, address=self.vpp._pack_address("10.1.1.1"))
-        self.vpp.vpp.set_interface_tag.assert_called_once_with(
-            720, gpe_tag + ".uplink")
+        self.vpp.vpp.set_interface_tag.assert_called_with(
+            720, 'net-vpp.physnet:uplink')
         network_data = self.vpp.networks[('uplink', 'vxlan', 5000)]
         expected_val = {'bridge_domain_id': 70000,
-                        'if_upstream': "test_iface",
-                        'if_upstream_idx': 720,
+                        'if_physnet': "test_iface",
                         'network_type': 'vxlan',
                         'segmentation_id': 5000,
                         'physnet': 'uplink'}
-        assert (network_data == expected_val)
-        assert (ret_val == expected_val)
+        self.assertEqual(network_data, expected_val)
+        self.assertEqual(ret_val, expected_val)
 
     def test_delete_gpe_network_on_host(self):
         self.vpp.networks = {}
@@ -689,8 +693,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.physnets = {"uplink": "test_iface"}
         physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
         mock_data = {'bridge_domain_id': 70000,
-                     'if_upstream': "test_iface",
-                     'if_upstream_idx': 720,
+                     'if_physnet': "test_iface",
+                     'if_uplink_idx': 720,
                      'network_type': 'vxlan',
                      'segmentation_id': 5000,
                      'physnet': "uplink"}
@@ -731,8 +735,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
         mock_net_data = {'bridge_domain_id': 70000,
-                         'if_upstream': "test_iface",
-                         'if_upstream_idx': 720,
+                         'if_physnet': "test_iface",
+                         'if_uplink_idx': 720,
                          'network_type': 'vxlan',
                          'segmentation_id': 5000,
                          'physnet': 'uplink'}
@@ -763,8 +767,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.physnets = {"uplink": "test_iface"}
         port_uuid = 'fake-port-uuid'
         mock_net_data = {'bridge_domain_id': 70000,
-                         'if_upstream': "test_iface",
-                         'if_upstream_idx': 720,
+                         'if_physnet': "test_iface",
+                         'if_uplink_idx': 720,
                          'network_type': 'vxlan',
                          'segmentation_id': 5000,
                          'physnet': 'uplink'}
