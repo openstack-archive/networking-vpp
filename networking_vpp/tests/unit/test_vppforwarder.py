@@ -140,6 +140,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def test_delete_network_on_host(self):
         physnet = 'test'
         self.vpp.networks = {(physnet, 'flat', None): {'bridge_domain_id': 1,
+                                                       'if_physnet': 'physint',
                                                        'network_type': 'flat'}}
         self.vpp.delete_network_on_host(physnet, 'flat')
         self.vpp.vpp.delete_bridge_domain.assert_called_once_with(1)
