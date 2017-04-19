@@ -1128,6 +1128,8 @@ class VPPForwarder(object):
                       "to acl mapping {}. Possible reason: vpp "
                       "may have been restarted on host.")
 
+        return self.secgroups.keys()
+
     def get_secgroup_acl_map(self):
         """Read VPP ACL tag data, construct and return an acl_map based on tag
 
@@ -2537,6 +2539,18 @@ class EtcdListener(object):
 
         class SecGroupWatcher(EtcdChangeWatcher):
 
+            def __init__(self, etcd_client, name, watch_path,
+                         known_keys,
+                         **kwargs):
+                self.known_keys = known_keys
+                super(SecGroupWatcher, self).__init__(
+                    etcd_client, name, watch_path, **kwargs)
+
+            def init_resync_start(self):
+                # TODO(ijw): we should probably do the secgroup work
+                # here rather than up front
+                return self.known_keys
+
             def do_tick(self):
                 pass
 
@@ -2591,7 +2605,7 @@ class EtcdListener(object):
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
                       "performing secgroup_watcher lookups")
-            self.vppf.populate_secgroup_acl_mappings()
+            known_secgroup_ids = self.vppf.populate_secgroup_acl_mappings()
             LOG.debug("Adding ingress/egress spoof filters "
                       "on host for secgroup_watcher spoof blocking")
             self.spoof_filter_on_host()
@@ -2599,6 +2613,7 @@ class EtcdListener(object):
             self.pool.spawn(SecGroupWatcher(self.client_factory.client(),
                                             'secgroup_watcher',
                                             self.secgroup_key_space,
+                                            known_secgroup_ids,
                                             heartbeat=self.AGENT_HEARTBEAT,
                                             data=self).watch_forever)
 
