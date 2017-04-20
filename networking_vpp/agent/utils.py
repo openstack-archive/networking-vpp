@@ -111,7 +111,7 @@ class EtcdClientFactory(object):
                 raise InvalidEtcdCAConfig()
 
             self.etcd_args['protocol'] = 'https'
-            self.etcd_args['ca_cert'] = ml2_vpp_conf.etcd_ca_cert,
+            self.etcd_args['ca_cert'] = ml2_vpp_conf.etcd_ca_cert
 
         else:
             LOG.warning("etcd is not using HTTPS, insecure setting")
