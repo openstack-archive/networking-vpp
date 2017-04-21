@@ -1371,42 +1371,42 @@ class VPPForwarder(object):
         """
 
         # Get internal network details.
-        internal_network_data = self.networks.get(
-            (floatingip_dict['physnet'],
-             floatingip_dict['internal_net_type'],
-             floatingip_dict['internal_segmentation_id']),
-            None)
+        internal_network_data = self.ensure_network_on_host(
+            floatingip_dict['internal_physnet'],
+            floatingip_dict['internal_net_type'],
+            floatingip_dict['internal_segmentation_id'])
         if internal_network_data:
             net_br_idx = internal_network_data['bridge_domain_id']
 
             # if needed the external subinterface will be created.
-            external_network_data = self.ensure_network_on_host(
-                floatingip_dict['physnet'],
-                floatingip_dict['external_net_type'],
+            external_if_name, external_if_idx = self.get_if_for_physnet(
+                floatingip_dict['external_physnet'])
+            external_if_idx = self._get_external_vlan_subif(
+                external_if_name, external_if_idx,
                 floatingip_dict['external_segmentation_id'])
 
             # Return the internal and external interface indexes.
-            return (self.vpp.get_bridge_bvi(net_br_idx),
-                    external_network_data['if_uplink_idx'])
+            return (self.vpp.get_bridge_bvi(net_br_idx), external_if_idx)
         else:
-            LOG.error('Failed to get internal network data. Verify that the '
-                      'router interface on the private network was created.')
+            LOG.error('Failed to get internal network data.')
             return None, None
 
     def _delete_external_subinterface(self, floatingip_dict):
         """Check if the external subinterface can be deleted."""
 
-        physnet = floatingip_dict['physnet']
+        external_physnet = floatingip_dict['external_physnet']
         external_net_type = floatingip_dict['external_net_type']
         external_segmentation_id = floatingip_dict['external_segmentation_id']
         external_network_data = self.networks.get(
-            (physnet, external_net_type, external_segmentation_id), None)
+            (external_physnet, external_net_type, external_segmentation_id),
+            None)
         if external_network_data:
             physnet_ip_addrs = self.vpp.get_interface_ip_addresses(
                 external_network_data['if_uplink_idx'])
             if not physnet_ip_addrs:
                 self.delete_network_on_host(
-                    physnet, external_net_type, external_segmentation_id)
+                    external_physnet, external_net_type,
+                    external_segmentation_id)
 
     def _get_external_vlan_subif(self, if_name, if_idx, seg_id):
         sub_if = self.vpp.get_vlan_subif(if_name, seg_id)

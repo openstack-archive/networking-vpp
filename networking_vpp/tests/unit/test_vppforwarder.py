@@ -25,7 +25,7 @@ from neutron.tests import base
 
 INTERNAL_SEGMENATION_ID = 100
 INTERNAL_SEGMENATION_TYPE = 'vlan'
-PHYSNET = 'physnet1'
+INTERNAL_PHYSNET = 'physnet1'
 FIXED_IP_ADDRESS = '192.168.100.10'
 
 
@@ -282,11 +282,12 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def _get_mock_floatingip(self):
         return {'internal_segmentation_id': INTERNAL_SEGMENATION_ID,
                 'internal_net_type': INTERNAL_SEGMENATION_TYPE,
+                'internal_physnet': INTERNAL_PHYSNET,
                 'external_segmentation_id': 172,
                 'external_net_type': 'vlan',
+                'external_physnet': 'testnet',
                 'fixed_ip_address': FIXED_IP_ADDRESS,
-                'floating_ip_address': '100.38.15.131',
-                'physnet': PHYSNET}
+                'floating_ip_address': '100.38.15.131'}
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
@@ -562,10 +563,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
                                           'if_uplink_idx': 'fake_up_idx'}
-        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
-                              INTERNAL_SEGMENATION_ID):
-                             {'bridge_domain_id': 1}}
         self.vpp.vpp.get_bridge_bvi.return_value = 5
+        mock.patch.object(self.vpp, '_get_external_vlan_subif',
+                          return_value=4).start()
 
         self.vpp.associate_floatingip(floatingip_dict)
 
@@ -577,7 +577,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def test_create_floatingip_on_vpp_existing_indexes(
+    def test_create_floatingip_on_vpp_existing_entry(
             self, m_network_on_host):
         """Test create floatingip processing with existing indexes.
 
@@ -587,15 +587,17 @@ class VPPForwarderTestCase(base.BaseTestCase):
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
                                           'if_uplink_idx': 4}
-        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
-                              INTERNAL_SEGMENATION_ID):
-                             {'bridge_domain_id': 1}}
         self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_snat_interfaces.return_value = [4, 5]
+        mock.patch.object(self.vpp, '_get_external_vlan_subif',
+                          return_value=4).start()
+        self.vpp.vpp.get_snat_local_ipaddresses.return_value = (
+            [floatingip_dict['fixed_ip_address']])
 
         self.vpp.associate_floatingip(floatingip_dict)
 
         self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
+        self.assertFalse(self.vpp.vpp.set_snat_static_mapping.call_count)
 
     def test_create_floatingip_on_vpp_no_internal_network(self):
         """Test create floatingip processing without an internal network.
@@ -604,7 +606,6 @@ class VPPForwarderTestCase(base.BaseTestCase):
         internal network (router interface) hasn't been created.
         """
         floatingip_dict = self._get_mock_floatingip()
-        self.vpp.networks = {}
 
         self.vpp.associate_floatingip(floatingip_dict)
 
@@ -620,11 +621,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
                                           'if_uplink_idx': 'fake_up_idx'}
-        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
-                              INTERNAL_SEGMENATION_ID):
-                             {'bridge_domain_id': 1}}
         self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_snat_local_ipaddresses.return_value = []
+        mock.patch.object(self.vpp, '_get_external_vlan_subif',
+                          return_value=4).start()
 
         self.vpp.disassociate_floatingip(floatingip_dict)
 
@@ -643,12 +643,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
         floatingip_dict = self._get_mock_floatingip()
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
                                           'if_uplink_idx': 'fake_up_idx'}
-        self.vpp.networks = {(PHYSNET, INTERNAL_SEGMENATION_TYPE,
-                              INTERNAL_SEGMENATION_ID):
-                             {'bridge_domain_id': 1}}
         self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_snat_local_ipaddresses.return_value = (
             [FIXED_IP_ADDRESS])
+        mock.patch.object(self.vpp, '_get_external_vlan_subif',
+                          return_value=4).start()
 
         self.vpp.disassociate_floatingip(floatingip_dict)
 
