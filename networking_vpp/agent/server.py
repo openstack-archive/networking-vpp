@@ -2345,14 +2345,14 @@ class EtcdListener(object):
                 # Removing key == desire to unbind
 
                 try:
-                    port = self.data.vppf.interfaces[port]
-                    port_net = port['net_data']
+                    port_data = self.data.vppf.interfaces[port]
+                    port_net = port_data['net_data']
                     is_vxlan = port_net['network_type'] == 'vxlan'
 
                     if is_vxlan:
                         # Get seg_id and mac to delete any gpe mappings
                         seg_id = port_net['segmentation_id']
-                        mac = port['mac']
+                        mac = port_data['mac']
                 except KeyError:
                     # On initial resync, this information may not
                     # be available; also, the network may not
