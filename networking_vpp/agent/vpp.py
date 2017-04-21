@@ -691,12 +691,13 @@ class VPPInterface(object):
         self.call_vpp('snat_add_static_mapping',
                       local_ip_address=local_ip,
                       external_ip_address=external_ip,
-                      local_port=0,
-                      external_port=0,
-                      addr_only=1,
-                      vrf_id=0,
-                      is_add=is_add,
-                      is_ip4=1)
+                      external_sw_if_index=0xFFFFFFFF,  # -1 = Not used
+                      local_port=0,     # 0 = ignore
+                      external_port=0,  # 0 = ignore
+                      addr_only=1,      # 1 = address only mapping
+                      vrf_id=0,         # 0 = global VRF
+                      is_add=is_add,    # 1 = add, 0 = delete
+                      is_ip4=1)         # 1 = address type is IPv4
 
     def get_snat_addresses(self):
         ret_addrs = []
