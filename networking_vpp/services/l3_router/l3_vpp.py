@@ -72,10 +72,11 @@ class VppL3RouterPlugin(
             context, port['network_id'])
 
         vpp_floatingip_dict = {
-            'physnet': internal_network[provider.PHYSICAL_NETWORK],
+            'external_physnet': external_network[provider.PHYSICAL_NETWORK],
             'external_net_type': external_network[provider.NETWORK_TYPE],
             'external_segmentation_id':
                 external_network[provider.SEGMENTATION_ID],
+            'internal_physnet': internal_network[provider.PHYSICAL_NETWORK],
             'internal_net_type': internal_network[provider.NETWORK_TYPE],
             'internal_segmentation_id':
                 internal_network[provider.SEGMENTATION_ID],
