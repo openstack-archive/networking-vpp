@@ -691,10 +691,12 @@ class VPPInterface(object):
         self.call_vpp('snat_add_static_mapping',
                       local_ip_address=local_ip,
                       external_ip_address=external_ip,
+                      external_sw_if_index=0xFFFFFFFF,
                       local_port=0,
                       external_port=0,
                       addr_only=1,
                       vrf_id=0,
+                      protocol=0,
                       is_add=is_add,
                       is_ip4=1)
 
