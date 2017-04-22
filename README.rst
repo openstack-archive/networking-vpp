@@ -528,3 +528,12 @@ command::
 The driver and agents should deal with disconnections across the board,
 and the agents know that they must resync themselves with the desired
 state when they completely lose track of what's happening.
+
+How are you testing the project during development?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We have unit tests written by developers, and are also doing system tests
+by leveraging the upstream Openstack CI infrastructure. Going forward,
+we will be increasing the coverage of the unit tests, as well as
+enhancing the types of system/integration tests that we run, e.g.
+negative testing, compatibility testing, etc.
