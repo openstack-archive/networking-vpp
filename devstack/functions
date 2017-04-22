@@ -76,11 +76,18 @@ function setup_host_env {
 function clean_etcd() {
 
     # etcd_host may be complex, so we do our best with it
+    if [ ! -z "$ETCD_CA_CERT" ] ; then
+         proto=https
+         args="--ca-file $ETCD_CA_CERT"
+    else
+         proto=http
+         args=""
+    fi
 
     if [[ ! "$ETCD_HOST" =~ "://" ]] ; then
         hostarg=""
         for f in $(echo "$ETCD_HOST" | tr "," "\n"); do
-            hostarg="$hostarg,http://$f:$ETCD_PORT/"
+            hostarg="$hostarg,$proto://$f:$ETCD_PORT/"
         done
         # Strip that leading comma
 
@@ -88,10 +95,10 @@ function clean_etcd() {
     else
         hostarg="$ETCD_HOST"
     fi
-    args="--endpoints $hostarg"
+    args="$args --endpoints $hostarg"
 
     # TODO(ijw): deal with username and password
 
     sleep 2 # settle time for the daemon
-    etcdctl rm --recursive /networking-vpp 2>/dev/null ||:
+    etcdctl $args rm --recursive /networking-vpp 2>/dev/null ||:
 }
