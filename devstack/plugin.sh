@@ -122,12 +122,13 @@ elif [[ "$1" == "stack" && "$2" == "post-config" ]]; then
     echo_summary "Configuring $name"
     configure_networking_vpp
     agent_do configure_vpp_agent
+    # Early start of VPP agent so that its physnets are ready when Neutron
+    # comes up
+    agent_do init_vpp_agent
 
 elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
-# Initialize and start the service
     echo_summary "Initializing $name"
     init_networking_vpp
-    agent_do init_vpp_agent
 
 elif [[ "$1" == "stack" && "$2" == "test-config" ]]; then
     for flavor in $(openstack flavor list -c Name -f value); do
