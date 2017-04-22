@@ -48,7 +48,7 @@ This creates a root CA certificate:
 
 4/ For each server in the etcd cluster, create the server certificate and private key
 
-    ./easyrsa build-server-full <server-name> nopass
+    ./easyrsa --subject-alt-name DNS:<server-fqdn> build-server-full <server-name> nopass
 
 This will require the passphrase for the root CA (this is the one you set a moment ago).
 
