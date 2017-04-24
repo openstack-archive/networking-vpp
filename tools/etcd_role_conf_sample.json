@@ -1,0 +1,19 @@
+{
+  "compute": {
+    "officer0-UCSC-C220-M4S": {
+      "role": "officer0-UCSC-C220-M4S_ROLE",
+      "username": "officer0-UCSC-C220-M4S_COMPUTE",
+      "password": "password123@123"
+    }
+
+  },
+
+  "network": {
+    "officer0-UCSC-C220-M4S": {
+      "role": "officer0-UCSC-C220-M4S",
+      "username": "officer0-UCSC-C220-M4S_NETWORK",
+      "password": "password1234@1234"
+    }
+
+  }
+}
