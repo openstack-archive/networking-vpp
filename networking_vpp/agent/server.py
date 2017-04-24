@@ -50,11 +50,14 @@ from networking_vpp import config_opts
 from networking_vpp.etcdutils import EtcdChangeWatcher
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
+from networking_vpp import version
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_reports import guru_meditation_report as gmr
+from oslo_reports import opts as gmr_opts
 
 
 LOG = logging.getLogger(__name__)
@@ -1781,6 +1784,10 @@ def main():
     cfg.CONF(sys.argv[1:])
     logging.setup(cfg.CONF, 'vpp_agent')
 
+    gmr_opts.set_defaults(cfg.CONF)
+    gmr.TextGuruMeditation.setup_autorun(
+        version.version_info,
+        service_name='vpp-agent')
     # If the user and/or group are specified in config file, we will use
     # them as configured; otherwise we try to use defaults depending on
     # distribution. Currently only supporting ubuntu and redhat.
