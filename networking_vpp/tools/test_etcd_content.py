@@ -91,17 +91,22 @@ for port in conn.network.ports():
         # infra about it
         pass
 
-# Confirm only the ports we expect to find are in etcd
-keypatt = re.compile(r'i^/networking-vpp/nodes/[^/]+/ports/[^/]+$')
 
-result = etcd_client.read('/', recursive=True)
-for val in result.children:
-    k = val.key
-    res = keypatt.match(k)
-    if res:
-        # Only worry about key matches
-        if k not in port_paths:
-            print('WARN: unknown port key "%s" in etcd' % k)
-        else:
-            print('OK: key belongs to known port')
-            port_paths.remove(k)
+def main():
+    # Confirm only the ports we expect to find are in etcd
+    keypatt = re.compile(r'i^/networking-vpp/nodes/[^/]+/ports/[^/]+$')
+
+    result = etcd_client.read('/', recursive=True)
+    for val in result.children:
+        k = val.key
+        res = keypatt.match(k)
+        if res:
+            # Only worry about key matches
+            if k not in port_paths:
+                print('WARN: unknown port key "%s" in etcd' % k)
+            else:
+                print('OK: key belongs to known port')
+                port_paths.remove(k)
+
+if __name__ == '__main__':
+    main()

@@ -192,36 +192,41 @@ def decode_proto(num):
     return protos.get(num, 'proto-%s' % str(num))
 
 
-for intf in get_interfaces():
-    print('Interface %d, name %s tag "%s"'
-          % (intf['sw_if_index'], intf['name'], intf['tag']))
-    for macip in get_if_macip_acls(intf['sw_if_index']):
-        print('    MACIP %d tag "%s"' % (macip['acl_index'], macip['tag']))
-        for rule in macip['rules']:
-            print('        %s %s: %s mask %s %s/%d' % (
-                ('permit' if rule['is_permit']
-                 else 'not permit (%s)' % str(rule['is_permit'])),
-                'ipv6' if rule["is_ipv6"] else 'ipv4',
-                format_mac(rule["src_mac"]),
-                format_mac(rule['src_mac_mask']),
-                str(rule["src_ip_addr"]),
-                rule['src_ip_prefix_len']))
-    for acl in get_if_acls(intf['sw_if_index']):
-        print('    ACL %d (%s)' % (acl['acl_index'],
-                                   'input' if acl['is_input']
-                                   else 'output'))
-        for rule in acl['rules']:
-            print('        %s %s: %s %s/%d[%d-%d] -> %s/%d[%d-%d] '
-                  'TCP(%d mask %d)' % (
-                      ('permit' if rule['is_permit']
-                       else 'not permit (%s)' % str(rule['is_permit'])),
-                      'ipv6' if rule["is_ipv6"] else 'ipv4',
-                      decode_proto(rule["proto"]),
-                      str(rule["src_ip_addr"]), rule['src_ip_prefix_len'],
-                      rule['src_range'][0],
-                      rule['src_range'][1],
-                      str(rule["dst_ip_addr"]), rule['dst_ip_prefix_len'],
-                      rule['dst_range'][0],
-                      rule['dst_range'][1],
-                      rule["tcp_flags_mask"],
-                      rule["tcp_flags_value"]))
+def main():
+    for intf in get_interfaces():
+        print('Interface %d, name %s tag "%s"'
+              % (intf['sw_if_index'], intf['name'], intf['tag']))
+        for macip in get_if_macip_acls(intf['sw_if_index']):
+            print('    MACIP %d tag "%s"' % (macip['acl_index'], macip['tag']))
+            for rule in macip['rules']:
+                print('        %s %s: %s mask %s %s/%d' % (
+                    ('permit' if rule['is_permit']
+                     else 'not permit (%s)' % str(rule['is_permit'])),
+                    'ipv6' if rule["is_ipv6"] else 'ipv4',
+                    format_mac(rule["src_mac"]),
+                    format_mac(rule['src_mac_mask']),
+                    str(rule["src_ip_addr"]),
+                    rule['src_ip_prefix_len']))
+        for acl in get_if_acls(intf['sw_if_index']):
+            print('    ACL %d (%s, %s)' % (acl['acl_index'],
+                                           acl['tag'],
+                                           'input' if acl['is_input']
+                                           else 'output'))
+            for rule in acl['rules']:
+                print('        %s %s: %s %s/%d[%d-%d] -> %s/%d[%d-%d] '
+                      'TCP(%d mask %d)' % (
+                          ('permit' if rule['is_permit']
+                           else 'not permit (%s)' % str(rule['is_permit'])),
+                          'ipv6' if rule["is_ipv6"] else 'ipv4',
+                          decode_proto(rule["proto"]),
+                          str(rule["src_ip_addr"]), rule['src_ip_prefix_len'],
+                          rule['src_range'][0],
+                          rule['src_range'][1],
+                          str(rule["dst_ip_addr"]), rule['dst_ip_prefix_len'],
+                          rule['dst_range'][0],
+                          rule['dst_range'][1],
+                          rule["tcp_flags_mask"],
+                          rule["tcp_flags_value"]))
+
+if __name__ == '__main__':
+    main()
