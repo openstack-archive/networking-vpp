@@ -215,6 +215,14 @@ bridged to the VLANs that the VMs are attached to.
 
 After all this, run ``./stack.sh`` to make devstack run.
 
+NB:
+A number of the important options are set by default to allow out-of-the-box
+operation. Configuration defaults (including ETCD settings and VPP branch
+specification)  are found in ``devstack/settings``. The default setting for
+the number of hugepages is 1024, and if the specified VPP uplink is ``tap-0``,
+the ``init_networking_vpp`` function of ``devstack/plugin.sh`` (executed at
+stack-time) will create the appropriate logical interface for VPP to use.
+
 But VPP won't start!
 ~~~~~~~~~~~~~~~~~~~~
 
