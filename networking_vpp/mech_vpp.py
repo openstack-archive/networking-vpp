@@ -103,7 +103,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         for f in n_const.DEVICE_OWNER_PREFIXES:
             if owner.startswith(f):
                 vif_type = 'plugtap'
-        LOG.debug("ML2_VPP: vif_type to be bound is: %s", vif_type)
+        LOG.debug("vif_type to be bound is: %s", vif_type)
         return vif_type
 
     def bind_port(self, port_context):
@@ -147,14 +147,14 @@ class VPPMechanismDriver(api.MechanismDriver):
         by the QoS service to identify the available QoS rules you
         can use with ports.
         """
-        LOG.debug("ML2_VPP: Attempting to bind port %(port)s on "
+        LOG.debug("Attempting to bind port %(port)s on "
                   "network %(network)s",
                   {'port': port_context.current['id'],
                    'network': port_context.network.current['id']})
         vnic_type = port_context.current.get(portbindings.VNIC_TYPE,
                                              portbindings.VNIC_NORMAL)
         if vnic_type not in self.supported_vnic_types:
-            LOG.debug("ML2_VPP: Refusing to bind due to unsupported "
+            LOG.debug("Refusing to bind due to unsupported "
                       "vnic_type: %s",
                       vnic_type)
             return
@@ -169,11 +169,11 @@ class VPPMechanismDriver(api.MechanismDriver):
                         os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir,
                                      port_context.current['id'])
                     vif_details['vhostuser_mode'] = 'server'
-                LOG.debug('ML2_VPP: Setting details: %s', vif_details)
+                LOG.debug('Setting details: %s', vif_details)
                 port_context.set_binding(segment[api.ID],
                                          vif_type,
                                          vif_details)
-                LOG.debug("ML2_VPP: Bind selected using segment: %s", segment)
+                LOG.debug("Bind selected using segment: %s", segment)
                 return
 
     def check_segment(self, segment, host):
@@ -192,7 +192,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         network_type = segment[api.NETWORK_TYPE]
         if network_type not in self.allowed_network_types:
             LOG.debug(
-                'ML2_VPP: Network %(network_id)s is %(network_type)s, '
+                'Network %(network_id)s is %(network_type)s, '
                 'but this driver only supports types '
                 '%(allowed_network_types)s. '
                 'The type must be supported  if binding is to succeed.',
@@ -207,7 +207,7 @@ class VPPMechanismDriver(api.MechanismDriver):
             physnet = segment[api.PHYSICAL_NETWORK]
             if not self.physnet_known(host, physnet):
                 LOG.debug(
-                    'ML2_VPP: Network %(network_id)s is on physical '
+                    'Network %(network_id)s is on physical '
                     'network %(physnet)s, but the physical network '
                     'is not one the host %(host)s has attached.',
                     {'network_id': segment['id'],
@@ -363,7 +363,7 @@ class VPPMechanismDriver(api.MechanismDriver):
         host = port_context.host
         # NB: Host is typically '' if the port is not bound
         if host:
-            LOG.debug('ML2_VPP: delete_port_postcommit, port is %s', str(port))
+            LOG.debug('delete_port_postcommit, port is %s', str(port))
             self.communicator.unbind(port_context._plugin_context.session,
                                      port, host)
 
@@ -521,7 +521,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         remind the worker thread it may have work to do).
         """
 
-        LOG.info("ML2_VPP: Security groups feature is enabled")
+        LOG.info("Security groups feature is enabled")
 
         # NB security group rules cannot be updated, and security
         # groups themselves have no forwarder state in them, so we
@@ -595,7 +595,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         This is the time at which we should be committing any of our
         own auxiliary changes to the DB.
         """
-        LOG.debug("ML2_VPP: Received event %s notification for resource"
+        LOG.debug("Received event %s notification for resource"
                   " %s with kwargs %s" % (event, resource, kwargs))
         context = kwargs['context']
 
@@ -694,7 +694,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if deleted_rules is None:
             deleted_rules = []
 
-        LOG.debug("ML2_VPP: etcd_communicator sending security group "
+        LOG.debug("etcd_communicator sending security group "
                   "updates for groups %s to etcd" % sgids)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
@@ -702,7 +702,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 rules = plugin.get_security_group_rules(
                     context, filters={'security_group_id': [sgid]}
                     )
-                LOG.debug("ML2_VPP: SecGroup rules from neutron DB: %s", rules)
+                LOG.debug("SecGroup rules from neutron DB: %s", rules)
 
                 # If we're in the precommit part, we may have deleted
                 # rules in this list and we should exclude them
@@ -716,7 +716,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def get_secgroup_rule(self, rule_id, context):
         """Fetch and return a security group rule from Neutron DB"""
-        LOG.debug("ML2_VPP: fetching security group rule: %s" % rule_id)
+        LOG.debug("fetching security group rule: %s" % rule_id)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
             return plugin.get_security_group_rule(context, rule_id)
@@ -758,7 +758,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         - Convert the neutron rule to a vpp_acl rule model
         - Return the SecurityGroupRule namedtuple.
         """
-        LOG.debug("ML2_VPP:Converting neutron rule %s" % rule)
+        LOG.debug("Converting neutron rule %s" % rule)
         is_ipv6 = 0 if rule['ethertype'] == 'IPv4' else 1
         # Neutron uses None to represent any protocol
         # Use 0 to represent any protocol
@@ -788,7 +788,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                                  ].split('/')
         # TODO(najoy): Add support for remote_group_id in sec-group-rules
         if rule['remote_group_id']:
-            LOG.warning("ML2_VPP: A remote-group-id value is specified in "
+            LOG.warning("A remote-group-id value is specified in "
                         "rule %s. Setting a remote_group_id in rules is "
                         "not supported", rule)
         # Neutron uses -1 or None to represent all ports
@@ -809,7 +809,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                   rule['port_range_max'])
         sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
                                     protocol, port_min, port_max)
-        LOG.debug("ML2_VPP: Converted rule: is_ipv6:%s, remote_ip_addr:%s,"
+        LOG.debug("Converted rule: is_ipv6:%s, remote_ip_addr:%s,"
                   " ip_prefix_len:%s, protocol:%s, port_min:%s,"
                   " port_max:%s" %
                   (sg_rule.is_ipv6, sg_rule.remote_ip_addr,
@@ -839,7 +839,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
             egress_rules.append(egress_rule._asdict())
         sg['ingress_rules'] = ingress_rules
         sg['egress_rules'] = egress_rules
-        LOG.debug('ML2_VPP: Writing secgroup key-val: %s-%s to etcd' %
+        LOG.debug('Writing secgroup key-val: %s-%s to etcd' %
                   (secgroup_path, sg))
         db.journal_write(session, secgroup_path, sg)
 
@@ -849,7 +849,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         secgroup_id -- The id of the security group that we want to delete
         """
-        LOG.debug("ML2_VPP: Deleting secgroup %s from etcd" %
+        LOG.debug("Deleting secgroup %s from etcd" %
                   secgroup_id)
         secgroup_path = self._secgroup_path(secgroup_id)
         db.journal_write(session, secgroup_path, None)
@@ -882,7 +882,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def bind(self, session, port, segment, host, binding_type):
         # NB segmentation_id is not optional in the wireline protocol,
         # we just pass 0 for unsegmented network types
-        LOG.debug("ML2_VPP: Received bind request for port:%s"
+        LOG.debug("Received bind request for port:%s"
                   % port)
         data = {
             'mac_address': port['mac_address'],
@@ -896,7 +896,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
             'fixed_ips': port.get('fixed_ips', []),
             'port_security_enabled': port.get('port_security_enabled', True)
         }
-        LOG.debug("ML2_VPP: Queueing bind request for port:%s, "
+        LOG.debug("Queueing bind request for port:%s, "
                   "segment:%s, host:%s, type:%s",
                   port, data['segmentation_id'],
                   host, data['binding_type'])
@@ -905,7 +905,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.kick()
 
     def unbind(self, session, port, host):
-        LOG.debug("ML2_VPP: Queueing unbind request for port:%s, host:%s.",
+        LOG.debug("Queueing unbind request for port:%s, host:%s.",
                   port, host)
         db.journal_write(session, self._port_path(host, port), None)
         self.kick()
