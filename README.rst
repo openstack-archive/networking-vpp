@@ -215,6 +215,24 @@ bridged to the VLANs that the VMs are attached to.
 
 After all this, run ``./stack.sh`` to make devstack run.
 
+NB:
+A number of the important options are set by default to allow out-of-the-box
+operation. Configuration defaults (including ETCD settings and VPP branch
+specification)  are found in ``devstack/settings``.
+
+VPP, and the VMs it runs, need hugepages, and the plugin will make you some
+automatically - the default setting for the number of hugepages is 1024 (2GB).
+
+If the specified VPP uplink interface in the physnet list is ``tap-0``, the
+plugin will create it in VPP to use if it's not already present
+(and you won't have to give a physical interface up to VPP and work out the
+configuration steps, which can be quite involved).  This will turn up on
+your host as an interface called 'test', which you should be able to use normally -
+you can give it an address, add routes, set up NAT or even make VLAN subinterfaces.
+
+Take a peek into the ``init_networking_vpp`` function of ``devstack/plugin.sh``
+(executed at stack-time) to see some of what's happening.
+
 But VPP won't start!
 ~~~~~~~~~~~~~~~~~~~~
 
