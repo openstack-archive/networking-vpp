@@ -27,9 +27,9 @@ import re
 import six
 import time
 
-from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
+from networking_vpp.compat import etcdutils
 from networking_vpp.compat import n_const
 from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
@@ -448,7 +448,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # this state by Nova.
         self.notify_bound = notify_bound
 
-        self.client_factory = nwvpp_utils.EtcdClientFactory(cfg.CONF.ml2_vpp)
+        self.client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
 
         # For Liberty support, we have to have a memory between notifications
         self.deleted_rule_secgroup_id = {}
@@ -461,7 +461,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.journal_kick_key = self.election_key_space + '/kick-journal'
 
         etcd_client = self.client_factory.client()
-        etcd_helper = nwvpp_utils.EtcdHelper(etcd_client)
+        etcd_helper = etcdutils.EtcdHelper(etcd_client)
         etcd_helper.ensure_dir(self.state_key_space)
         etcd_helper.ensure_dir(self.port_key_space)
         etcd_helper.ensure_dir(self.secgroup_key_space)
