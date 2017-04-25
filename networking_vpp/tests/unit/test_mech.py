@@ -59,7 +59,7 @@ class VPPMechanismDriverTestCase(
     # to suppress thread creation
     @mock.patch('networking_vpp.mech_vpp.eventlet')
     @mock.patch('etcd.Client')
-    @mock.patch('networking_vpp.agent.utils.EtcdClientFactory.client')
+    @mock.patch('networking_vpp.etcdutils.EtcdClientFactory.client')
     def setUp(self, mock_eventlet, mock_client, mock_make_client):
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
