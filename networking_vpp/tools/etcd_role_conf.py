@@ -15,12 +15,13 @@
 #    under the License.
 
 import click
-import jsonutils
 import os
 import subprocess
 import sys
 
 from networking_vpp._i18n import _
+
+from oslo_serialization import jsonutils
 
 
 ETCDCTL_PATH = "etcdctl"
@@ -217,6 +218,10 @@ def run_checks():
         sys.exit(3)
 
 
-if __name__ == '__main__':
+def main():
     run_checks()
     etcdctl()
+
+
+if __name__ == '__main__':
+    main()
