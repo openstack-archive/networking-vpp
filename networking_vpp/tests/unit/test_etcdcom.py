@@ -68,7 +68,7 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
     # to suppress thread creation
     @mock.patch('networking_vpp.mech_vpp.eventlet')
     @mock.patch('etcd.Client')
-    @mock.patch('networking_vpp.agent.utils.EtcdClientFactory.client')
+    @mock.patch('networking_vpp.etcdutils.EtcdClientFactory.client')
     def setUp(self, mock_event, mock_client, mock_make_client):
         super(EtcdAgentCommunicatorTestCase, self).setUp()
 

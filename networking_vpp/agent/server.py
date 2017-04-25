@@ -42,11 +42,10 @@ import time
 import vpp
 
 from networking_vpp._i18n import _
-from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
-from networking_vpp.etcdutils import EtcdChangeWatcher
+from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
 from networking_vpp import version
@@ -2392,7 +2391,7 @@ class EtcdListener(object):
         self.gpe_key_space = LEADIN + "/global/networks/gpe"
 
         etcd_client = self.client_factory.client()
-        etcd_helper = nwvpp_utils.EtcdHelper(etcd_client)
+        etcd_helper = etcdutils.EtcdHelper(etcd_client)
         # We need certain directories to exist so that we can write to
         # and watch them
         etcd_helper.ensure_dir(self.port_key_space)
@@ -2467,7 +2466,7 @@ class EtcdListener(object):
         self.pool.waitall()
 
 
-class PortWatcher(EtcdChangeWatcher):
+class PortWatcher(etcdutils.EtcdChangeWatcher):
 
     def do_tick(self):
         # The key that indicates to people that we're alive
@@ -2568,7 +2567,7 @@ class PortWatcher(EtcdChangeWatcher):
             self.etcd_client.write(gpe_key, host_ip)
 
 
-class RouterWatcher(EtcdChangeWatcher):
+class RouterWatcher(etcdutils.EtcdChangeWatcher):
     """Start an etcd watcher for router operations.
 
     Starts an etcd watcher on the /router directory for
@@ -2633,7 +2632,7 @@ class RouterWatcher(EtcdChangeWatcher):
                         ' key %s', key)
 
 
-class SecGroupWatcher(EtcdChangeWatcher):
+class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
 
     def __init__(self, etcd_client, name, watch_path,
                  known_keys,
@@ -2661,7 +2660,7 @@ class SecGroupWatcher(EtcdChangeWatcher):
         self.data.reconsider_port_secgroups()
 
 
-class GpeWatcher(EtcdChangeWatcher):
+class GpeWatcher(etcdutils.EtcdChangeWatcher):
 
     def do_tick(self):
         pass
@@ -2806,7 +2805,7 @@ def main():
               cfg.CONF.ml2_vpp.etcd_port,
               cfg.CONF.ml2_vpp.etcd_user)
 
-    client_factory = nwvpp_utils.EtcdClientFactory(cfg.CONF.ml2_vpp)
+    client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
 
     ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
 

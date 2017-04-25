@@ -13,8 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from networking_vpp.agent import exceptions as vpp_agent_exec
-from networking_vpp.agent import utils
+from networking_vpp import etcdutils
+from networking_vpp import exceptions as vpp_exc
 from neutron.tests import base
 from testtools import ExpectedException
 from testtools import matchers
@@ -39,57 +39,57 @@ class TestAgentUtils(base.BaseTestCase):
     def parse_config_test_run(self, host, port, user=None, pw=None):
             fk = FakeConfig(host, port, user, pw)
 
-            cf = utils.EtcdClientFactory(fk)
+            cf = etcdutils.EtcdClientFactory(fk)
 
             return cf.etcd_args['host']
 
     def test_pass_user_password(self):
         # The defaults
         fk = FakeConfig('host', 1, None, None)
-        cf = utils.EtcdClientFactory(fk)
+        cf = etcdutils.EtcdClientFactory(fk)
         self.assertThat(cf.etcd_args['username'], matchers.Equals(None))
         self.assertThat(cf.etcd_args['password'], matchers.Equals(None))
 
         # When set
         fk = FakeConfig('host', 1, 'uuu', 'ppp')
-        cf = utils.EtcdClientFactory(fk)
+        cf = etcdutils.EtcdClientFactory(fk)
         self.assertThat(cf.etcd_args['username'], matchers.Equals('uuu'))
         self.assertThat(cf.etcd_args['password'], matchers.Equals('ppp'))
 
     def test_parse_empty_host_config(self):
         """Test parse_host_config with empty value """
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('', OVERRIDE_PORT)
 
     def test_parse_fishy_host_config(self):
         """Test parse_host_config with non-string value """
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostsConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostsConfig):
             self.parse_config_test_run(1, OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostsConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostsConfig):
             self.parse_config_test_run(None, OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run(',', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1,', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run(',host2', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1,,host2', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1:', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1::123', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1:123:123', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1:123:', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1:,host2', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1::123,host2', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1:123:123,host2', OVERRIDE_PORT)
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run('host1:123:,host2', OVERRIDE_PORT)
 
     def test_parse_single_host_config(self):
@@ -131,13 +131,13 @@ class TestAgentUtils(base.BaseTestCase):
     def test_parse_single_host_invalid_config(self):
         """Test parse_host_config with invalid host-port value """
         hosts = '192.168.1.10:fred,192.168.1.11,192.168.1.12:1236'
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run(hosts, OVERRIDE_PORT)
 
     def test_parse_multi_host_invalid_config(self):
         """Test parse_host_config with invalid host-port value """
         hosts = '192.168.1.10:fred,192.168.1.11,192.168.1.12:1236'
-        with ExpectedException(vpp_agent_exec.InvalidEtcHostConfig):
+        with ExpectedException(vpp_exc.InvalidEtcHostConfig):
             self.parse_config_test_run(hosts, OVERRIDE_PORT)
 
     def test_parse_single_host_new_format(self):
