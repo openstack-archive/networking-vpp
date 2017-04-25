@@ -215,6 +215,12 @@ bridged to the VLANs that the VMs are attached to.
 
 After all this, run ``./stack.sh`` to make devstack run.
 
+NB:
+A number of the important options are set by default to allow out-of-the-box
+operation. The ETCD defaults are found in ``settings``, and the logical
+interface creation for VPP is in the ``init_networking_vpp`` function in
+``devstack/plugin.sh``
+
 But VPP won't start!
 ~~~~~~~~~~~~~~~~~~~~
 
