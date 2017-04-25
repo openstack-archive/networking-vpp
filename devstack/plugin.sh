@@ -29,7 +29,7 @@ function install_networking_vpp {
         install_package qemu-kvm-ev
         # This ensures that any previously installed older QEMU doesn't get
         # preferentially used even when the new one is in place
-        is_package_installed qemu-system-x86 && uninstall_package qemu-system-x86
+        is_package_installed qemu-system-x86 && uninstall_package qemu-system-x86 || true
     fi
 }
 
