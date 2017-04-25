@@ -26,7 +26,13 @@ import time
 from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 import uuid
 
+from networking_vpp import exceptions as vpp_exceptions
+
+
 LOG = logging.getLogger(__name__)
+
+ETC_HOSTS_DELIMITER = ','
+ETC_PORT_HOST_DELIMITER = ':'
 
 elector_cleanup = []
 
@@ -544,3 +550,101 @@ class EtcdChangeWatcher(EtcdWatcher):
         The watch path is removed, leaving only the subpath.
         """
         pass
+
+
+class EtcdHelper(object):
+
+    def __init__(self, client):
+        self.etcd_client = client
+
+    def clear_state(self, key_space):
+        """Clear the keys in the key_space"""
+        LOG.debug("Clearing key space: %s", key_space)
+        try:
+            rv = self.etcd_client.read(key_space)
+            for child in rv.children:
+                self.etcd_client.delete(child.key)
+        except etcd.EtcdNotFile:
+            # Can't delete directories - they're harmless anyway
+            pass
+
+    def ensure_dir(self, path):
+        try:
+            self.etcd_client.write(path, None, dir=True)
+        except etcd.EtcdNotFile:
+            # Thrown when the directory already exists, which is fine
+            pass
+
+
+class EtcdClientFactory(object):
+
+    def _parse_host(self, etc_host_elem, default_port):
+        """Parse a single etcd host entry (which can be host or host/port)
+
+        Returns a format suitable for the etcd client creation call.
+        NB: the client call is documented to take one host, host/port
+        tuple or a tuple of host/port tuples; in fact, it will take
+        a bare host in the tuple form as well.
+        """
+
+        if not isinstance(etc_host_elem, str) or etc_host_elem == '':
+            raise vpp_exceptions.InvalidEtcHostConfig()
+
+        if ETC_PORT_HOST_DELIMITER in etc_host_elem:
+            try:
+                host, port = etc_host_elem.split(ETC_PORT_HOST_DELIMITER)
+                port = int(port)
+                etc_host = (host, port,)
+            except ValueError:
+                raise vpp_exceptions.InvalidEtcHostConfig()
+        else:
+            etc_host = (etc_host_elem, default_port)
+
+        return etc_host
+
+    def _parse_host_config(self, etc_host, default_port):
+        """Parse etcd host config (host, host/port, or list of host/port)
+
+        Returns a format suitable for the etcd client creation call.
+        This always uses the list-of-hosts tuple format, even with a single
+        host.
+        """
+
+        if not isinstance(etc_host, str):
+            raise vpp_exceptions.InvalidEtcHostsConfig()
+
+        if ETC_HOSTS_DELIMITER in etc_host:
+            hosts = etc_host.split(ETC_HOSTS_DELIMITER)
+        else:
+            hosts = [etc_host]
+
+        etc_hosts = ()
+        for host in hosts:
+            etc_hosts = etc_hosts + (self._parse_host(host, default_port),)
+
+        return etc_hosts
+
+    def __init__(self, ml2_vpp_conf):
+        hostconf = self._parse_host_config(ml2_vpp_conf.etcd_host,
+                                           ml2_vpp_conf.etcd_port)
+
+        self.etcd_args = {
+            'host': hostconf,
+            'username': ml2_vpp_conf.etcd_user,
+            'password': ml2_vpp_conf.etcd_pass,
+            'allow_reconnect': True}
+
+        if not ml2_vpp_conf.etcd_insecure_explicit_disable_https:
+            if ml2_vpp_conf.etcd_ca_cert is None:
+                raise vpp_exceptions.InvalidEtcdCAConfig()
+
+            self.etcd_args['protocol'] = 'https'
+            self.etcd_args['ca_cert'] = ml2_vpp_conf.etcd_ca_cert
+
+        else:
+            LOG.warning("etcd is not using HTTPS, insecure setting")
+
+    def client(self):
+        etcd_client = etcd.Client(**self.etcd_args)
+
+        return etcd_client

@@ -26,15 +26,13 @@ import re
 import six
 import time
 
-from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
 from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
-from networking_vpp.etcdutils import EtcdChangeWatcher
-from networking_vpp.etcdutils import EtcdElection
+from networking_vpp import etcdutils
 
 from neutron.callbacks import events
 from neutron.callbacks import registry
@@ -449,7 +447,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # this state by Nova.
         self.notify_bound = notify_bound
 
-        self.client_factory = nwvpp_utils.EtcdClientFactory(cfg.CONF.ml2_vpp)
+        self.client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
 
         # For Liberty support, we have to have a memory between notifications
         self.deleted_rule_secgroup_id = {}
@@ -462,7 +460,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.journal_kick_key = self.election_key_space + '/kick-journal'
 
         etcd_client = self.client_factory.client()
-        etcd_helper = nwvpp_utils.EtcdHelper(etcd_client)
+        etcd_helper = etcdutils.EtcdHelper(etcd_client)
         etcd_helper.ensure_dir(self.state_key_space)
         etcd_helper.ensure_dir(self.port_key_space)
         etcd_helper.ensure_dir(self.secgroup_key_space)
@@ -946,10 +944,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         etcd_client = self.client_factory.client()
 
         session = neutron_db_api.get_session()
-        etcd_election = EtcdElection(etcd_client, 'forward_worker',
-                                     self.election_key_space,
-                                     work_time=PARANOIA_TIME + 3,
-                                     recovery_time=3)
+        etcd_election = etcdutils.EtcdElection(etcd_client, 'forward_worker',
+                                               self.election_key_space,
+                                               work_time=PARANOIA_TIME + 3,
+                                               recovery_time=3)
 
         while True:
             try:
@@ -1008,7 +1006,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # watcher - this means that we're prepared with the information
         # to accept bind requests.
 
-        class ReturnWatcher(EtcdChangeWatcher):
+        class ReturnWatcher(etcdutils.EtcdChangeWatcher):
 
             def __init__(self, etcd_client, name, watch_path,
                          election_path=None, data=None):
