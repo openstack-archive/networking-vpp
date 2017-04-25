@@ -14,3 +14,4 @@ eventlet
 ipaddress
 click
 oslo_serialization
+vpp_papi
