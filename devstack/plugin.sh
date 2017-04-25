@@ -34,7 +34,15 @@ function install_networking_vpp {
 }
 
 function init_networking_vpp {
-    :
+    if ! [ -z "$MECH_VPP_PHYSNETLIST" ]; then
+        uplink=$(echo $MECH_VPP_PHYSNETLIST | cut -d ':' -f 2)
+        # test environments
+        if ! [[ `vppctl show interfaces` =~ "$uplink" ]] && [[ "$uplink" == 'tap-0' ]]; then
+            echo "$uplink not found in vppctl show interfaces"
+            vppctl tap connect test
+            vppctl set interface state $uplink up
+        fi
+    fi
 }
 
 function configure_networking_vpp {
@@ -114,6 +122,7 @@ if [[ "$1" == "stack" && "$2" == "pre-install" ]]; then
 elif [[ "$1" == "stack" && "$2" == "install" ]]; then
     # Perform installation of service source
     echo_summary "Installing $name"
+    init_networking_vpp
     install_networking_vpp
     agent_do install_vpp_agent
 

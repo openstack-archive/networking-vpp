@@ -17,6 +17,8 @@ EOF
   else
       die $LINENO "Can't install VPP on unsupported os: $os_VENDOR"
   fi
+  install_package apt-transport-https
+  install_package bridge-utils
   install_package vpp
   # python api package name was renamed in 17.04, try to install both
   install_package vpp-python-api || install_package vpp-api-python
