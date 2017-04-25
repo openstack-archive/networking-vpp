@@ -20,8 +20,6 @@ vpp_opts = [
     cfg.StrOpt('physnets',
                help=_("Comma-separated list of net-name:interface-name for "
                       "physical connections")),
-    cfg.StrOpt('vxlan_src_addr', default=None,
-               help=_("Source address used for VXLAN tunnel packets.")),
     cfg.StrOpt('gpe_src_cidr', default=None,
                help=_("The source_IP/Mask used for GPE tunnel packets. ")),
     cfg.StrOpt('gpe_locators', default=None,
@@ -33,10 +31,6 @@ vpp_opts = [
                       "specified on compute and network nodes. In the "
                       "current implementation only a single locator "
                       "is supported.")),
-    cfg.StrOpt('vxlan_bcast_addr',
-               help=_("Broadcast address used to set up VXLAN tunnels.")),
-    cfg.StrOpt('vxlan_vrf',
-               help=_("VPP's VRF for the encapped VXLAN packets.")),
     cfg.StrOpt('etcd_host', default="127.0.0.1",
                help=_("Etcd host IP address(es) to connect etcd client."
                       "It takes two formats: single IP/host or a multiple "

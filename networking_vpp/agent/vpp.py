@@ -515,16 +515,6 @@ class VPPInterface(object):
         t = self.call_vpp('macip_acl_interface_get')
         return t
 
-#    def create_srcrep_vxlan_subif(self, vrf_id, src_addr, bcast_addr, vnid):
-#        t = self.call_vpp('vxlan_add_del_tunnel',
-#            True,  # is_add
-#            src_addr,
-#            bcast_addr,
-#            vrf_id,
-#            decap_next_index,   # what is this?
-#            vni)
-#
-#        return t.sw_if_index
     ########################################
 
     def set_vlan_remove(self, if_id):
