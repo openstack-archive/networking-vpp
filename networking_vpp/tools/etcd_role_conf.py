@@ -217,6 +217,10 @@ def run_checks():
         sys.exit(3)
 
 
-if __name__ == '__main__':
+def main():
     run_checks()
     etcdctl()
+
+
+if __name__ == '__main__':
+    main()
