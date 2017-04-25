@@ -1,7 +1,88 @@
 CHANGES
 =======
 
+17.04
+-----
+
+* Update documentation and ancillary documents in prep for 17.04
+* 1-to-1 SNAT: Changes required to support the 17.04 VPP API.
+* Tame the security group logging
+* Command line tools
+* Resyncing on agent restart
+* Resync security groups on startup
+* Defer delete of used ACLs
+* Add guru meditation reporting
+* Add etcd RBAC sample configuration script.
+* Start vpp-agent before routers are created in devstack
+* Add etcd certificate options when cleaning up
+* Fix etcd client creation when security requested
+* Documentation about etcd SSL configuration
+* Fix issues with port unbinding
+* Add subjectAltName to avoid urllib3 warnings
+* README.rst: Adding section touching briefly on testing
+* Add argument dump for failed VPP calls
+* Improve idempotency of network create/delete in VPP
+* Update etcd content check script
+* Stop GPE propagation being attempted on non-GPE networks
+* Deal with uplink, upstream and physnet interfaces
+* VXLAN-GPE feature support
+* L3 plugin external gateway
+* Automate some of the resync behaviour
+* Minor corrections to README.rst
+* L3 Floating IP Support
+* Fix incorrect markup syntax in README.rst
 * L3 router service plugin for networking-vpp
+* Comment fix
+* Add .DS_Store to .gitignore
+* Fix lazy import line
+* Typo fix in comment
+* Correct mac age setting
+* devstack/functions: Ensuring the return value from clean_etcd is 0
+* Bring interfaces up when they are ready
+* Add functionality to etcd watchers for initial resync extra code
+* Change EtcdChangeWatcher to have a nicer API
+* Add provisioning blocks support
+* Fix security group options
+* Remove secgroup push workaround
+* Async security group updates
+* Make adding of port security asynchronous
+* Update binding notification code
+* Fix up physnet and agent liveness detection
+* Fix startup privilege setting so that it always runs on VPP config
+* Remove privilege requirements for VPP connection from agent
+* Add etcd SSL configuration options.
+* Remove stray "done" keyword from etcdctl fix
+* Convert secgroups from global to object property
+* Pull out interface cleanup code from unbind
+* Remove old recursion check on notify
+* Add script to dump VPP ACLs for humans
+* Predefine rv to avoid unknown variable exception
+* Use separate clients for each of the eventlets/threads
+* Delete security groups via the journal, not directly.
+* Make etcd cleanup code simpler
+* Change watcher log level when the host is alive.
+* Update README
+* Add cleanup of etcd (in case of previous runs) to devstack install
+* Remove VXLAN settings
+* Update compat to include neutron(_lib).context
+* Register before_delete event for liberty security group deleting
+* Use PRECOMMIT global variable
+* Unbind port properly in update_port_precommit
+* Remove l2 tag rewrite for vhost and tap interface
+* Stop security group watcher changing secgroup space
+* Add new etcd watcher model
+* Change watcher with nice formatting
+* Election fixes
+* Improve VPP error reporting
+* Adding BridgeDevice.disable_ipv6 for Liberty compatibility
+* Make eventlet patching precede urllib3 load in agent
+* Remove unused logging import
+* Support for py34, py35 unit test runs
+* Fix 17.01 Liberty compatibility issue - missing UUID_PATTERN
+* Resolve too many threads running on the etcd and DB journal
+* tox.ini: Updated [testenv:cover] so that coverage generates a report
+* Use neutron-lib portbindings api-def
+* Fix agent error while deploying spoof acls to VPP
 
 17.01
 -----

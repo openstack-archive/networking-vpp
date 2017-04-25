@@ -32,7 +32,7 @@ There's a devstack plugin. You can add this plugin to your ``local.conf``
 and see it working. The devstack plugin now takes care of
 
 - installing the networking-vpp code
-- installing VPP itself (version 17.01)
+- installing VPP itself (version 17.04)
 - installing etcd
 - using a QEMU version that supports vhostuser well
 
@@ -369,6 +369,18 @@ forward and reverse worker thread. If the primary worker thread fails,
 the sleeping threads will detect this, elect a master and start doing
 the work.
 
+And we've dealt with restart cases.  When you run in production you should
+now be able to restart the agent (for upgrade, for instance) without
+stopping VPP - it will 'catch up' the state of VPP when it restarts, so
+you can do this upgrade without ever interrupting the traffic (a key
+requirement of NFV workloads).  If you do want to restart VPP, we
+recommend stopping the agent, then VPP, then starting VPP and then the agent
+- which will, again, catch up the state of VPP to where it needs to be (VPP
+is just a dataplane and always restarts with no state).
+
+We've dropped the privilege of the agent.  This means it runs as a normal
+user and limits the damage it could cause if anything went wrong.
+
 What is VXLAN-GPE and how can I get it to work?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -468,16 +480,6 @@ What are you doing next?
 We also keep our job list in <https://bugs.launchpad.net/networking-vpp>
 anything starting 'RFE' is a 'request for enhancement'.
 
-We are working towards more fault tolerance. Our aim is to be tolerant
-of two other failure modes: the case where etcd is so busy that the
-updates expire before agents receive them, and the case where the agent
-restarts. In both of these cases, we want to *resync* -reconfigure VPP
-just as much as necessary that it now has the right state, and ideally
-without disrupting the traffic for VMs that are already attached and
-whose ports are correctly configured. This is work soon to come; you'll
-find the patch in the patch queue and you're welcome to pitch in and
-help.
-
 We will be hardening the native L3 router implementation (vpp-router) in
 future releases. This will include fixes to the etcd communication routines,
 support for resync and high availablilty. Support for L3 extensions like
@@ -485,9 +487,6 @@ extraroute etc. will also be added to the service plugin.
 
 We'll be dealing with a few of the minor details of a good Neutron
 network driver, like sorting out MTU configuration.
-
-At the moment, the agent runs as root. We want to lower its privilege to
-improve security.
 
 What can I do to help?
 ~~~~~~~~~~~~~~~~~~~~~~
