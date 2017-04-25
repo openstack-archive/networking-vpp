@@ -350,8 +350,6 @@ class VPPForwarder(object):
             if physnet_name is not None:
                 physnet_ports_found[physnet_name] = f['sw_if_idx']
 
-        LOG.debug('Found physnets %s', ', '.join(sorted(physnet_ports_found)))
-
         # Find physnets we intend according to the config
         configured_physnet_interfaces = {}
         for name, if_name in physnets.items():
@@ -359,7 +357,8 @@ class VPPForwarder(object):
             configured_physnet_interfaces[name] = \
                 self.vpp.get_ifidx_by_name(if_name)
 
-        LOG.debug('Configured physnets %s', ', '.join(sorted(physnets.keys())))
+        LOG.debug('Configured physnets %s',
+                  ', '.join(sorted(configured_physnet_interfaces.keys())))
 
         for uplink_physnet, net_type, seg_id, sw_if_idx, sup_sw_if_idx \
                 in uplink_ports_found:
@@ -610,7 +609,6 @@ class VPPForwarder(object):
                 self.delete_gpe_vni_to_bridge_mapping(seg_id,
                                                       bridge_domain_id
                                                       )
-                LOG.debug('Current gpe mapping %s', self.gpe_map)
 
             self.delete_network_bridge_on_host(net_type, bridge_domain_id,
                                                uplink_if_idx)
@@ -701,8 +699,6 @@ class VPPForwarder(object):
         def _is_tap_configured(device_name, bridge, bridge_name):
             try:
                 if ip_lib.device_exists(device_name):
-                    LOG.debug('External tap device %s found!',
-                              device_name)
                     LOG.debug('Bridging tap interface %s on %s',
                               device_name, bridge_name)
                     if not bridge.owns_interface(device_name):
@@ -896,7 +892,7 @@ class VPPForwarder(object):
         # Ensure local mac to VNI mapping for GPE
         if net_type == 'vxlan':
             self.add_local_gpe_mapping(seg_id, mac)
-            LOG.debug('Current gpe mapping %s', self.gpe_map)
+
         props['net_data'] = net_data
         LOG.debug('Bound vpp interface with sw_idx:%s on '
                   'bridge domain:%s',
@@ -948,8 +944,6 @@ class VPPForwarder(object):
             # Delete port from vpp_acl map if present
             if iface_idx in self.port_vpp_acls:
                 del self.port_vpp_acls[iface_idx]
-                LOG.debug("secgroup_watcher: Current port acl_vector "
-                          "mappings %s" % str(self.port_vpp_acls))
             # This interface is no longer connected if it's deleted
             # RACE, as we may call unbind BEFORE the vhost user
             # interface is notified as connected to qemu
@@ -981,7 +975,6 @@ class VPPForwarder(object):
             mac = props['mac']
             seg_id = props['net_data']['segmentation_id']
             self.delete_local_gpe_mapping(seg_id, mac)
-            LOG.debug('Current gpe mapping %s', self.gpe_map)
         self.interfaces.pop(uuid)
 
     def _to_acl_rule(self, r, d, a=2):
@@ -1099,8 +1092,6 @@ class VPPForwarder(object):
         in_acl_idx, out_acl_idx = \
             self.secgroups.get(secgroup.id,
                                VppAcl(0xffffffff, 0xffffffff))
-        LOG.debug("secgroup_watcher:updating vpp input acl idx: %s and "
-                  "output acl idx %s" % (in_acl_idx, out_acl_idx))
 
         in_acl_rules, out_acl_rules = (
             [self._to_acl_rule(r, 0) for r in secgroup.ingress_rules],
@@ -1110,8 +1101,6 @@ class VPPForwarder(object):
         # IPv4/IPv6 tcp/udp traffic
         # Exclude ICMP
         if not reflexive_acls:
-            LOG.debug("secgroup_watcher: vpp reflexive acls are disabled "
-                      "vpp-agent is adding return rules")
             in_acl_return_rules, out_acl_return_rules = (
                 [self._reverse_rule(r) for r in in_acl_rules
                     if r['proto'] in [6, 17, 0]],
@@ -1120,13 +1109,6 @@ class VPPForwarder(object):
                 )
             in_acl_rules = in_acl_rules + out_acl_return_rules
             out_acl_rules = out_acl_rules + in_acl_return_rules
-        else:
-            LOG.debug("secgroup_watcher: vpp reflexive_acls are enabled")
-
-        LOG.debug("secgroup_watcher:ingress ACL rules %s for secgroup %s"
-                  % (in_acl_rules, secgroup.id))
-        LOG.debug("secgroup_watcher:egress ACL rules %s for secgroup %s"
-                  % (out_acl_rules, secgroup.id))
 
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
                                               tag=secgroup_tag(secgroup.id,
@@ -1138,11 +1120,7 @@ class VPPForwarder(object):
                                                                 VM_TO_VPP),
                                                rules=out_acl_rules,
                                                count=len(out_acl_rules))
-        LOG.debug("secgroup_watcher: in_acl_index:%s out_acl_index:%s "
-                  "for secgroup:%s" % (in_acl_idx, out_acl_idx, secgroup.id))
         self.secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
-        LOG.debug("secgroup_watcher: current secgroup mapping: %s"
-                  % self.secgroups)
 
         # If this is on the pending delete list it shouldn't be now
         self.deferred_delete_secgroups.discard(secgroup.id)
@@ -1189,8 +1167,6 @@ class VPPForwarder(object):
                     remaining_secgroups.add(secgroup)
                 else:
                     for acl_idx in secgroup_acls:
-                        LOG.debug("secgroup_watcher: deleting VPP ACL %s for "
-                                  "secgroup %s" % (acl_idx, secgroup))
                         self.vpp.acl_delete(acl_index=acl_idx)
                     del self.secgroups[secgroup]
             except Exception as e:
@@ -1209,7 +1185,7 @@ class VPPForwarder(object):
         populate secgroups data structure relating UUID of secgroup to ACL
         self.secgroups = {secgroup_id : VppAcl(in_idx, out_idx)}
         """
-        LOG.debug("secgroup_watcher: Populating secgroup to VPP ACL map..")
+        LOG.debug("Populating secgroup to VPP ACL map..")
 
         # Clear existing secgroups to ACL map for sanity
         self.secgroups = {}
@@ -1253,8 +1229,8 @@ class VPPForwarder(object):
                     out_idx=acl_idx)
 
         if self.secgroups == {}:
-            LOG.debug("secgroup_watcher: We have an empty secgroups "
-                      "to acl mapping {}. Possible reason: vpp "
+            LOG.debug("We recovered an empty secgroups "
+                      "to acl mapping. Possible reason: vpp "
                       "may have been restarted on host.")
 
         return self.secgroups.keys()
@@ -1281,8 +1257,6 @@ class VPPForwarder(object):
                 # have them and they will be decodeable.  Ignore
                 # any externally created ACLs, they're not our problem.
 
-            LOG.debug("secgroup_watcher: created acl_map %s from "
-                      "vpp acl tags" % acl_map)
         except Exception:
             LOG.exception("Exception getting acl_map from vpp acl tags")
             raise
@@ -1317,14 +1291,12 @@ class VPPForwarder(object):
             if (not acl or
                     acl.in_idx == 0xFFFFFFFF or
                     acl.out_idx == 0xFFFFFFFF):
-                LOG.debug("port_watcher: Waiting for a valid vpp acl "
+                LOG.debug("Still waiting for a valid vpp acl "
                           "corresponding to secgroup %s" % secgroup_id)
                 return False
             else:
                 vpp_acls.append(acl)
 
-        LOG.debug("port_watcher: setting vpp acls %s on port sw_if_index %s "
-                  "for secgroups %s" % (vpp_acls, sw_if_index, secgroup_ids))
         self._set_acls_on_vpp_port(vpp_acls, sw_if_index)
         return True
 
@@ -1349,9 +1321,6 @@ class VPPForwarder(object):
         acls = input_acls + output_acls
         # (najoy) At this point we just keep a mapping of acl vectors
         # associated with a port and do not check for any repeat application.
-        LOG.debug("secgroup_watcher: Setting VPP acl vector %s with "
-                  "n_input %s on sw_if_index %s"
-                  % (acls, len(input_acls), sw_if_index))
         self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
                                            count=len(acls),
                                            n_input=len(input_acls),
@@ -1407,8 +1376,6 @@ class VPPForwarder(object):
             pass  # There may not be an ACL on the interface
         acl_index = self.vpp.macip_acl_add(rules=mac_ip_rules,
                                            count=len(mac_ip_rules))
-        LOG.debug("secgroup_watcher: Setting mac_ip_acl index %s "
-                  "on interface %s" % (acl_index, sw_if_index))
         self.vpp.set_macip_acl_on_interface(sw_if_index=sw_if_index,
                                             acl_index=acl_index,
                                             )
@@ -1428,8 +1395,6 @@ class VPPForwarder(object):
         # ACLs on that port. So ignore
         try:
             l3_acl_vector = self.port_vpp_acls[sw_if_index]['l34']
-            LOG.debug("Deleting Layer3 ACL vector %s from if_idx %s",
-                      l3_acl_vector, sw_if_index)
             self.vpp.delete_acl_list_on_interface(sw_if_index)
             del self.port_vpp_acls[sw_if_index]['l34']
         except KeyError:
@@ -1447,8 +1412,6 @@ class VPPForwarder(object):
         """
         try:
             l2_acl_index = self.port_vpp_acls[sw_if_index]['l23']
-            LOG.debug("Deleting mac_ip acl %s from interface %s",
-                      l2_acl_index, sw_if_index)
             self.vpp.delete_macip_acl_on_interface(sw_if_index, l2_acl_index)
             del self.port_vpp_acls[sw_if_index]['l23']
         except KeyError:
@@ -1474,8 +1437,6 @@ class VPPForwarder(object):
         if spoof_acl:
             in_acl_idx, out_acl_idx = spoof_acl.in_idx, spoof_acl.out_idx
         else:
-            LOG.debug("secgroup_watcher: adding a new spoof filter acl "
-                      "with rules %s", spoof_filter_rules)
             in_acl_idx = out_acl_idx = 0xffffffff
 
         in_acl_idx = self.vpp.acl_add_replace(
@@ -1495,8 +1456,6 @@ class VPPForwarder(object):
         if (in_acl_idx != 0xFFFFFFFF
                 and out_acl_idx != 0xFFFFFFFF and not spoof_acl):
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
-            LOG.debug("secgroup_watcher: adding a new spoof_acl %s to "
-                      "secgroups mapping %s", str(spoof_acl), self.secgroups)
             self.secgroups[COMMON_SPOOF_TAG] = spoof_acl
         return spoof_acl
 
@@ -1582,8 +1541,9 @@ class VPPForwarder(object):
             pass
         else:
             # Unsupported segmentation type
-            LOG.debug("Unsupported segmentation type for external networks %s",
-                      router['external_net_type'])
+            LOG.warning("Unsupported segmentation type for "
+                        "external networks %s",
+                        router['external_net_type'])
             return False
 
         # Check if this interface is already set to outside
@@ -1623,8 +1583,9 @@ class VPPForwarder(object):
             pass
         else:
             # Unsupported type
-            LOG.debug("Unsupported segmentation type for external networks %s",
-                      router['external_net_type'])
+            LOG.warning("Unsupported segmentation type for "
+                        "external networks %s",
+                        router['external_net_type'])
             return False
 
         # Grab all snat and physnet addresses
@@ -1854,16 +1815,12 @@ class VPPForwarder(object):
     def ensure_gpe_vni_to_bridge_mapping(self, seg_id, bridge_idx):
         # Add eid table mapping: vni to bridge-domain
         if (seg_id, bridge_idx) not in self.vpp.get_lisp_vni_to_bd_mappings():
-            LOG.debug("Adding GPE VNI-BD mapping for vni %s and bridge-"
-                      "domain %s", seg_id, bridge_idx)
             self.vpp.add_lisp_vni_to_bd_mapping(vni=seg_id,
                                                 bridge_domain=bridge_idx)
 
     def delete_gpe_vni_to_bridge_mapping(self, seg_id, bridge_idx):
         # Remove vni to bridge-domain mapping in VPP if present
         if (seg_id, bridge_idx) in self.vpp.get_lisp_vni_to_bd_mappings():
-            LOG.debug("Deleting vni %s to bridge-domain %s GPE mapping",
-                      seg_id, bridge_idx)
             self.vpp.del_lisp_vni_to_bd_mapping(vni=seg_id,
                                                 bridge_domain=bridge_idx)
 
@@ -1874,8 +1831,6 @@ class VPPForwarder(object):
         underlay ip address of the remote node (i.e. remote_ip)
         """
         if (mac, vni) not in self.gpe_map['remote_map']:
-            LOG.debug("Adding remote gpe mapping for mac:%s, vni:%s to "
-                      "remote underlay ip: %s", mac, vni, remote_ip)
             is_ip4 = 1 if ip_network(unicode(remote_ip)).version == 4 else 0
             remote_locator = {"is_ip4": is_ip4,
                               "priority": 1,
@@ -1888,9 +1843,6 @@ class VPPForwarder(object):
     def delete_remote_gpe_mapping(self, vni, mac):
         """Delete a remote GPE vni to mac mapping."""
         if (mac, vni) in self.gpe_map['remote_map']:
-            LOG.debug("Deleting remote gpe mapping for mac:%s, vni:%s to "
-                      "remote underlay ip: %s", mac, vni,
-                      self.gpe_map['remote_map'][(mac, vni)])
             self.vpp.del_lisp_remote_mac(mac, vni)
             del self.gpe_map['remote_map'][(mac, vni)]
 
@@ -1900,14 +1852,10 @@ class VPPForwarder(object):
         LOG.debug('Adding vni %s to gpe_map', vni)
         lset_mapping['vnis'].add(vni)
         if mac not in lset_mapping['local_map']:
-            LOG.debug('Adding a local gpe mapping for mac:%s & vni:%s in '
-                      'locator_set %s', mac, vni, gpe_lset_name)
             self.vpp.add_lisp_local_mac(mac, vni, gpe_lset_name)
             lset_mapping['local_map'][mac] = vni
 
     def delete_local_gpe_mapping(self, vni, mac):
-        LOG.debug('Deleting a local gpe mapping in locator set %s for '
-                  'mac: %s and vni %s', gpe_lset_name, mac, vni)
         lset_mapping = self.gpe_map[gpe_lset_name]
         if mac in lset_mapping['local_map']:
             self.vpp.del_lisp_local_mac(mac, vni, gpe_lset_name)
@@ -1985,7 +1933,6 @@ class VPPForwarder(object):
         # Remove any stale locators from the locator set, which may
         # be due to a configuration change
         locator_indices = locators[0]['sw_if_idxs'] if locators else []
-        LOG.debug("Current gpe locator indices: %s", locator_indices)
         for sw_if_index in locator_indices:
             if sw_if_index != if_physnet:
                 self.vpp.del_lisp_locator(
@@ -2188,12 +2135,6 @@ class EtcdListener(object):
 
             # Set Allowed address pairs and mac-spoof filter
             aa_pairs = security_data.get('allowed_address_pairs', [])
-            LOG.debug("port_watcher: Setting allowed "
-                      "address pairs %s on port %s "
-                      "sw_if_index %s" %
-                      (aa_pairs,
-                       id,
-                       iface_idx))
             self.set_mac_ip_acl_on_port(
                 security_data['mac_address'],
                 security_data.get('fixed_ips'),
@@ -2245,11 +2186,6 @@ class EtcdListener(object):
         if (self.secgroup_enabled and
                 is_secured_port and
                 secgroup_ids != []):
-            LOG.debug("port_watcher:Setting secgroups %s "
-                      "on sw_if_index %s for port %s" %
-                      (secgroup_ids,
-                       props['iface_idx'],
-                       id))
             if not self.vppf.maybe_set_acls_on_port(
                     secgroup_ids,
                     iface_idx):
@@ -2335,7 +2271,6 @@ class EtcdListener(object):
         Arguments:
         secgroup - OpenStack SecurityGroup ID
         """
-        LOG.debug("secgroup_watcher: deleting secgroup %s" % secgroup)
         self.vppf.acl_delete_on_host(secgroup)
 
     def spoof_filter_on_host(self):
@@ -2374,8 +2309,6 @@ class EtcdListener(object):
         addr_pairs = [(p.get('mac_address', mac_address), p['ip_address'])
                       for p in allowed_address_pairs]
         mac_ips = allowed_mac_ips + mac_ips + addr_pairs
-        LOG.debug("port_watcher: setting mac-ip allowed address pairs %s "
-                  "on port %s" % (mac_ips, sw_if_index))
         self.vppf.set_mac_ip_acl_on_vpp_port(mac_ips, sw_if_index)
 
     def load_macip_acl_mapping(self):
@@ -2390,8 +2323,6 @@ class EtcdListener(object):
             for sw_if_index, acl_index in enumerate(macip_acls):
                 if acl_index != 4294967295:  # Exclude invalid acl index
                     self.vppf.port_vpp_acls[sw_if_index]['l23'] = acl_index
-            LOG.debug('port_watcher: Existing mac-ip acl map %s'
-                      % self.vppf.port_vpp_acls)
         except ValueError:
             pass  # vpp_papi throws this error when no ACLs exist
         except AttributeError:
@@ -2754,8 +2685,6 @@ class GpeWatcher(EtcdChangeWatcher):
                 vni=vni,
                 mac=mac,
                 remote_ip=value)
-            LOG.debug("Current gpe map %s",
-                      self.data.vppf.gpe_map)
 
     def removed(self, gpe_key):
         vni, hostname, mac = self.parse_key(gpe_key)
@@ -2837,7 +2766,6 @@ def main():
     # distribution. Currently only supporting ubuntu and redhat.
     cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
     if cfg.CONF.ml2_vpp.enable_vpp_restart:
-        LOG.debug('Restarting VPP..')
         VPPRestart().wait()
 
     if not cfg.CONF.ml2_vpp.physnets:
