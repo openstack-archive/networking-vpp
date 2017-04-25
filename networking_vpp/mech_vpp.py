@@ -357,7 +357,6 @@ class VPPMechanismDriver(api.MechanismDriver):
         host = port_context.host
         # NB: Host is typically '' if the port is not bound
         if host:
-            LOG.debug('delete_port_postcommit, port is %s', str(port))
             self.communicator.unbind(port_context._plugin_context.session,
                                      port, host)
 
@@ -421,10 +420,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def __init__(self, notify_bound):
         super(EtcdAgentCommunicator, self).__init__()
-        LOG.debug("Using etcd host:%s port:%s user:%s password:***" %
-                  (cfg.CONF.ml2_vpp.etcd_host,
-                   cfg.CONF.ml2_vpp.etcd_port,
-                   cfg.CONF.ml2_vpp.etcd_user,))
+        LOG.debug("Using etcd host:%s port:%s user:%s",
+                  cfg.CONF.ml2_vpp.etcd_host,
+                  cfg.CONF.ml2_vpp.etcd_port,
+                  cfg.CONF.ml2_vpp.etcd_user)
 
         # This is a function that is called when a port has been
         # notified from the agent via etcd as completely attached.
@@ -590,7 +589,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         own auxiliary changes to the DB.
         """
         LOG.debug("Received event %s notification for resource"
-                  " %s with kwargs %s" % (event, resource, kwargs))
+                  " %s with kwargs %s", event, resource, kwargs)
         context = kwargs['context']
 
         # Whatever we're working from should have a resource ID
@@ -688,15 +687,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
         if deleted_rules is None:
             deleted_rules = []
 
-        LOG.debug("etcd_communicator sending security group "
-                  "updates for groups %s to etcd" % sgids)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
             for sgid in sgids:
                 rules = plugin.get_security_group_rules(
                     context, filters={'security_group_id': [sgid]}
                     )
-                LOG.debug("SecGroup rules from neutron DB: %s", rules)
 
                 # If we're in the precommit part, we may have deleted
                 # rules in this list and we should exclude them
@@ -710,7 +706,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def get_secgroup_rule(self, rule_id, context):
         """Fetch and return a security group rule from Neutron DB"""
-        LOG.debug("fetching security group rule: %s" % rule_id)
         plugin = directory.get_plugin()
         with context.session.begin(subtransactions=True):
             return plugin.get_security_group_rule(context, rule_id)
@@ -752,7 +747,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         - Convert the neutron rule to a vpp_acl rule model
         - Return the SecurityGroupRule namedtuple.
         """
-        LOG.debug("Converting neutron rule %s" % rule)
         is_ipv6 = 0 if rule['ethertype'] == 'IPv4' else 1
         # Neutron uses None to represent any protocol
         # Use 0 to represent any protocol
@@ -803,12 +797,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                   rule['port_range_max'])
         sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
                                     protocol, port_min, port_max)
-        LOG.debug("Converted rule: is_ipv6:%s, remote_ip_addr:%s,"
-                  " ip_prefix_len:%s, protocol:%s, port_min:%s,"
-                  " port_max:%s" %
-                  (sg_rule.is_ipv6, sg_rule.remote_ip_addr,
-                   sg_rule.ip_prefix_len, sg_rule.protocol,
-                   sg_rule.port_min, sg_rule.port_max))
         return sg_rule
 
     def send_secgroup_to_agents(self, session, secgroup):
@@ -833,8 +821,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
             egress_rules.append(egress_rule._asdict())
         sg['ingress_rules'] = ingress_rules
         sg['egress_rules'] = egress_rules
-        LOG.debug('Writing secgroup key-val: %s-%s to etcd' %
-                  (secgroup_path, sg))
         db.journal_write(session, secgroup_path, sg)
 
     def delete_secgroup_from_etcd(self, session, secgroup_id):
@@ -843,8 +829,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         secgroup_id -- The id of the security group that we want to delete
         """
-        LOG.debug("Deleting secgroup %s from etcd" %
-                  secgroup_id)
         secgroup_path = self._secgroup_path(secgroup_id)
         db.journal_write(session, secgroup_path, None)
 
@@ -876,8 +860,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def bind(self, session, port, segment, host, binding_type):
         # NB segmentation_id is not optional in the wireline protocol,
         # we just pass 0 for unsegmented network types
-        LOG.debug("Received bind request for port:%s"
-                  % port)
         data = {
             'mac_address': port['mac_address'],
             'mtu': 1500,  # not this, but what?: port['mtu'],
@@ -916,7 +898,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         try:
             # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
             if v is None:
-                LOG.debug('deleting key %s', k)
                 try:
                     etcd_client.delete(k)
                 except etcd.EtcdKeyNotFound:
@@ -924,7 +905,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     # no problem here
                     pass
             else:
-                LOG.debug('writing key %s', k)
                 etcd_client.write(k, jsonutils.dumps(v))
             return True
 
@@ -950,7 +930,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 etcd_election.wait_until_elected()
 
                 def work(k, v):
-                    LOG.debug('forward worker updating etcd key %s', k)
                     if self.do_etcd_update(etcd_client, k, v):
                         return True
                     else:
@@ -971,8 +950,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 LOG.debug('forward worker has emptied journal')
 
                 # work queue is now empty.
-                LOG.debug("ML2_VPP(%s): worker thread pausing"
-                          % self.__class__.__name__)
+
                 # Wait to be kicked, or (in case of emergency) run every
                 # few seconds in case another thread or process dumped
                 # work and failed to process it
@@ -1034,7 +1012,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         # table.
                         host = m.group(1)
 
-                        LOG.debug('host %s is alive', host)
+                        LOG.info('host %s is alive', host)
 
             def removed(self, key):
                 # Nova doesn't much care when ports go away.
