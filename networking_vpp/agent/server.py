@@ -385,11 +385,17 @@ class VPPForwarder(object):
                                                    sw_if_idx,
                                                    sw_if_idx)
             if net_type == 'vlan':
+                # TODO(ijw): check exists
+                self.vpp.delete_vlan_subif(sw_if_idx)
+            if net_type == 'vlan':
                 # We only support VLAN networks here.  GPE networks
                 # can't be reconfigured like this right now. TODO(ijw)
                 self.delete_network_bridge_on_host(net_type,
                                                    sw_if_idx,
                                                    sw_if_idx)
+                if net_type == 'vlan':
+                    # TODO(ijw): check exists
+                    self.vpp.delete_vlan_subif(sw_if_idx)
             # This will remove ports from bridges, which means
             # that they may be rebound back into networks later
             # or may be deleted if no longer used.
@@ -606,12 +612,17 @@ class VPPForwarder(object):
                 self.clear_remote_gpe_mappings(seg_id)
                 # Delete VNI to bridge domain mapping
                 self.delete_gpe_vni_to_bridge_mapping(seg_id,
-                                                      bridge_domain_id
-                                                      )
+                                                      bridge_domain_id)
 
-            self.delete_network_bridge_on_host(net_type, bridge_domain_id,
-                                               uplink_if_idx)
+            self.delete_network_bridge_on_host(net_type, bridge_domain_id)
 
+            if net_type == 'vlan':
+                if uplink_if_idx is not None:
+                    # TODO(ijw): check exists
+                    self.vpp.delete_vlan_subif(uplink_if_idx)
+                else:
+                    LOG.warning('Uplink vlan subinterface not recorded, '
+                                'not deleting')
             # We may not know of this network (if we're dealing with
             # resync on restart, for instance); delete a record
             # if one exists.
@@ -619,8 +630,7 @@ class VPPForwarder(object):
         else:
             LOG.warning("Delete Network: network is unknown to agent")
 
-    def delete_network_bridge_on_host(self, net_type, bridge_domain_id,
-                                      uplink_if_idx):
+    def delete_network_bridge_on_host(self, net_type, bridge_domain_id):
         """Delete a bridge corresponding to a network from VPP
 
         Usable on restart - uses nothing but the data in VPP.
@@ -641,9 +651,6 @@ class VPPForwarder(object):
             self.vpp.ifdown(*if_idxes)
             self.vpp.delete_from_bridge(*if_idxes)
             self.vpp.delete_bridge_domain(bridge_domain_id)
-        if net_type == 'vlan':
-            # TODO(ijw): check exists
-            self.vpp.delete_vlan_subif(uplink_if_idx)
 
     ########################################
     # stolen from LB driver
