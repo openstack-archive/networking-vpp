@@ -19,3 +19,13 @@ from networking_vpp.compat import n_exec
 
 class InvalidEtcdCAConfig(n_exec.NeutronException):
     message = _("Invalid etcd CA config.")
+
+
+class InvalidEtcHostsConfig(n_exec.NeutronException):
+    message = _("Invalid etc host config. Expect comma-separated list of "
+                "<Host> or <Host:Port> format")
+
+
+class InvalidEtcHostConfig(n_exec.NeutronException):
+    message = _("Invalid etc host config. Expect an IP or host name in "
+                "the form <Host> or <Host:Port>")
