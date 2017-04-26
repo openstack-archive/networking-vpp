@@ -108,6 +108,10 @@ def get_bridge_name(uuid):
 def get_vpptap_name(uuid):
     return 'vpp' + uuid[0:TAP_UUID_LEN]
 
+
+def default_if_none(x, default):
+    return default if x is None else x
+
 ######################################################################
 
 
@@ -1030,8 +1034,10 @@ class VPPForwarder(object):
                 acl_rule['dstport_or_icmpcode_last'] = r.port_max
         # Handle TCP/UDP protocols
         elif r.protocol in [6, 17]:
-            acl_rule['dstport_or_icmpcode_first'] = r.port_min
-            acl_rule['dstport_or_icmpcode_last'] = r.port_max
+            acl_rule['dstport_or_icmpcode_first'] = \
+                default_if_none(r.port_min, 0)
+            acl_rule['dstport_or_icmpcode_last'] = \
+                default_if_none(r.port_max, 65535)
             # Allow all ranges for source ports
             acl_rule['srcport_or_icmptype_first'] = 0
             acl_rule['srcport_or_icmptype_last'] = 65535
@@ -1068,14 +1074,14 @@ class VPPForwarder(object):
                 LOG.error("Invalid rule %s to be reversed", r)
                 return {}
             # Swap port range values
-            acl_rule['srcport_or_icmptype_first'] = r[
-                'dstport_or_icmpcode_first']
-            acl_rule['srcport_or_icmptype_last'] = r[
-                'dstport_or_icmpcode_last']
-            acl_rule['dstport_or_icmpcode_first'] = r[
-                'srcport_or_icmptype_first']
-            acl_rule['dstport_or_icmpcode_last'] = r[
-                'srcport_or_icmptype_last']
+            acl_rule['srcport_or_icmptype_first'] = \
+                r['dstport_or_icmpcode_first']
+            acl_rule['srcport_or_icmptype_last'] = \
+                r['dstport_or_icmpcode_last']
+            acl_rule['dstport_or_icmpcode_first'] = \
+                r['srcport_or_icmptype_first']
+            acl_rule['dstport_or_icmpcode_last'] = \
+                r['srcport_or_icmptype_last']
         return acl_rule
 
     def acl_add_replace_on_host(self, secgroup):
