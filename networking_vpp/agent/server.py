@@ -268,9 +268,6 @@ class VPPForwarder(object):
                  tap_wait_time,
                  vpp_cmd_queue_len=None,
                  gpe_src_cidr=None,
-                 vxlan_src_addr=None,
-                 vxlan_bcast_addr=None,
-                 vxlan_vrf=None,
                  gpe_locators=None):
         self.vpp = vpp.VPPInterface(LOG, vpp_cmd_queue_len)
 
@@ -286,11 +283,8 @@ class VPPForwarder(object):
 
         # This is the address we'll use if we plan on broadcasting
         # vxlan packets
-        self.vxlan_bcast_addr = vxlan_bcast_addr
-        self.vxlan_src_addr = vxlan_src_addr
         # GPE underlay IP address/mask
         self.gpe_src_cidr = gpe_src_cidr
-        self.vxlan_vrf = vxlan_vrf
         # Name of the GPE physnet uplink and its address
         self.gpe_locators = gpe_locators
         self.gpe_underlay_addr = None
@@ -2869,9 +2863,6 @@ def main():
                         tap_wait_time=cfg.CONF.ml2_vpp.tap_wait_time,
                         vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,
                         gpe_src_cidr=cfg.CONF.ml2_vpp.gpe_src_cidr,
-                        vxlan_src_addr=cfg.CONF.ml2_vpp.vxlan_src_addr,
-                        vxlan_bcast_addr=cfg.CONF.ml2_vpp.vxlan_bcast_addr,
-                        vxlan_vrf=cfg.CONF.ml2_vpp.vxlan_vrf,
                         gpe_locators=cfg.CONF.ml2_vpp.gpe_locators,
                         )
 

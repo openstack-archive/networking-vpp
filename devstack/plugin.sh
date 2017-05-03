@@ -59,18 +59,6 @@ function configure_networking_vpp {
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp gpe_src_cidr $GPE_SRC_CIDR
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp gpe_locators $GPE_LOCATORS
 
-    if [ ! -z "$VXLAN_SRC_ADDR" ] ; then
-       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_src_addr $VXLAN_SRC_ADDR
-    fi
-
-    if [ ! -z "$VXLAN_BCAST_ADDR" ] ; then
-       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_bcast_addr $VXLAN_BCAST_ADDR
-    fi
-
-    if [ ! -z "$VXLAN_VRF" ] ; then
-       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vxlan_vrf $VXLAN_VRF
-    fi
-
     if [ ! -z "$ETCD_CA_CERT" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_ca_cert $ETCD_CA_CERT
     else
