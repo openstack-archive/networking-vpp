@@ -156,13 +156,12 @@ class EtcdElection(object):
                     #           'waiting for %d secs, group %s, try %d',
                     #           self.thread_id, self.recovery_time,
                     #           self.name, attempt)
-
                     try:
                         with eventlet.Timeout(self.recovery_time + 5, False):
                             self.etcd_client.watch(
                                 self.master_key,
                                 timeout=self.recovery_time)
-                    except etcd.EtcdWatchTimedOut:
+                    except (etcd.EtcdWatchTimedOut, UrllibTimeoutError):
                         pass
                     except etcd.EtcdException:
                         eventlet.sleep(self.recovery_time)
@@ -437,7 +436,7 @@ class EtcdWatcher(object):
 
                 self.refresh_all_data()
 
-        except (etcd.EtcdWatchTimedOut, UrllibTimeoutError, eventlet.Timeout):
+        except (etcd.EtcdWatchTimedOut, UrllibTimeoutError):
             # This is normal behaviour, indicating either a watch timeout
             # (nothing changed) or a connection timeout (we should retry)
             pass
