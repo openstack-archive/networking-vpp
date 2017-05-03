@@ -30,18 +30,18 @@ import eventlet
 eventlet.monkey_patch(thread=False)
 
 import binascii
+from collections import defaultdict
+from collections import namedtuple
 import etcd
-import json
+from ipaddress import ip_address
+from ipaddress import ip_network
 import os
 import re
 import sys
 import time
 import vpp
 
-from collections import defaultdict
-from collections import namedtuple
-from ipaddress import ip_address
-from ipaddress import ip_network
+from networking_vpp._i18n import _
 from networking_vpp.agent import utils as nwvpp_utils
 from networking_vpp import compat
 from networking_vpp.compat import n_const
@@ -60,6 +60,7 @@ from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
+from oslo_serialization import jsonutils
 
 
 LOG = logging.getLogger(__name__)
@@ -366,16 +367,22 @@ class VPPForwarder(object):
             if (uplink_physnet not in configured_physnet_interfaces
                     or (sup_sw_if_idx !=
                         configured_physnet_interfaces[uplink_physnet])):
-                LOG.warn('Deleting outdated network in VPP: net type '
-                         '%s physnet %s seg id %s, physnet if %d uplink %d',
-                         net_type, uplink_physnet, str(seg_id),
-                         sup_sw_if_idx, sw_if_idx)
+                LOG.warning('Deleting outdated network in VPP: net type '
+                            '%(type)s physnet %(physnet)s seg id %(seg)s, '
+                            'physnet if %(physif)d uplink %(uplinkif)d',
+                            type=net_type,
+                            physnet=uplink_physnet,
+                            seg=str(seg_id),
+                            physif=sup_sw_if_idx,
+                            uplinkif=sw_if_idx)
                 if uplink_physnet not in configured_physnet_interfaces:
-                    LOG.warn('This physnet is no longer in the config')
+                    LOG.warning('This physnet is no longer in the config')
                 else:
-                    LOG.warn('This physnet now uses interface %d (%s)',
-                             configured_physnet_interfaces[uplink_physnet],
-                             physnets[uplink_physnet])
+                    LOG.warning(
+                        'This physnet now uses interface '
+                        '%(idx)d (%(name)s)',
+                        idx=configured_physnet_interfaces[uplink_physnet],
+                        name=physnets[uplink_physnet])
                 self.delete_network_bridge_on_host(net_type,
                                                    sw_if_idx,
                                                    sw_if_idx)
@@ -394,9 +401,10 @@ class VPPForwarder(object):
                 # This configuration has changed.
                 # Untag the original physnet interface, which is no
                 # longer used as a physnet
-                LOG.warn('Removing old physnet from VPP: '
-                         'physnet %s interface %s',
-                         name, str(if_idx))
+                LOG.warning('Removing old physnet from VPP: '
+                            'physnet %(name)s interface %(idx)s',
+                            name=name,
+                            idx=str(if_idx))
 
                 # In case there was a flat network, make sure the flat
                 # network bridge no longer exists
@@ -481,7 +489,7 @@ class VPPForwarder(object):
             return None, None
         ifidx = self.vpp.get_ifidx_by_name(ifname)
         if ifidx is None:
-            LOG.error('Physnet %s interface %s does not '
+            LOG.error('Physnet {1} interface {2} does not '
                       'exist in VPP', physnet, ifname)
             return None, None
         self.vpp.set_interface_tag(ifidx, physnet_if_tag(physnet))
@@ -566,7 +574,7 @@ class VPPForwarder(object):
             if_uplink = None
 
         else:
-            raise Exception('network type %s not supported', net_type)
+            raise Exception(_('network type %s not supported'), net_type)
 
         rv = {
             'physnet': physnet,
@@ -793,7 +801,7 @@ class VPPForwarder(object):
                 props = {'path': path}
             else:
                 raise UnsupportedInterfaceException(
-                    'unsupported interface type')
+                    _('unsupported interface type'))
 
             tag = port_tag(uuid)
 
@@ -1065,7 +1073,7 @@ class VPPForwarder(object):
                 acl_rule['dst_ip_addr'] = r['src_ip_addr']
                 acl_rule['dst_ip_prefix_len'] = r['src_ip_prefix_len']
             else:
-                LOG.error("Invalid rule %s to be reversed" % r)
+                LOG.error("Invalid rule %s to be reversed", r)
                 return {}
             # Swap port range values
             acl_rule['srcport_or_icmptype_first'] = r[
@@ -1161,7 +1169,7 @@ class VPPForwarder(object):
                 secgroup_acls = self.secgroups[secgroup]
             except KeyError:
                 LOG.error("secgroup_watcher: received request to delete "
-                          "an unknown security group %s" % secgroup)
+                          "an unknown security group %s", secgroup)
                 # This security group doesn't exist, don't add to the
                 # deferred list
                 continue
@@ -1186,7 +1194,7 @@ class VPPForwarder(object):
                         self.vpp.acl_delete(acl_index=acl_idx)
                     del self.secgroups[secgroup]
             except Exception as e:
-                LOG.exception("Exception while deleting ACL %s" % e)
+                LOG.exception("Exception while deleting ACL %s", e)
                 # We could defer this again but it's probably better
                 # we move on.  Orphaned ACLs are not the end of the world.
                 remaining_secgroups.add(secgroup)
@@ -1275,8 +1283,8 @@ class VPPForwarder(object):
 
             LOG.debug("secgroup_watcher: created acl_map %s from "
                       "vpp acl tags" % acl_map)
-        except Exception as e:
-            LOG.error("Exception getting acl_map from vpp acl tags %s" % e)
+        except Exception:
+            LOG.exception("Exception getting acl_map from vpp acl tags")
             raise
         return acl_map
 
@@ -2570,7 +2578,7 @@ class PortWatcher(EtcdChangeWatcher):
             # be available; also, the network may not
             # be vxlan
             if is_vxlan:
-                LOG.warn('Unable to delete GPE mappings for port')
+                LOG.warning('Unable to delete GPE mappings for port')
             is_vxlan = False
 
         self.data.unbind(port)
@@ -2599,7 +2607,7 @@ class PortWatcher(EtcdChangeWatcher):
         # changed.  NB most things will not change on
         # an update.
 
-        data = json.loads(value)
+        data = jsonutils.loads(value)
         self.data.bind(
             self.data.binder.add_notification,
             port,
@@ -2656,7 +2664,7 @@ class RouterWatcher(EtcdChangeWatcher):
         if m and m.group(1) == 'interface':
             if action != 'delete':
                 router_id = m.group(2)
-                router = json.loads(value)
+                router = jsonutils.loads(value)
                 if router.get('delete', False):
                     self.data.vppf.delete_router_interface_on_host(
                         router)
@@ -2667,7 +2675,7 @@ class RouterWatcher(EtcdChangeWatcher):
                         router)
         elif m and m.group(1) == 'floatingip':
             if action != 'delete':
-                floatingip_dict = json.loads(value)
+                floatingip_dict = jsonutils.loads(value)
                 if floatingip_dict['event'] == 'associate':
                     self.data.vppf.associate_floatingip(
                         floatingip_dict)
@@ -2679,7 +2687,7 @@ class RouterWatcher(EtcdChangeWatcher):
         elif m and m.group(1) == 'router':
             if action != 'delete':
                 router_id = m.group(2)
-                router = json.loads(value)
+                router = jsonutils.loads(value)
                 if router.get('delete', False):
                     # Delete an external gateway
                     (self.data.vppf.
@@ -2691,8 +2699,8 @@ class RouterWatcher(EtcdChangeWatcher):
                     (self.data.vppf.
                      create_router_external_gateway_on_host(router))
         else:
-            LOG.warn('Unexpected key change in etcd router feedback,'
-                     ' key %s' % key)
+            LOG.warning('Unexpected key change in etcd router feedback,'
+                        ' key %s', key)
 
 
 class SecGroupWatcher(EtcdChangeWatcher):
@@ -2717,7 +2725,7 @@ class SecGroupWatcher(EtcdChangeWatcher):
 
     def added(self, secgroup, value):
         # create or update a secgroup == add_replace vpp acl
-        data = json.loads(value)
+        data = jsonutils.loads(value)
         self.data.acl_add_replace(secgroup, data)
 
         self.data.reconsider_port_secgroups()
@@ -2796,7 +2804,7 @@ class BindNotifier(object):
 
                 self.etcd_client.write(
                     self.state_key_space + '/%s' % port,
-                    json.dumps(props))
+                    jsonutils.dumps(props))
             except Exception:
                 # We must keep running, but we don't expect problems
                 LOG.exception("exception in bind-notify thread")
@@ -2833,7 +2841,7 @@ def main():
         VPPRestart().wait()
 
     if not cfg.CONF.ml2_vpp.physnets:
-        LOG.error("Missing physnets config. Exiting...")
+        LOG.critical("Missing physnets config. Exiting...")
         sys.exit(1)
 
     physnet_list = cfg.CONF.ml2_vpp.physnets.replace(' ', '').split(',')
@@ -2846,12 +2854,12 @@ def main():
                 LOG.error("Could not parse physnet to interface mapping "
                           "check the format in the config file: "
                           "physnets = physnet1:<interface1>, "
-                          "physnet2:<interface>"
-                          )
+                          "physnet2:<interface>")
                 sys.exit(1)
             if len(v) > MAX_PHYSNET_LENGTH:
-                LOG.error("Physnet '%s' is longer than %d characters.",
-                          v, MAX_PHYSNET_LENGTH)
+                LOG.error("Physnet '%(name)s' is longer than "
+                          "%(len)d characters.",
+                          name=v, len=MAX_PHYSNET_LENGTH)
                 sys.exit(1)
             physnets[k] = v
 

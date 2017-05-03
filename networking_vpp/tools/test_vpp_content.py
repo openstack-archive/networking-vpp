@@ -15,7 +15,7 @@
 #    under the License.
 
 import etcd
-import json
+import jsonutils
 import logging
 import re
 import sys
@@ -131,7 +131,7 @@ def main():
                 continue
             uuid = res.group(2)
             print('INFO: port %s found in etcd' % uuid)
-            etcd_ports[uuid] = json.loads(val.value)
+            etcd_ports[uuid] = jsonutils.loads(val.value)
 
     # Try and find the intersection, which should correspond, and the
     # differences, which shouldn't exist

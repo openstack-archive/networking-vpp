@@ -15,11 +15,12 @@
 #    under the License.
 
 import etcd
-import json
 import re
 
-
 from openstack import connection
+from oslo_serialization import jsonutils
+
+
 conn = connection.from_config()
 
 etcd_client = etcd.Client(port=2379)
@@ -61,7 +62,7 @@ for port in conn.network.ports():
             if port.ip_address is not None:
                 expected_data["ip_address"] = port.ip_address,
 
-            etcd_value = json.loads(port_in_etcd.value)
+            etcd_value = jsonutils.loads(port_in_etcd.value)
             problems = []
             for f in sorted(expected_data.keys()):
                 if f in etcd_value:
