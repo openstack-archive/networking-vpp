@@ -2565,6 +2565,7 @@ class PortWatcher(EtcdChangeWatcher):
         # Removing key == desire to unbind
 
         try:
+            is_vxlan = False
             port_data = self.data.vppf.interfaces[port]
             port_net = port_data['net_data']
             is_vxlan = port_net['network_type'] == 'vxlan'
@@ -2579,7 +2580,6 @@ class PortWatcher(EtcdChangeWatcher):
             # be vxlan
             if is_vxlan:
                 LOG.warning('Unable to delete GPE mappings for port')
-            is_vxlan = False
 
         self.data.unbind(port)
 

@@ -278,12 +278,6 @@ class VPPMechanismDriver(api.MechanismDriver):
                                        port_context.host,
                                        binding_type)
 
-                # TODO(ijw): for some reason this has an original host
-                # in here so we can't spot the first binding
-                LOG.error('host = %(host)s orig = %(orig)s',
-                          host=port_context.host,
-                          orig=port_context.original_host)
-
                 # TODO(ijW): The agent driver checks for a change of
                 # host, but we're oddly seeing that the orig_host is
                 # always set.  Should confirm if this is a problem or
