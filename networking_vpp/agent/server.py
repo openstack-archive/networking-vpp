@@ -584,7 +584,7 @@ class VPPForwarder(object):
 
         if if_uplink is not None:
             self.vpp.ifup(if_uplink)
-            rv['if_uplink_idx'] = if_uplink,
+            rv['if_uplink_idx'] = if_uplink
 
         return rv
 
@@ -643,7 +643,8 @@ class VPPForwarder(object):
             self.vpp.delete_bridge_domain(bridge_domain_id)
         if net_type == 'vlan':
             # TODO(ijw): check exists
-            self.vpp.delete_vlan_subif(uplink_if_idx)
+            if uplink_if_idx:
+                self.vpp.delete_vlan_subif(uplink_if_idx)
 
     ########################################
     # stolen from LB driver
