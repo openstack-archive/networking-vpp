@@ -959,9 +959,15 @@ class VPPForwarder(object):
                     # These may fail, don't care much
                     try:
                         if bridge.owns_interface(props['int_tap_name']):
-                            bridge.delif(props['int_tap_name'])
+                            try:
+                                bridge.delif(props['int_tap_name'])
+                            except Exception as exc:
+                                LOG.debug(exc)
                         if bridge.owns_interface(props['ext_tap_name']):
-                            bridge.delif(props['ext_tap_name'])
+                            try:
+                                bridge.delif(props['ext_tap_name'])
+                            except Exception as exc:
+                                LOG.debug(exc)
                         bridge.link.set_down()
                         bridge.delbr()
                     except Exception as exc:
