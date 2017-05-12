@@ -954,18 +954,27 @@ class VPPForwarder(object):
             self.vpp.delete_tap(iface_idx)
             if props['bind_type'] == 'plugtap':
                 bridge_name = get_bridge_name(uuid)
-                bridge = bridge_lib.BridgeDevice(bridge_name)
+                # These may fail, don't care much
+
+                class FailableBridgeDevice(bridge_lib.BridgeDevice):
+                    # For us, we expect failing commands and want them ignored.
+
+                    def _brctl(self, cmd):
+                        cmd = ['brctl'] + cmd
+                        ip_wrapper = ip_lib.IPWrapper(self.namespace)
+                        return ip_wrapper.netns.execute(cmd,
+                                                        check_exit_code=False,
+                                                        log_fail_as_error=False,
+                                                        run_as_root=True)
+                bridge = FailableBridgeDevice(bridge_name)
+
                 if bridge.exists():
-                    # These may fail, don't care much
-                    try:
-                        if bridge.owns_interface(props['int_tap_name']):
-                            bridge.delif(props['int_tap_name'])
-                        if bridge.owns_interface(props['ext_tap_name']):
-                            bridge.delif(props['ext_tap_name'])
-                        bridge.link.set_down()
-                        bridge.delbr()
-                    except Exception as exc:
-                        LOG.debug(exc)
+                    if bridge.owns_interface(props['int_tap_name']):
+                        bridge.delif(props['int_tap_name'])
+                    if bridge.owns_interface(props['ext_tap_name']):
+                        bridge.delif(props['ext_tap_name'])
+                    bridge.link.set_down()
+                    bridge.delbr()
         else:
             LOG.error('Unknown port type %s during unbind',
                       props['bind_type'])
