@@ -14,6 +14,7 @@
 
 from networking_vpp.db import models
 
+import sqlalchemy as sa
 from sqlalchemy.sql.expression import func
 
 from oslo_log import log as logging
@@ -39,31 +40,53 @@ def journal_read(session, func):
     # are running)
 
     maybe_more = True
-    with session.begin(subtransactions=True):
-        # Set subtransactions to True otherwise this generates a failure
-        # in the L3 plugin API. This is invoked from within the greater
-        # create/delete router API call and we ideally want both to pass or
-        # fail together.
 
-        # Note also that this will, if the other thread succeeds, lock a
-        # row that someone else deletes, so its session will abort.
-        entry = session.query(models.VppEtcdJournal) \
-                       .order_by(models.VppEtcdJournal.id) \
-                       .with_for_update() \
-                       .first()
+    # TODO(ijw): not true, check with Arvind
+    # Set subtransactions to True otherwise this generates a failure
+    # in the L3 plugin API. This is invoked from within the greater
+    # create/delete router API call and we ideally want both to pass or
+    # fail together.
 
-        if entry:
-            if func(entry.k, entry.v):  # ... can quite reasonably fail...
-                # Once done, it should go.
-                session.delete(entry)
+    # Find the lowest ID'd row in the table. We assume that the ID is
+    # a time ordering. We are only scanning for it now, not locking yet.
+    entry = session.query(models.VppEtcdJournal) \
+                   .order_by(models.VppEtcdJournal.id) \
+                   .first()
+
+    if entry:
+        with session.begin(subtransactions=True):
+
+            first_id = entry.id
+
+            # Reselect with a lock, but without doing the range check
+            # so that the lock is row-specific
+            rs = session.query(models.VppEtcdJournal)\
+                .filter(models.VppEtcdJournal.id == first_id)\
+                .with_for_update().all()
+
+            if len(rs) > 0:  # The entry is still around, we are still master
+                entry = rs[0]
+                if func(entry.k, entry.v):  # Lets work on it, but can fail too
+                    # Once done, it should go.
+                    session.delete(entry)
+                    LOG.debug('forwarded etcd record %d', first_id)
+                else:
+                    # For some reason, we can't do the job.
+                    entry.retry_count += 1
+                    entry.last_retried = sa.func.now()
+                    entry.update(entry)
+                    LOG.debug("Couldn't forward etcd record %d, retrying later", first_id)
+
             else:
-                # For some reason, we can't do the job.
-                entry.retry_count = entry.retry_count + 1
-                entry.update(entry)
+                # We cannot find that entry any more, means some other
+                # master kicking around.
+                # TODO(ijw): We should re-elect ourselves if we can
+                maybe_more = False
+                LOG.debug('etcd record %d processed by another forwarder', first_id)
 
-        else:
-            # The table is empty - no work available.
-            maybe_more = False
+    else:
+        # The table is empty - no work available.
+        maybe_more = False
 
     return maybe_more
 
