@@ -960,9 +960,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         # Check the DB queue now, anyway
                         pass
 
-            except Exception:
+            except Exception as e:
                 # TODO(ijw): log exception properly
-                LOG.exception("problems in forward worker - ignoring")
+                LOG.warning(e)
+                LOG.exception("problems in forward worker - ignoring.")
                 # never quit
                 pass
 
