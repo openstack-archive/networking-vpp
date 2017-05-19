@@ -341,7 +341,6 @@ class VPPForwarder(object):
             uplink_data = decode_uplink_tag(f['tag'])
             if uplink_data is not None:
                 uplink_physnet, net_type, seg_id = uplink_data
-                LOG.critical(f)
                 uplink_ports_found.append([
                     uplink_physnet, net_type, seg_id,
                     f['sw_if_idx'],
