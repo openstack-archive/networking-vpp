@@ -62,6 +62,38 @@ vpp_opts = [
                help=_("Size of the VPP command queue (in messages)")),
     cfg.StrOpt('l3_host', default="127.0.0.1",
                help=_("Hostname to render L3 services on.")),
+
+
+
+    cfg.BoolOpt('JWT_enable', default=False,
+                help=_("Activate JWT token in etcd messages")),
+
+    cfg.StrOpt('JWT_ca_cert',
+               default="/opt/stack/jwt_keys/jwt_ca_cert.pem",
+               help=_("Root CA certificate for the JWT verification")),
+    cfg.StrOpt('JWT_node_cert',
+               default="/opt/stack/jwt_keys/jwt_node_cert.pem",
+               help=_("Local Node certificate for the JWT verification")),
+    cfg.StrOpt('JWT_node_private_key',
+               default="/opt/stack/jwt_keys/jwt_private_key.pem",
+               help=_("Local Node private key for the JWT computation")),
+
+    cfg.IntOpt('JWT_max_duration', default=0,
+               help=_("JWT token max duration in seconds to prevent"
+                      " replay attack")),
+
+    cfg.StrOpt('JWT_controller_name', default="ControllerName",
+               help=_("Openstack Controller Host name for JWT verification")),
+
+    cfg.StrOpt('JWT_controller_path_pattern',
+               default="^/networking-vpp/nodes/[^/]+/ports/(.+)$",
+               help=_("Regular expression to identify the etcd paths that are"
+                      " authenticated by a controller")),
+
+    cfg.StrOpt('JWT_computeNode_path_pattern',
+               default="^/networking-vpp/state/([^/]+)/ports/(.+)$",
+               help=_("Regular expression to identify the etcd paths that are"
+                      " authenticated by a compute Node")),
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
