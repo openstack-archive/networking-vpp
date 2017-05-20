@@ -40,7 +40,6 @@ from neutron.callbacks import registry
 from neutron.callbacks import resources
 from neutron.db import api as neutron_db_api
 from neutron.plugins.ml2 import driver_api as api
-from oslo_serialization import jsonutils
 
 try:
     # Newton and on
@@ -517,6 +516,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # don't have threading problems from the caller.
         try:
             etcd_client = self.client_factory.client()
+
             etcd_client.read('%s/state/%s/alive' % (LEADIN, host))
             etcd_client.read('%s/state/%s/physnets/%s' %
                              (LEADIN, host, physnet))
@@ -1010,31 +1010,20 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # Assign a UUID to each worker thread to enable thread election
         return eventlet.spawn(self._forward_worker)
 
-    def do_etcd_update(self, etcd_client, k, v):
+    def do_etcd_update(self, etcd_writer, k, v):
         with eventlet.Timeout(cfg.CONF.ml2_vpp.etcd_write_time, False):
             if v is None:
-                try:
-                    etcd_client.delete(k)
-                except etcd.EtcdNotFile:
-                    # We are asked to delete a directory as in the
-                    # case of GPE where the empty mac address directory
-                    # needs deletion after the key (IP) has been deleted.
-                    try:
-                        etcd_client.delete(k, dir=True)
-                    except Exception:  # pass any exceptions
-                        pass
-                except etcd.EtcdKeyNotFound:
-                    # The key may have already been deleted
-                    # no problem here
-                    pass
+                etcd_writer.delete(k)
             else:
-                etcd_client.write(k, jsonutils.dumps(v))
+                etcd_writer.write(k, v)
 
     def _forward_worker(self):
         LOG.debug('forward worker begun')
         etcd_client = self.client_factory.client()
+        etcd_writer = etcdutils.SignedEtcdJSONWriter(etcd_client)
         lease_time = cfg.CONF.ml2_vpp.forward_worker_master_lease_time
         recovery_time = cfg.CONF.ml2_vpp.forward_worker_recovery_time
+
         etcd_election = etcdutils.EtcdElection(etcd_client, 'forward_worker',
                                                self.election_key_space,
                                                work_time=lease_time,
@@ -1053,7 +1042,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # by a further extension).
 
                 def work(k, v):
-                    self.do_etcd_update(etcd_client, k, v)
+                    self.do_etcd_update(etcd_writer, k, v)
 
                 # We will try to empty the pending rows in the DB
                 while True:

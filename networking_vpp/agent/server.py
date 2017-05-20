@@ -1,3 +1,4 @@
+
 # Copyright (c) 2017 Cisco Systems, Inc.
 # All Rights Reserved
 #
@@ -2443,15 +2444,23 @@ class EtcdListener(object):
         i.e. A new port is associated with (or) an existing port is removed,
         the agent needs to update the VPP ACLs belonging to all the
         security groups that use this remote-group in their rules.
+
+        Since this is called from various threads it makes a new etcd
+        client each call.
         """
         secgroups = self.vppf.remote_group_secgroups[remote_group]
         LOG.debug("Updating secgroups:%s referencing the remote_group:%s",
                   secgroups, remote_group)
+        etcd_client = self.client_factory.client()
+        etcd_writer = etcdutils.SignedEtcdJSONWriter(etcd_client)
+
         for secgroup in secgroups:
             secgroup_key = self.secgroup_key_space + "/%s" % secgroup
             # TODO(najoy):Update to the new per thread etcd-client model
-            rv = self.client_factory.client().read(secgroup_key)
-            data = jsonutils.loads(rv.value)
+
+            # TODO(ijw): all keys really present?
+            data = etcd_writer.read(secgroup_key).value
+
             LOG.debug("Updating remote_group rules %s for secgroup %s",
                       data, secgroup)
             self.acl_add_replace(secgroup, data)
@@ -2471,10 +2480,14 @@ class EtcdListener(object):
             return False
 
     def fetch_remote_gpe_mappings(self, vni):
-        """Fetch and add all remote mappings from etcd for the vni"""
+        """Fetch and add all remote mappings from etcd for the vni
+
+        Thread-safe: creates its own client every time
+        """
         key_space = self.gpe_key_space + "/%s" % vni
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
-        rv = self.client_factory.client().read(key_space, recursive=True)
+        rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).read(
+            key_space, recursive=True)
         for child in rv.children:
             m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
                          child.key)
@@ -2788,7 +2801,8 @@ class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
                  **kwargs):
         self.known_keys = known_keys
         super(SecGroupWatcher, self).__init__(
-            etcd_client, name, watch_path, **kwargs)
+            etcd_client, name, watch_path,
+            encoder=etcdutils.SignedEtcdJSONWriter, **kwargs)
 
     def init_resync_start(self):
         # TODO(ijw): we should probably do the secgroup work
@@ -2940,6 +2954,7 @@ class BindNotifier(object):
         self.state_key_space = state_key_space
 
         self.etcd_client = client_factory.client()
+        self.etcd_writer = etcdutils.SignedEtcdJSONWriter(self.etcd_client)
 
     def add_notification(self, id, content):
         """Queue a notification for sending to Nova
@@ -2959,9 +2974,10 @@ class BindNotifier(object):
 
                 (port, props) = ent
 
-                self.etcd_client.write(
+                # TODO(ijw): do we ever clean this space up?
+                self.etcd_writer.write(
                     self.state_key_space + '/%s' % port,
-                    jsonutils.dumps(props))
+                    props)
             except Exception:
                 # We must keep running, but we don't expect problems
                 LOG.exception("exception in bind-notify thread")

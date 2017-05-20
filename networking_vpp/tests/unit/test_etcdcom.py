@@ -175,4 +175,4 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         self.agent_communicator.do_etcd_update(self.client, key, val)
         # What's written is JSON, so has extra quotes
         self.client.write.assert_called_with(
-            key, '\"' + val + '\"')
+            key, val)

@@ -15,3 +15,6 @@ eventlet
 ipaddress
 click
 oslo_serialization
+PyJWT
+cryptography>=2.0,<3
+pyOpenSSL
