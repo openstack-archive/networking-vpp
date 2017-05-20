@@ -64,6 +64,17 @@ function configure_networking_vpp {
     else
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_insecure_explicit_disable_https True
     fi
+
+    if [ ! -z "$JWT_CA_CERT" ] ; then
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_signing  True
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_controller_name_pattern $JWT_CONTROLLER_NAME_PATTERN
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_ca_cert $JWT_CA_CERT
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_node_cert $JWT_NODE_CERT
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_node_private_key $JWT_NODE_PRIVATE_KEY
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_max_duration  $JWT_MAX_DURATION
+    else
+       iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_signing  False
+    fi
 }
 
 function shut_networking_vpp_down {

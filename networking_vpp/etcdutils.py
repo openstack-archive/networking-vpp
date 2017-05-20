@@ -28,6 +28,8 @@ import uuid
 
 from networking_vpp import exceptions as vpp_exceptions
 
+from networking_vpp import etcd_client_secured
+
 
 LOG = logging.getLogger(__name__)
 
@@ -641,6 +643,8 @@ class EtcdClientFactory(object):
         return etc_hosts
 
     def __init__(self, ml2_vpp_conf):
+
+        self.jwt_signing = ml2_vpp_conf.jwt_signing
         hostconf = self._parse_host_config(ml2_vpp_conf.etcd_host,
                                            ml2_vpp_conf.etcd_port)
 
@@ -661,6 +665,10 @@ class EtcdClientFactory(object):
             LOG.warning("etcd is not using HTTPS, insecure setting")
 
     def client(self):
-        etcd_client = etcd.Client(**self.etcd_args)
+        if (self.jwt_signing):
+                etcd_client = etcd_client_secured.EtcdClientSecured(
+                    **self.etcd_args)
+        else:
+                etcd_client = etcd.Client(**self.etcd_args)
 
         return etcd_client
