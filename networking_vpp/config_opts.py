@@ -78,6 +78,29 @@ vpp_opts = [
                help=_("Size of the VPP command queue (in messages)")),
     cfg.StrOpt('l3_host', default="127.0.0.1",
                help=_("Hostname to render L3 services on.")),
+
+
+
+    cfg.BoolOpt('jwt_signing', default=False,
+                help=_("Activate JWT token in etcd messages")),
+
+    cfg.StrOpt('jwt_ca_cert',
+               default=None,
+               help=_("Root CA certificate for the JWT verification")),
+    cfg.StrOpt('jwt_node_cert',
+               default=None,
+               help=_("Local Node certificate for the JWT verification")),
+    cfg.StrOpt('jwt_node_private_key',
+               default=None,
+               help=_("Local Node private key for the JWT computation")),
+
+    cfg.IntOpt('jwt_max_duration', default=0,
+               help=_("JWT token max duration in seconds to prevent"
+                      " replay attack")),
+
+    cfg.StrOpt('jwt_controller_name_pattern', default="Controller.*",
+               help=_("Regexp to check if a Host name is a controller")),
+
 ]
 
 cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
