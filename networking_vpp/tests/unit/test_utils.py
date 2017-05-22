@@ -32,7 +32,6 @@ class FakeConfig(object):
 
         self.etcd_insecure_explicit_disable_https = True
         self.etcd_cacert = None
-        self.jwt_signing = False
 
 
 class TestAgentUtils(base.BaseTestCase):
