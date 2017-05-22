@@ -1,0 +1,33 @@
+# This file contains runtime (non-python) dependencies
+# More info at: http://docs.openstack.org/infra/bindep/readme.html
+
+libcurl3-gnutls
+gettext
+libssl-dev
+postgresql
+
+libffi-dev [platform:dpkg]
+libffi-devel [platform:rpm]
+libldap2-dev [platform:dpkg]
+libsasl2-dev [platform:dpkg]
+libsqlite3-dev [platform:dpkg]
+libxml2-dev [platform:dpkg]
+libxslt1-dev [platform:dpkg]
+mysql-client [platform:dpkg]
+mysql-server [platform:dpkg]
+postgresql-client [platform:dpkg]
+postgresql-server-dev-all [platform:dpkg]
+python-all-dev [platform:dpkg]
+python3-all-dev [platform:dpkg]
+
+cyrus-sasl-devel [platform:rpm]
+libxml2-devel [platform:rpm]
+mariadb [platform:rpm]
+mariadb-devel [platform:rpm]
+mariadb-server [platform:rpm]
+openldap-devel [platform:rpm]
+postgresql-devel [platform:rpm]
+postgresql-server [platform:rpm]
+python-devel [platform:rpm]
+python3-devel [platform:fedora]
+python34-devel [platform:centos]
