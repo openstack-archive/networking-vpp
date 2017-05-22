@@ -13,17 +13,12 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from collections import namedtuple
 import mock
 
-import etcd
-
-from networking_vpp import config_opts
-from networking_vpp import etcdutils
 from networking_vpp import jwt_agent
 from neutron.tests import base
-from oslo_config import cfg
 from oslo_serialization import jsonutils
-from testtools import ExpectedException
 
 
 node_cert = "-----BEGIN CERTIFICATE-----\n\
@@ -98,20 +93,7 @@ oLLwSxoCoUSnJdASkEE/SLRPcnLC\n\
 -----END CERTIFICATE-----"
 
 
-class EtcdClientSecuredTestCase(base.BaseTestCase):
-
-    def stub_write(self, k, v):
-        self.kdb[k] = v
-        return("")
-
-    def stub_read(self, k):
-        res = {}
-        res['key'] = k
-        if k in self.kdb.keys():
-            res['value'] = self.kdb[k]
-
-        r = etcd.EtcdResult(None, res)
-        return(r)
+class JWTUtilsTestCase(base.BaseTestCase):
 
     def fake_crypto(self, name):
         if (name == "jwt_private_key.pem"):
@@ -123,114 +105,43 @@ class EtcdClientSecuredTestCase(base.BaseTestCase):
         else:
             return(None)
 
-    def check_isjwt(self, key):
-        val = self.kdb[key]
-        oval = jsonutils.loads(val)
-        if ('jwt' in oval.keys()):
-            return(True)
-        else:
-            return(False)
-
-    def corrupt_jwt(self, key):
-        val = self.kdb[key]
-        oval = jsonutils.loads(val)
-        jwt = oval['jwt']
+    def corrupt_jwt(self, sgn):
+        jwt = sgn['jwt']
         sjwt = jwt.split('.')
 
         sjwt[1] = chr(ord(sjwt[1][0]) + 1) + sjwt[1][1:]
 
         jwt = ".".join(sjwt)
-        oval['jwt'] = jwt
-        val = jsonutils.dumps(oval)
-        self.kdb[key] = val
+        sgn['jwt'] = jwt
+        return sgn
 
     @mock.patch.object(jwt_agent.JWTUtils, '_get_crypto_material')
     def setUp(self, mck):
-        super(EtcdClientSecuredTestCase, self).setUp()
+        super(JWTUtilsTestCase, self).setUp()
 
         mck.side_effect = self.fake_crypto
 
-        cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
-        cfg.CONF.ml2_vpp.jwt_controller_name_pattern = "etcd.*"
-        cfg.CONF.ml2_vpp.jwt_node_private_key = "jwt_private_key.pem"
-        cfg.CONF.ml2_vpp.jwt_node_cert = "jwt_node_cert.pem"
-        cfg.CONF.ml2_vpp.jwt_ca_cert = "jwt_ca_cert.pem"
-        cfg.CONF.ml2_vpp.jwt_signing = True
-        cfg.CONF.ml2_vpp.jwt_max_duration = 0
+        self.jwt_agent = jwt_agent.JWTUtils(
+            "jwt_node_cert.pem", "jwt_private_key.pem", "jwt_ca_cert.pem",
+            "Controller.*")
 
-        self.kdb = {}
-
-        self.client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
-        self.client_factory.etcd_args['allow_reconnect'] = False
-        self.client_factory.etcd_args['host'] = ''
-        etcd_client = self.client_factory.client()
-        self.client = etcdutils.SignedEtcdJSONWriter(etcd_client)
-
-    @mock.patch.object(etcd.client.Client, 'write')
-    @mock.patch.object(etcd.client.Client, 'read')
-    def test_unsigned(self, mock_client_read, mock_client_write):
-        mock_client_write.side_effect = self.stub_write
-        mock_client_read.side_effect = self.stub_read
-
+    def test_signature(self):
         key = '/networking-vpp/test'
-        val = {"segmentation_id": "1312", "mtu": "1500"}
-        # val = jsonutils.dumps(val)
-        self.client.write(key, val)
-        self.assertFalse(self.check_isjwt(key))
-        res = self.client.read(key)
-        self.assertEqual(val, res.value)
+        value = {"segmentation_id": "1312", "mtu": "1500"}
+        value = jsonutils.dumps(value)
+        sgn = self.jwt_agent.sign(key, value)
+        nodeName = namedtuple('nodeName', 'isRegexp value')
+        signer_requirements = nodeName(True, 'etcd.*')
+        rval = self.jwt_agent.verify(signer_requirements, key, sgn)
+        self.assertEqual(rval, value)
 
-    @mock.patch.object(etcd.client.Client, 'write')
-    @mock.patch.object(etcd.client.Client, 'read')
-    def test_controller(self, mock_client_read, mock_client_write):
-        mock_client_write.side_effect = self.stub_write
-        mock_client_read.side_effect = self.stub_read
-
-        key = '/networking-vpp/nodes/etcd3'
-        val = {"segmentation_id": "1312", "mtu": "1500"}
-        self.client.write(key, val)
-        self.assertTrue(self.check_isjwt(key))
-        res = self.client.read(key)
-        self.assertEqual(val, res.value)
-
-    @mock.patch.object(etcd.client.Client, 'write')
-    @mock.patch.object(etcd.client.Client, 'read')
-    def test_compute(self, mock_client_read, mock_client_write):
-        mock_client_write.side_effect = self.stub_write
-        mock_client_read.side_effect = self.stub_read
-
-        key = '/networking-vpp/state/etcd2/321321'
-        val = {"segmentation_id": "1312", "mtu": "1500"}
-        self.client.write(key, val)
-        self.assertTrue(self.check_isjwt(key))
-        res = self.client.read(key)
-        self.assertEqual(val, res.value)
-
-    @mock.patch.object(etcd.client.Client, 'write')
-    @mock.patch.object(etcd.client.Client, 'read')
-    def test_jwt_corrupted(self, mock_client_read, mock_client_write):
-        mock_client_write.side_effect = self.stub_write
-        mock_client_read.side_effect = self.stub_read
-
-        key = '/networking-vpp/state/etcd2/321321'
-        val = {"segmentation_id": "1312", "mtu": "1500"}
-        self.client.write(key, val)
-        self.assertTrue(self.check_isjwt(key))
-        self.corrupt_jwt(key)
-        res = self.client.read(key)
-        with ExpectedException(jwt_agent.JWTSigningFailed):
-            val = res.value
-
-    @mock.patch.object(etcd.client.Client, 'write')
-    @mock.patch.object(etcd.client.Client, 'read')
-    def test_computename_invalid(self, mock_client_read, mock_client_write):
-        mock_client_write.side_effect = self.stub_write
-        mock_client_read.side_effect = self.stub_read
-
-        key = '/networking-vpp/state/etcd3/321321'
-        val = {"segmentation_id": "1312", "mtu": "1500"}
-        self.client.write(key, val)
-        self.assertTrue(self.check_isjwt(key))
-        res = self.client.read(key)
-        with ExpectedException(jwt_agent.JWTSigningFailed):
-            val = res.value
+    def test_bad_signature(self):
+        key = '/networking-vpp/test'
+        value = {"segmentation_id": "1312", "mtu": "1500"}
+        value = jsonutils.dumps(value)
+        sgn = self.jwt_agent.sign(key, value)
+        sgn = self.corrupt_jwt(sgn)
+        nodeName = namedtuple('nodeName', 'isRegexp value')
+        signer_requirements = nodeName(True, 'etcd.*')
+        self.assertRaises(jwt_agent.JWTSigningFailed,
+                          self.jwt_agent.verify, signer_requirements, key, sgn)

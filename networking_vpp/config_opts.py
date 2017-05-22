@@ -76,9 +76,6 @@ vpp_opts = [
                help=_("Size of the VPP command queue (in messages)")),
     cfg.StrOpt('l3_host', default="127.0.0.1",
                help=_("Hostname to render L3 services on.")),
-
-
-
     cfg.BoolOpt('jwt_signing', default=False,
                 help=_("Activate JWT token in etcd messages")),
 
@@ -97,7 +94,7 @@ vpp_opts = [
                       " replay attack")),
 
     cfg.StrOpt('jwt_controller_name_pattern', default="Controller.*",
-               help=_("Regexp to check if a Host name is a controller")),
+               help=_("Openstack Controller Host name for JWT verification")),
 
 ]
 
