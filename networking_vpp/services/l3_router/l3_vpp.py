@@ -19,12 +19,13 @@ from ipaddress import ip_network
 from oslo_config import cfg
 from oslo_log import log as logging
 
-from neutron.common import utils
 from neutron.db import api as db_api
 from neutron.db import common_db_mixin
 from neutron.db import l3_gwmode_db
 from neutron_lib.api.definitions import provider_net as provider
 from neutron_lib import constants
+
+from networking_vpp.compat import net_utils
 
 # TODO(ijw): backward compatibility doesn't really belong here
 try:
@@ -272,7 +273,7 @@ class VppL3RouterPlugin(
                 context, router_id, interface_info)
             router_dict = {}
             # Get a random mac address for loopback
-            mac = utils.get_random_mac(cfg.CONF.base_mac.split(':'))
+            mac = net_utils.get_random_mac(cfg.CONF.base_mac.split(':'))
             router_dict['loopback_mac'] = mac
             self._get_router_intf_details(context, router_id,
                                           interface_info, router_dict)
