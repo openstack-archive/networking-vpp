@@ -242,6 +242,19 @@ class VppL3RouterPlugin(
             self.communicator.kick()
 
     @kick_communicator_on_end
+    def disassociate_floatingips(self, context, port_id, do_notify=True):
+        fips = self.get_floatingips(context.elevated(),
+                                    filters={'port_id': [port_id]})
+        session = db_api.get_session()
+        with session.begin(subtransactions=True):
+            router_ids = super(
+                VppL3RouterPlugin, self).disassociate_floatingips(
+                context, port_id, do_notify)
+            for fip in fips:
+                self._process_floatingip(context, fip, 'disassociate')
+        return router_ids
+
+    @kick_communicator_on_end
     def add_router_interface(self, context, router_id, interface_info):
         session = db_api.get_session()
         with session.begin(subtransactions=True):

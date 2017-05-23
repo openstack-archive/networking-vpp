@@ -194,6 +194,9 @@ class VppL3PluginFloatingIPsTestCase(VppL3PluginBaseTestCase):
         self.get_floatingip = mock.patch.object(
             l3_db.L3_NAT_dbonly_mixin, 'get_floatingip',
             return_value=FLOATINGIP_DICT).start()
+        self.get_floatingips = mock.patch.object(
+            l3_db.L3_NAT_dbonly_mixin, 'get_floatingips',
+            return_value=[FLOATINGIP_DICT]).start()
 
     def test_floatingip_journal_row(self):
         """Test calling create,update,delete floatingip creates DB entries."""
@@ -254,6 +257,24 @@ class VppL3PluginFloatingIPsTestCase(VppL3PluginBaseTestCase):
         self.driver.delete_floatingip(self.context, FLOATINGIP_ID)
 
         self.assertEqual(mock_process_floatingip.called, False)
+
+    def test_floatingips_disassociate(self):
+        """Test calling disassociate floatingips when fixed port is deleted."""
+
+        floatingip2 = FLOATINGIP_DICT.copy()
+        floatingip2['id'] = 'floatingip2_uuid'
+        floatingips_dict = [FLOATINGIP_DICT.copy(), floatingip2]
+
+        mock_process_floatingip = mock.patch.object(
+            l3_vpp.VppL3RouterPlugin, '_process_floatingip').start()
+        self.get_floatingips.return_value = floatingips_dict
+
+        self.driver.disassociate_floatingips(self.context, PORT_ID)
+
+        self.assertEqual(mock_process_floatingip.call_count,
+                         len(floatingips_dict))
+        mock_process_floatingip.assert_has_calls([mock.call(
+            mock.ANY, fip, 'disassociate') for fip in floatingips_dict])
 
 
 class VppL3PluginRouterTestCase(VppL3PluginBaseTestCase):
