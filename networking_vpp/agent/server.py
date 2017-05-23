@@ -371,19 +371,19 @@ class VPPForwarder(object):
                 LOG.warning('Deleting outdated network in VPP: net type '
                             '%(type)s physnet %(physnet)s seg id %(seg)s, '
                             'physnet if %(physif)d uplink %(uplinkif)d',
-                            type=net_type,
-                            physnet=uplink_physnet,
-                            seg=str(seg_id),
-                            physif=sup_sw_if_idx,
-                            uplinkif=sw_if_idx)
+                            {'type': net_type,
+                             'physnet': uplink_physnet,
+                             'seg': str(seg_id),
+                             'physif': sup_sw_if_idx,
+                             'uplinkif': sw_if_idx})
                 if uplink_physnet not in configured_physnet_interfaces:
                     LOG.warning('This physnet is no longer in the config')
                 else:
                     LOG.warning(
                         'This physnet now uses interface '
-                        '%(idx)d (%(name)s)',
-                        idx=configured_physnet_interfaces[uplink_physnet],
-                        name=physnets[uplink_physnet])
+                        '%(idx)d (%(physnet_name)s)',
+                        {'idx': configured_physnet_interfaces[uplink_physnet],
+                         'physnet_name': physnets[uplink_physnet]})
                 self.delete_network_bridge_on_host(net_type,
                                                    sw_if_idx,
                                                    sw_if_idx)
@@ -403,9 +403,9 @@ class VPPForwarder(object):
                 # Untag the original physnet interface, which is no
                 # longer used as a physnet
                 LOG.warning('Removing old physnet from VPP: '
-                            'physnet %(name)s interface %(idx)s',
-                            name=name,
-                            idx=str(if_idx))
+                            'physnet %(physnet_name)s interface %(idx)s',
+                            {'physnet_name': name,
+                             'idx': str(if_idx)})
 
                 # In case there was a flat network, make sure the flat
                 # network bridge no longer exists
@@ -2797,9 +2797,9 @@ def main():
                           "physnet2:<interface>")
                 sys.exit(1)
             if len(v) > MAX_PHYSNET_LENGTH:
-                LOG.error("Physnet '%(name)s' is longer than "
+                LOG.error("Physnet '%(physnet_name)s' is longer than "
                           "%(len)d characters.",
-                          name=v, len=MAX_PHYSNET_LENGTH)
+                          {'physnet_name': v, 'len': MAX_PHYSNET_LENGTH})
                 sys.exit(1)
             physnets[k] = v
 
