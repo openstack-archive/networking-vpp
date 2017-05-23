@@ -673,14 +673,10 @@ class VPPForwarder(object):
         #    the bridge, but had not yet put it UP
         if not self._bridge_exists_and_ensure_up(bridge_name):
             bridge_device = bridge_lib.BridgeDevice.addbr(bridge_name)
-            if bridge_device.setfd(0):
-                return
-            if bridge_device.disable_stp():
-                return
-            if bridge_device.disable_ipv6():
-                return
-            if bridge_device.link.set_up():
-                return
+            bridge_device.setfd(0)
+            bridge_device.disable_stp()
+            bridge_device.disable_ipv6()
+            bridge_device.link.set_up()
         else:
             bridge_device = bridge_lib.BridgeDevice(bridge_name)
         return bridge_device
