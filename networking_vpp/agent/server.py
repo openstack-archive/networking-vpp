@@ -282,6 +282,13 @@ class VPPForwarder(object):
         # a Mapping of security groups to VPP ACLs
         self.secgroups = {}  # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 
+        # Security group UUID to the set of associated port UUIDs
+        self.remote_group_ports = defaultdict(set)
+        # Port UUID to its set of IP addresses
+        self.port_ips = defaultdict(set)
+        # Remote-group UUID to the set to security-groups that uses it
+        self.remote_group_secgroups = defaultdict(set)
+
         # ACLs we ought to delete
         self.deferred_delete_secgroups = set()
 
@@ -912,6 +919,8 @@ class VPPForwarder(object):
         else:
             props = self.interfaces[uuid]
             self.clean_interface_from_vpp(uuid, props)
+            # Delete the port ip address from remote_group_id list
+            self.port_ips.pop(uuid, None)
 
             # Check if this is the last interface on host
             for interface in self.interfaces.values():
@@ -1178,6 +1187,10 @@ class VPPForwarder(object):
                     for acl_idx in secgroup_acls:
                         self.vpp.acl_delete(acl_index=acl_idx)
                     del self.secgroups[secgroup]
+                    # Discard the security group from the remote group dict
+                    for remote_group in self.remote_group_secgroups:
+                        self.remote_group_secgroups[
+                            remote_group].discard(secgroup)
             except Exception as e:
                 LOG.exception("Exception while deleting ACL %s", e)
                 # We could defer this again but it's probably better
@@ -2293,24 +2306,56 @@ class EtcdListener(object):
         """
 
         def _secgroup_rule(r):
-            # Please ignore as these changes will go away when rebased with
-            # remote-group-id changes. These are required temporarily
-            # in this patch, for testing compatibility with the new
-            # security-group etcd model for remote-group-id
-            if r['remote_ip_addr'] is not None:
-                ip_addr = unicode(r['remote_ip_addr'])
+            # Create a rule for the remote_ip_prefix (CIDR) value
+            if r['remote_ip_addr']:
+                remote_ip_prefixes = [(unicode(r['remote_ip_addr']),
+                                       r['ip_prefix_len'])]
+            # Create a rule for each ip address in the remote_group
             else:
-                ip_addr = u'0::0' if r['is_ipv6'] else u'0.0.0.0'
-                r['ip_prefix_len'] = 0
+                remote_group = r['remote_group_id']
+                prefix_length = 128 if r['is_ipv6'] else 32
+                ip_version = 6 if r['is_ipv6'] else 4
+                # Add the referencing secgroup ID to the remote-group lookup
+                # data set. This enables the RemoteGroupWatcher thread to
+                # lookup the secgroups that need to be updated for a
+                # remote-group etcd watch event
+                self.vppf.remote_group_secgroups[remote_group].add(secgroup)
+                remote_ip_prefixes = [
+                    (unicode(ip), prefix_length) for port in
+                    self.vppf.remote_group_ports[remote_group]
+                    for ip in self.vppf.port_ips[port]
+                    if ip_network(unicode(ip)).version == ip_version]
+                LOG.debug("remote_group: vppf.remote_group_ports:%s",
+                          self.vppf.remote_group_ports
+                          )
+                LOG.debug("remote_group: vppf.port_ips:%s",
+                          self.vppf.port_ips)
+                LOG.debug("remote_group_ip_prefixes:%s for group %s",
+                          remote_ip_prefixes, remote_group)
+                LOG.debug("remote_group_secgroups: %s",
+                          self.vppf.remote_group_secgroups)
             # VPP API requires the IP addresses to be represented in binary
-            return SecurityGroupRule(r['is_ipv6'],
-                                     ip_address(ip_addr).packed,
-                                     r['ip_prefix_len'], r['protocol'],
-                                     r['port_min'], r['port_max'])
+            rules = [SecurityGroupRule(r['is_ipv6'],
+                                       ip_address(ip_addr).packed,
+                                       ip_prefix_len,
+                                       r.get('remote_group_id', None),
+                                       r['protocol'],
+                                       r['port_min'],
+                                       r['port_max'])
+                     for ip_addr, ip_prefix_len in remote_ip_prefixes]
+            return rules
+
         ingress_rules, egress_rules = (
             [_secgroup_rule(r) for r in data['ingress_rules']],
             [_secgroup_rule(r) for r in data['egress_rules']]
             )
+        # Flatten ingress and egress rules
+        ingress_rules, egress_rules = (
+            [rule for rule_list in ingress_rules for rule in rule_list],
+            [rule for rule_list in egress_rules for rule in rule_list]
+            )
+        LOG.debug("remote_group: sec_group: %s, ingress rules: %s "
+                  "egress_rules: %s", secgroup, ingress_rules, egress_rules)
         self.vppf.acl_add_replace_on_host(SecurityGroup(secgroup,
                                                         ingress_rules,
                                                         egress_rules))
@@ -2378,6 +2423,27 @@ class EtcdListener(object):
         except AttributeError:
             pass   # cannot reference acl attribute - pass and exit
 
+    def update_remote_group_secgroups(self, remote_group):
+        """Update the ACLs of all security groups that use a remote-group.
+
+        When a remote_group to port association is changed,
+        i.e. A new port is associated with (or) an existing port is removed,
+        the agent needs to update the VPP ACLs belonging to all the
+        security groups that use this remote-group in their rules.
+        """
+        secgroups = self.vppf.remote_group_secgroups[remote_group]
+        LOG.debug("Updating secgroups:%s referencing the remote_group:%s",
+                  secgroups, remote_group)
+        for secgroup in secgroups:
+            secgroup_key = self.secgroup_key_space + "/%s" % secgroup
+            # TODO(najoy):Update to the new per thread etcd-client model
+            rv = self.client_factory.client().read(secgroup_key)
+            data = jsonutils.loads(rv.value)
+            LOG.debug("Updating remote_group rules %s for secgroup %s",
+                      data, secgroup)
+            self.acl_add_replace(secgroup, data)
+
+
 # #################### LISP GPE Methods ###############################
     def is_valid_remote_map(self, vni, host):
         """Return True if the remote map is valid else False.
@@ -2444,6 +2510,7 @@ class EtcdListener(object):
         self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
         self.gpe_key_space = LEADIN + "/global/networks/gpe"
+        self.remote_group_key_space = LEADIN + "/global/remote_group"
 
         etcd_client = self.client_factory.client()
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
@@ -2455,6 +2522,7 @@ class EtcdListener(object):
         etcd_helper.ensure_dir(self.physnet_key_space)
         etcd_helper.ensure_dir(self.router_key_space)
         etcd_helper.ensure_dir(self.gpe_key_space)
+        etcd_helper.ensure_dir(self.remote_group_key_space)
 
         etcd_helper.clear_state(self.state_key_space)
 
@@ -2499,6 +2567,11 @@ class EtcdListener(object):
                                             known_secgroup_ids,
                                             heartbeat=self.AGENT_HEARTBEAT,
                                             data=self).watch_forever)
+            self.pool.spawn(RemoteGroupWatcher(self.client_factory.client(),
+                                               'remote_group_watcher',
+                                               self.remote_group_key_space,
+                                               heartbeat=self.AGENT_HEARTBEAT,
+                                               data=self).watch_forever)
 
         # The security group watcher will load the secgroups before
         # this point (before the thread is spawned) - that's helpful,
@@ -2719,6 +2792,83 @@ class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
         self.data.acl_add_replace(secgroup, data)
 
         self.data.reconsider_port_secgroups()
+
+
+class RemoteGroupWatcher(etcdutils.EtcdChangeWatcher):
+    """Details on how the remote-group-id rules are updated by the vpp-agent.
+
+    This thread watches the remote-group key space.
+    When VM port associations to security groups are updated, this thread
+    receives an etcd watch event from the server. From the watch event,
+    the thread figures out the set of ports associated with the
+    remote-group-id and the IP addresses of each port.
+
+    After this, this thread updates two data structures.
+    The first one is a dictionary named port_ips, used to keep track of
+    the ports to their list of IP addresses. It has the port UUID as the key,
+    and the value is it's set of IP addresses. The second DS is a dict named
+    remote_group_ports. This is used to keep track of port memberships in
+    remote-groups. The key is the remote_group_id and the value is the set of
+    ports associated with it. These two dictionaries are updated by the thread
+    whenever watch events are received, so the agent always has up to date
+    information on ports, their IPs and the remote-groups association.
+
+    The RemoteGroupWatcher  thread then calls a method named
+    update_remote_group_secgroups with the remote_group_id as the argument.
+    This method figures out which secgroups need to be updated as a result of
+    the watch event. This is done by looking up another dict named
+    remote_group_secgroups that keeps track of all the secgroups that are
+    referencing the remote-group-id inside their rules.
+    The key is the remote-group, and the value is the set of secgroups that
+    are dependent on it.
+
+    The update_remote_group_secgroups method then reads the rules for each of
+    these referencing security-groups and sends it to the method named
+    acl_add_replace with the security-group-uuid and rules as the argument.The
+    acl_add_replace method takes each rule that contains the remote-group-id
+    and computes a product using the list of IP addresses belonging to all
+    the ports in the remote-group. It then calls the acl_add_replace method
+    in vppf to atomically update the relevant VPP ACLs for the security-group.
+
+    """
+
+    def do_tick(self):
+        pass
+
+    def parse_key(self, remote_group_key):
+        m = re.match('([^/]+)' + '/([^/]+)', remote_group_key)
+        remote_group_id, port_id = None, None
+        if m:
+            remote_group_id = m.group(1)
+            port_id = m.group(2)
+        return (remote_group_id, port_id)
+
+    def added(self, remote_group_key, value):
+        # remote_group_key format is "remote_group_id/port_id"
+        # Value is a list of IP addresses
+        remote_group_id, port_id = self.parse_key(remote_group_key)
+        if value and remote_group_id and port_id:
+            ip_addrs = jsonutils.loads(value)
+            # The set of IP addresses configured on a port
+            self.data.vppf.port_ips[port_id] = set(ip_addrs)
+            # The set of ports in a security-group
+            self.data.vppf.remote_group_ports[remote_group_id].update(
+                [port_id])
+            LOG.debug("Current remote_group_ports: %s port_ips: %s",
+                      self.data.vppf.remote_group_ports,
+                      self.data.vppf.port_ips)
+            self.data.update_remote_group_secgroups(remote_group_id)
+
+    def removed(self, remote_group_key):
+        remote_group_id, port_id = self.parse_key(remote_group_key)
+        if remote_group_id and port_id:
+            # Remove the port_id from the remote_group
+            self.data.vppf.remote_group_ports[
+                remote_group_id].difference_update([port_id])
+            LOG.debug("Current remote_group_ports: %s port_ips: %s",
+                      self.data.vppf.remote_group_ports,
+                      self.data.vppf.port_ips)
+            self.data.update_remote_group_secgroups(remote_group_id)
 
 
 class GpeWatcher(etcdutils.EtcdChangeWatcher):
