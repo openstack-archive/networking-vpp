@@ -282,6 +282,11 @@ class VPPForwarder(object):
         # a Mapping of security groups to VPP ACLs
         self.secgroups = {}  # secgroup_uuid: VppAcl(ingress_idx, egress_idx)
 
+        # Security group UUIDs to set of port UUIDs in each group
+        self.remote_group_ports = defaultdict(set)
+        # Port UUIDs to set of port IP addresses
+        self.port_ips = defaultdict(set)
+
         # ACLs we ought to delete
         self.deferred_delete_secgroups = set()
 
@@ -912,6 +917,8 @@ class VPPForwarder(object):
         else:
             props = self.interfaces[uuid]
             self.clean_interface_from_vpp(uuid, props)
+            # Delete the port ip address from remote_group_id list
+            del self.port_ips[uuid]
 
             # Check if this is the last interface on host
             for interface in self.interfaces.values():
@@ -2263,7 +2270,9 @@ class EtcdListener(object):
             # VPP API requires the IP addresses to be represented in binary
             return SecurityGroupRule(r['is_ipv6'],
                                      ip_address(ip_addr).packed,
-                                     r['ip_prefix_len'], r['protocol'],
+                                     r['ip_prefix_len'],
+                                     r.get('remote_group_id', None),
+                                     r['protocol'],
                                      r['port_min'], r['port_max'])
         ingress_rules, egress_rules = (
             [_secgroup_rule(r) for r in data['ingress_rules']],
@@ -2399,6 +2408,7 @@ class EtcdListener(object):
         self.state_key_space = LEADIN + "/state/%s/ports" % self.host
         self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
         self.gpe_key_space = LEADIN + "/global/networks/gpe"
+        self.remote_group_key_space = LEADIN + "/global/remote_group"
 
         etcd_client = self.client_factory.client()
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
@@ -2410,6 +2420,7 @@ class EtcdListener(object):
         etcd_helper.ensure_dir(self.physnet_key_space)
         etcd_helper.ensure_dir(self.router_key_space)
         etcd_helper.ensure_dir(self.gpe_key_space)
+        etcd_helper.ensure_dir(self.remote_group_key_space)
 
         etcd_helper.clear_state(self.state_key_space)
 
@@ -2454,6 +2465,11 @@ class EtcdListener(object):
                                             known_secgroup_ids,
                                             heartbeat=self.AGENT_HEARTBEAT,
                                             data=self).watch_forever)
+            self.pool.spawn(RemoteGroupWatcher(self.client_factory.client(),
+                                               'remote_group_watcher',
+                                               self.remote_group_key_space,
+                                               heartbeat=self.AGENT_HEARTBEAT,
+                                               data=self).watch_forever)
 
         # The security group watcher will load the secgroups before
         # this point (before the thread is spawned) - that's helpful,
@@ -2668,6 +2684,45 @@ class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
         self.data.acl_add_replace(secgroup, data)
 
         self.data.reconsider_port_secgroups()
+
+
+class RemoteGroupWatcher(etcdutils.EtcdChangeWatcher):
+
+    def do_tick(self):
+        pass
+
+    def parse_key(self, remote_group_key):
+        m = re.match('([^/]+)' + '/([^/]+)', remote_group_key)
+        remote_group_id, port_id = None, None
+        if m:
+            remote_group_id = m.group(1)
+            port_id = m.group(2)
+        return (remote_group_id, port_id)
+
+    def added(self, remote_group_key, value):
+        # remote_group_key format is "remote_group_id/port_id"
+        # Value is a list of IP addresses
+        remote_group_id, port_id = self.parse_key(remote_group_key)
+        if value and remote_group_id and port_id:
+            ip_addrs = jsonutils.loads(value)
+            # The set of IP addresses configured on a port
+            self.data.vppf.port_ips[port_id] = set(ip_addrs)
+            # The set of ports in a security-group
+            self.data.vppf.remote_group_ports[remote_group_id].update(
+                [port_id])
+            LOG.debug("Current remote_group_ports: %s port_ips: %s",
+                      self.data.vppf.remote_group_ports,
+                      self.data.vppf.port_ips)
+
+    def removed(self, remote_group_key):
+        remote_group_id, port_id = self.parse_key(remote_group_key)
+        if remote_group_id and port_id:
+            # Remove the port_id from the remote_group
+            self.data.vppf.remote_group_ports[
+                remote_group_id].difference_update([port_id])
+            LOG.debug("Current remote_group_ports: %s port_ips: %s",
+                      self.data.vppf.remote_group_ports,
+                      self.data.vppf.port_ips)
 
 
 class GpeWatcher(etcdutils.EtcdChangeWatcher):

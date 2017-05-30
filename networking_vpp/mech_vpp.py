@@ -269,6 +269,12 @@ class VPPMechanismDriver(api.MechanismDriver):
                     current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
 
                 binding_type = self.get_vif_type(port_context)
+                # Remove port membership from any previously associated
+                # security groups for updating remote_security_group_id ACLs
+                self.communicator.unbind_port_from_remote_groups(
+                    port_context._plugin_context.session,
+                    port_context.original,
+                    port_context.current)
 
                 self.communicator.bind(port_context._plugin_context.session,
                                        port_context.current,
@@ -387,8 +393,8 @@ SecurityGroup = namedtuple(
 # Model for a VPP security group rule
 SecurityGroupRule = namedtuple(
     'SecurityGroupRule', ['is_ipv6', 'remote_ip_addr',
-                          'ip_prefix_len', 'protocol',
-                          'port_min', 'port_max']
+                          'ip_prefix_len', 'remote_group_id',
+                          'protocol', 'port_min', 'port_max']
     )
 
 
@@ -449,6 +455,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
+        self.remote_group_key_space = LEADIN + '/global/remote_group'
         self.election_key_space = LEADIN + '/election'
         self.journal_kick_key = self.election_key_space + '/kick-journal'
 
@@ -458,6 +465,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         etcd_helper.ensure_dir(self.port_key_space)
         etcd_helper.ensure_dir(self.secgroup_key_space)
         etcd_helper.ensure_dir(self.election_key_space)
+        etcd_helper.ensure_dir(self.remote_group_key_space)
 
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
@@ -761,22 +769,19 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # If IPv6 and protocol == icmp, convert protocol to icmpv6
         if is_ipv6 and protocol == 1:
             protocol = 58
-        # Neutron represents any ip address by setting one
-        # or both of the of the below fields to None
+        # Neutron represents any ip address by setting
+        # both the remote_ip_prefix and remote_group_id fields to None
         # VPP uses all zeros to represent any Ipv4/IpV6 address
-        # TODO(najoy) handle remote_group_id when remote_ip_prefix is None
-        if (rule['remote_ip_prefix'] is None
-                or rule['remote_group_id'] is None):
-            remote_ip_addr = '0.0.0.0' if not is_ipv6 else '0:0:0:0:0:0:0:0'
-            ip_prefix_len = 0
-        else:
+        if rule['remote_ip_prefix']:
             remote_ip_addr, ip_prefix_len = rule['remote_ip_prefix'
                                                  ].split('/')
-        # TODO(najoy): Add support for remote_group_id in sec-group-rules
-        if rule['remote_group_id']:
-            LOG.warning("A remote-group-id value is specified in "
-                        "rule %s. Setting a remote_group_id in rules is "
-                        "not supported", rule)
+            remote_group_id = None
+        elif rule['remote_group_id']:
+            remote_group_id = rule['remote_group_id']
+            remote_ip_addr, ip_prefix_len = None, 0
+        else:
+            remote_ip_addr = '0.0.0.0' if not is_ipv6 else '0:0:0:0:0:0:0:0'
+            remote_group_id, ip_prefix_len = None, 0
         # Neutron uses -1 or None to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
@@ -793,8 +798,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         else:
             port_min, port_max = (rule['port_range_min'],
                                   rule['port_range_max'])
-        sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
-                                    protocol, port_min, port_max)
+        sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr,
+                                    int(ip_prefix_len),
+                                    remote_group_id, protocol, port_min,
+                                    port_max)
         return sg_rule
 
     def send_secgroup_to_agents(self, session, secgroup):
@@ -836,6 +843,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
 
+    def _remote_group_path(self, secgroup_id, port_id):
+        return self.remote_group_key_space + "/" + secgroup_id + "/" + port_id
+
+    def _remote_group_paths(self, port):
+        security_groups = port.get('security_groups', [])
+        return [self._remote_group_path(secgroup_id, port['id'])
+                for secgroup_id in security_groups]
+
     ######################################################################
     # These functions use a DB journal to log messages before
     # they're put into etcd, as that can take time and may not always
@@ -876,12 +891,32 @@ class EtcdAgentCommunicator(AgentCommunicator):
                   host, data['binding_type'])
 
         db.journal_write(session, self._port_path(host, port), data)
+        # For tracking ports in remote_group_id, create a journal entry for
+        # the list of port IP addresses for each security group
+        for remote_group_path in self._remote_group_paths(port):
+            db.journal_write(session, remote_group_path,
+                             [item['ip_address'] for item in
+                              data['fixed_ips']])
         self.kick()
 
     def unbind(self, session, port, host):
         LOG.debug("Queueing unbind request for port:%s, host:%s.",
                   port, host)
+        for remote_group_path in self._remote_group_paths(port):
+            db.journal_write(session, remote_group_path, None)
         db.journal_write(session, self._port_path(host, port), None)
+        self.kick()
+
+    def unbind_port_from_remote_groups(self, session, original_port,
+                                       current_port):
+        """Remove ports from remote groups when port security is updated."""
+        removed_sec_groups = set(original_port['security_groups']) - set(
+            current_port['security_groups'])
+        for secgroup_id in removed_sec_groups:
+            db.journal_write(session,
+                             self._remote_group_path(secgroup_id,
+                                                     current_port['id']),
+                             None)
         self.kick()
 
     ######################################################################
