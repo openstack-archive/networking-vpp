@@ -801,6 +801,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.networks[('uplink', 'vxlan', 5000)] = mock_net_data
         self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
         self.vpp.gpe_map['remote_map'] = {}
+        self.vpp.port_ips[port_uuid] = '1.1.1.1'
         # Nominates an empty bridge that must be deleted
         # We no longer delete bridges that don't exist
         self.vpp.vpp.get_bridge_domains.return_value = {70000: []}
