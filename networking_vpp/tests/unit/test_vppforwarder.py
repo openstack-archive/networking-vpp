@@ -20,7 +20,9 @@ import uuid as uuidgen
 sys.modules['vpp_papi'] = mock.MagicMock()
 sys.modules['vpp'] = mock.MagicMock()
 sys.modules['threading'] = mock.MagicMock()
+from ipaddress import ip_address
 from networking_vpp.agent import server
+from networking_vpp.mech_vpp import SecurityGroupRule
 from neutron.tests import base
 
 INTERNAL_SEGMENATION_ID = 100
@@ -42,7 +44,12 @@ class VPPForwarderTestCase(base.BaseTestCase):
         # Set mac timeout to 180s
         # TAP wait timeout does not need to be 60s, set it to 6s, as this may
         # speed up the test
-        self.vpp = server.VPPForwarder({"test_net": "test_iface"}, 180, 6)
+        physnets = {"test_net": "test_iface"}
+        self.vpp = server.VPPForwarder(physnets, 180, 6)
+        self.etcd_listener = server.EtcdListener("test-host",
+                                                 mock.MagicMock(),
+                                                 self.vpp,
+                                                 physnets)
 
         def idxes(iface):
             vals = {
@@ -801,6 +808,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.networks[('uplink', 'vxlan', 5000)] = mock_net_data
         self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
         self.vpp.gpe_map['remote_map'] = {}
+        self.vpp.port_ips[port_uuid] = '1.1.1.1'
         # Nominates an empty bridge that must be deleted
         # We no longer delete bridges that don't exist
         self.vpp.vpp.get_bridge_domains.return_value = {70000: []}
@@ -820,3 +828,84 @@ class VPPForwarderTestCase(base.BaseTestCase):
             bridge_domain=mock_net_data['bridge_domain_id'])
         assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] == set([]))
         assert (self.vpp.networks == {})
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.acl_add_replace_on_host')
+    def test_acl_add_replace(self, mock_acl_add_replace):
+        sec_group = "fake-secgroup"
+        self.vpp.remote_group_ports["remote-group1"] = set(
+            ["port1", "port2"])
+        self.vpp.port_ips["port1"] = set(
+            ["2001::1", "2001::2", "1.1.1.1"])
+        self.vpp.port_ips["port2"] = set(
+            ["2002::1", "2002::2", "2.2.2.2"])
+        fake_rule_data = {
+            "ingress_rules": [{
+                "is_ipv6": 1,
+                "remote_ip_addr": None,
+                "ip_prefix_len": 0,
+                "remote_group_id": "remote-group1",
+                "protocol": 6,
+                "port_min": 80,
+                "port_max": 81
+                },
+                {
+                "is_ipv6": 0,
+                "remote_ip_addr": None,
+                "ip_prefix_len": 0,
+                "remote_group_id": "remote-group1",
+                "protocol": 6,
+                "port_min": 80,
+                "port_max": 81
+                },
+                {"is_ipv6": 1,
+                 "remote_ip_addr": "2001:aa12::",
+                 "ip_prefix_len": 64,
+                 "remote_group_id": None,
+                 "protocol": 6,
+                 "port_min": 8080,
+                 "port_max": 8080}],
+            "egress_rules": [{
+                "is_ipv6": 1,
+                "remote_ip_addr": None,
+                "ip_prefix_len": 0,
+                "remote_group_id": "remote-group1",
+                "protocol": 6,
+                "port_min": 443,
+                "port_max": 1000}]
+            }
+        self.etcd_listener.acl_add_replace(sec_group, fake_rule_data)
+        assert ("fake-secgroup" in
+                self.vpp.remote_group_secgroups["remote-group1"])
+        # Compute ingress and egress rule products using the IP addresses
+        # in the remote-group named remote-group1
+        ingress_rules = [
+            SecurityGroupRule(1, ip_address(u'2001::1').packed,
+                              128, 'remote-group1', 6, 80, 81),
+            SecurityGroupRule(1, ip_address(u'2001::2').packed,
+                              128, 'remote-group1', 6, 80, 81),
+            SecurityGroupRule(1, ip_address(u'2002::1').packed,
+                              128, 'remote-group1', 6, 80, 81),
+            SecurityGroupRule(1, ip_address(u'2002::2').packed,
+                              128, 'remote-group1', 6, 80, 81),
+            SecurityGroupRule(0, ip_address(u'1.1.1.1').packed,
+                              32, 'remote-group1', 6, 80, 81),
+            SecurityGroupRule(0, ip_address(u'2.2.2.2').packed,
+                              32, 'remote-group1', 6, 80, 81),
+            SecurityGroupRule(1, ip_address(u'2001:aa12::').packed,
+                              64, None, 6, 8080, 8080),
+            ]
+        egress_rules = [
+            SecurityGroupRule(1, ip_address(u'2001::1').packed,
+                              128, 'remote-group1', 6, 443, 1000),
+            SecurityGroupRule(1, ip_address(u'2001::2').packed,
+                              128, 'remote-group1', 6, 443, 1000),
+            SecurityGroupRule(1, ip_address(u'2002::1').packed,
+                              128, 'remote-group1', 6, 443, 1000),
+            SecurityGroupRule(1, ip_address(u'2002::2').packed,
+                              128, 'remote-group1', 6, 443, 1000),
+            ]
+        (security_group, ) = mock_acl_add_replace.call_args[0]
+        assert security_group.id == "fake-secgroup"
+        assert set(security_group.ingress_rules) == set(ingress_rules)
+        assert set(security_group.egress_rules) == set(egress_rules)
