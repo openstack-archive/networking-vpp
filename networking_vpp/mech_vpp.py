@@ -269,6 +269,12 @@ class VPPMechanismDriver(api.MechanismDriver):
                     current_bind.get(api.BOUND_DRIVER) == self.MECH_NAME):
 
                 binding_type = self.get_vif_type(port_context)
+                # Remove port membership from any previously associated
+                # security groups for updating remote_security_group_id ACLs
+                self.communicator.unbind_port_from_remote_groups(
+                    port_context._plugin_context.session,
+                    port_context.original,
+                    port_context.current)
 
                 self.communicator.bind(port_context._plugin_context.session,
                                        port_context.current,
@@ -449,6 +455,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.state_key_space = LEADIN + '/state'
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
+        self.remote_group_key_space = LEADIN + '/global/remote_group'
         self.election_key_space = LEADIN + '/election'
         self.journal_kick_key = self.election_key_space + '/kick-journal'
 
@@ -458,6 +465,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         etcd_helper.ensure_dir(self.port_key_space)
         etcd_helper.ensure_dir(self.secgroup_key_space)
         etcd_helper.ensure_dir(self.election_key_space)
+        etcd_helper.ensure_dir(self.remote_group_key_space)
 
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
@@ -836,6 +844,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _port_path(self, host, port):
         return self.port_key_space + "/" + host + "/ports/" + port['id']
 
+    def _remote_group_path(self, secgroup_id, port_id):
+        return self.remote_group_key_space + "/" + secgroup_id + "/" + port_id
+
+    def _remote_group_paths(self, port):
+        security_groups = port.get('security_groups', [])
+        return [self._remote_group_path(secgroup_id, port['id'])
+                for secgroup_id in security_groups]
+
     ######################################################################
     # These functions use a DB journal to log messages before
     # they're put into etcd, as that can take time and may not always
@@ -876,12 +892,30 @@ class EtcdAgentCommunicator(AgentCommunicator):
                   host, data['binding_type'])
 
         db.journal_write(session, self._port_path(host, port), data)
+        # For tracking ports in remote_group_id, create a journal entry for
+        # the list of port IP addresses within each security group
+        for remote_group_path in self._remote_group_paths(port):
+            db.journal_write(session, remote_group_path, data['fixed_ips'])
         self.kick()
 
     def unbind(self, session, port, host):
         LOG.debug("Queueing unbind request for port:%s, host:%s.",
                   port, host)
+        for remote_group_path in self._remote_group_paths(port):
+            db.journal_write(session, remote_group_path, None)
         db.journal_write(session, self._port_path(host, port), None)
+        self.kick()
+
+    def unbind_port_from_remote_groups(self, session, original_port,
+                                       current_port):
+        """Remove ports from remote groups when port security is updated."""
+        removed_sec_groups = set(original_port['security_groups']) - set(
+            current_port['security_groups'])
+        for secgroup_id in removed_sec_groups:
+            db.journal_write(session,
+                             self._remote_group_path(secgroup_id,
+                                                     current_port['id']),
+                             None)
         self.kick()
 
     ######################################################################
