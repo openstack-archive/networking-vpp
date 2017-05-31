@@ -764,19 +764,13 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # Neutron represents any ip address by setting one
         # or both of the of the below fields to None
         # VPP uses all zeros to represent any Ipv4/IpV6 address
-        # TODO(najoy) handle remote_group_id when remote_ip_prefix is None
-        if (rule['remote_ip_prefix'] is None
-                or rule['remote_group_id'] is None):
-            remote_ip_addr = '0.0.0.0' if not is_ipv6 else '0:0:0:0:0:0:0:0'
-            ip_prefix_len = 0
-        else:
+        if rule['remote_ip_prefix']:
             remote_ip_addr, ip_prefix_len = rule['remote_ip_prefix'
                                                  ].split('/')
-        # TODO(najoy): Add support for remote_group_id in sec-group-rules
-        if rule['remote_group_id']:
-            LOG.warning("A remote-group-id value is specified in "
-                        "rule %s. Setting a remote_group_id in rules is "
-                        "not supported", rule)
+        # TODO(najoy) Add support for remote_group_id
+        else:
+            remote_ip_addr = '0.0.0.0' if not is_ipv6 else '0:0:0:0:0:0:0:0'
+            ip_prefix_len = 0
         # Neutron uses -1 or None to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
@@ -793,7 +787,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
         else:
             port_min, port_max = (rule['port_range_min'],
                                   rule['port_range_max'])
-        sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr, ip_prefix_len,
+        sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr,
+                                    int(ip_prefix_len),
                                     protocol, port_min, port_max)
         return sg_rule
 
