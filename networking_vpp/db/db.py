@@ -14,9 +14,11 @@
 
 from networking_vpp.db import models
 
+import eventlet
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import func
 
+from oslo_config import cfg
 from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -66,9 +68,12 @@ def journal_read(session, func):
 
             if len(rs) > 0:  # The entry is still around, we are still master
                 entry = rs[0]
-                if func(entry.k, entry.v):  # Lets work on it, but can fail too
-                    # Once done, it should go.
-                    session.delete(entry)
+                res = False
+                with eventlet.Timeout(cfg.CONF.ml2_vpp.etcd_update_timeout,
+                                      False):  # Set a timeout for etcdupdate
+                    res = func(entry.k, entry.v)  # do work, could fail
+                if res:
+                    session.delete(entry)  # This is now processed
                     LOG.debug('forwarded etcd record %d', first_id)
                 else:
                     # For some reason, we can't do the job.

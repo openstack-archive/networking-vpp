@@ -19,6 +19,7 @@ from collections import namedtuple
 import etcd
 import eventlet
 import eventlet.event
+from eventlet import greenthread
 import os
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -377,7 +378,7 @@ class AgentCommunicator(object):
 # If no-one from Neutron talks to us in this long, get paranoid and check the
 # database for work.  We might have missed the kick (or another
 # process may have added work and then died before processing it).
-PARANOIA_TIME = 50              # TODO(ijw): make configurable?
+PARANOIA_TIME = cfg.CONF.ml2_vpp.master_time_slice
 # Our prefix for etcd keys, in case others are using etcd.
 LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
 # Model for representing a security group
@@ -917,7 +918,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         etcd_client = self.client_factory.client()
 
-        session = neutron_db_api.get_session()
         etcd_election = etcdutils.EtcdElection(etcd_client, 'forward_worker',
                                                self.election_key_space,
                                                work_time=PARANOIA_TIME + 3,
@@ -926,8 +926,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         while True:
             try:
                 etcd_election.wait_until_elected()
+                session = neutron_db_api.get_session()
 
                 def work(k, v):
+                    greenthread.sleep(0)
                     if self.do_etcd_update(etcd_client, k, v):
                         return True
                     else:

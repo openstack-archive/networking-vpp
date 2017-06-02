@@ -50,6 +50,12 @@ vpp_opts = [
                 help=_("Use TLS to access etcd")),
     cfg.StrOpt('etcd_ca_cert', default=None,
                help=_("etcd CA certificate file path")),
+    cfg.IntOpt('etcd_update_timeout', default=50,
+               help=_("The maximum period of time an etcd update can run "
+                      "before it is timed out.")),
+    cfg.IntOpt('master_time_slice', default=120,
+               help=_("The slice of time alloted for a worker thread to run"
+                      "as master when elected.")),
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
     cfg.StrOpt('vhost_user_dir', default='/tmp',
