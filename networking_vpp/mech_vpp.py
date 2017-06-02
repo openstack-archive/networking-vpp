@@ -892,23 +892,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # Assign a UUID to each worker thread to enable thread election
         return eventlet.spawn(self._forward_worker)
 
-    def do_etcd_update(self, etcd_client, k, v):
-        try:
-            # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
-            if v is None:
-                try:
-                    etcd_client.delete(k)
-                except etcd.EtcdKeyNotFound:
-                    # The key may have already been deleted
-                    # no problem here
-                    pass
-            else:
-                etcd_client.write(k, jsonutils.dumps(v))
-            return True
-
-        except Exception:       # TODO(ijw) select your exceptions
-            return False
-
     def _forward_worker(self):
         LOG.debug('forward worker begun')
 
@@ -924,46 +907,63 @@ class EtcdAgentCommunicator(AgentCommunicator):
                                                recovery_time=3)
 
         while True:
+            # Try indefinitely to regain the mastery of this thread pool.
+            etcd_election.wait_until_elected()
+
             try:
-                etcd_election.wait_until_elected()
+                # Master loop - as long as we are master and can
+                # maintain it, process incoming events.
 
-                def work(k, v):
-                    if self.do_etcd_update(etcd_client, k, v):
-                        return True
-                    else:
-                        # something went bad; breathe, in case we end
-                        # up in a tight loop
-                        time.sleep(1)
-                        return False
+                # Every long running section is preceded by extending
+                # mastership of the thread pool and followed by
+                # confirmation that we still have mastership (usually
+                # by a further extenssion).
+                while True:
 
-                LOG.debug('forward worker reading journal')
-                # TODO(najoy): Limit the journal read entries processed
-                # by a worker thread to a finite number, say 50.
-                # This will ensure that one thread does not run forever.
-                # The re-election process will wake up one of the sleeping
-                # threads after the specified wait_time
-                # if this runs too long
-                while db.journal_read(session, work):
-                    pass
+                    def work(k, v):
+                        with eventlet.Timeout(ETCD_WRITE_TIME, False):
+                            etcd_election.extend_election(ETCD_WRITE_TIME)
+                            if v is None:
+                                try:
+                                    etcd_client.delete(k)
+                                except etcd.EtcdKeyNotFound:
+                                    # The key may have already been deleted
+                                    # no problem here
+                                    pass
+                                else:
+                                    etcd_client.write(k, jsonutils.dumps(v))
+
+                    # TODO(ijw): we have yet to find out a way of
+                    # having a timeout on a DB select query
+                    etcd_election.extend_election(QUERY_TIME)
+                    db.journal_read(session, work) # TODO(ijw): add timeout
+
                 LOG.debug('forward worker has emptied journal')
 
                 # work queue is now empty.
 
-                # Wait to be kicked, or (in case of emergency) run every
-                # few seconds in case another thread or process dumped
-                # work and failed to process it
+                # Wait to be kicked, or (in case of emergency) run
+                # every few seconds in case another thread or process
+                # dumped work and failed to get notification to us to
+                # process it.
                 with eventlet.Timeout(PARANOIA_TIME, False):
+                    etcd_election.extend_election(PARANOIA_TIME)
                     try:
                         etcd_client.watch(self.journal_kick_key,
                                           timeout=PARANOIA_TIME - 5)
                     except etcd.EtcdException:
                         # Check the DB queue now, anyway
                         pass
-
+            except etcdutils.EtcdElectionLost:
+                # We are no longer master
             except Exception as e:
                 # TODO(ijw): log exception properly
-                LOG.exception("problems in forward worker - ignoring. "
-                              "error is %s", e)
+                LOG.exception("problems in forward worker - proceeding without quit")
+
+                # something went bad; breathe, in case we end
+                # up in a tight loop
+                time.sleep(1)
+
                 # never quit
                 pass
 
