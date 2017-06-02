@@ -56,35 +56,39 @@ def journal_read(session, func):
     if entry:
         with session.begin(subtransactions=True):
 
-            first_id = entry.id
+            try:
+                first_id = entry.id
 
-            # Reselect with a lock, but without doing the range check
-            # so that the lock is row-specific
-            rs = session.query(models.VppEtcdJournal)\
-                .filter(models.VppEtcdJournal.id == first_id)\
-                .with_for_update().all()
+                # Reselect with a lock, but without doing the range check
+                # so that the lock is row-specific
+                rs = session.query(models.VppEtcdJournal)\
+                    .filter(models.VppEtcdJournal.id == first_id)\
+                    .with_for_update().all()
 
-            if len(rs) > 0:  # The entry is still around, we are still master
-                entry = rs[0]
-                if func(entry.k, entry.v):  # Lets work on it, but can fail too
-                    # Once done, it should go.
-                    session.delete(entry)
-                    LOG.debug('forwarded etcd record %d', first_id)
+                if len(rs) > 0:
+                    # The entry is still around, we are still master
+                    entry = rs[0]
+                    if func(entry.k, entry.v):  # do work, could fail:
+                        session.delete(entry)  # This is now processed
+                        LOG.debug('forwarded etcd record %d', first_id)
+                    else:
+                        # For some reason, we can't do the job.
+                        entry.retry_count += 1
+                        entry.last_retried = sa.func.now()
+                        entry.update(entry)
+                        LOG.debug("Couldn't forward etcd record %d, "
+                                  "retrying later", first_id)
+
                 else:
-                    # For some reason, we can't do the job.
-                    entry.retry_count += 1
-                    entry.last_retried = sa.func.now()
-                    entry.update(entry)
-                    LOG.debug("Couldn't forward etcd record %d, "
-                              "retrying later", first_id)
-
-            else:
-                # We cannot find that entry any more, means some other
-                # master kicking around.
-                # TODO(ijw): We should re-elect ourselves if we can
-                maybe_more = False
-                LOG.debug("etcd record %d processed by "
-                          "another forwarder", first_id)
+                    # We cannot find that entry any more, means some other
+                    # master kicking around.
+                    # TODO(ijw): We should re-elect ourselves if we can
+                    maybe_more = False
+                    LOG.debug("etcd record %d processed by "
+                              "another forwarder", first_id)
+            except Exception as e:
+                LOG.exception("forward worker journal read processing hit "
+                              "error. Error is: %s", e)
 
     else:
         # The table is empty - no work available.
