@@ -19,6 +19,7 @@ from collections import namedtuple
 import etcd
 import eventlet
 import eventlet.event
+from eventlet import greenthread
 import os
 from oslo_config import cfg
 from oslo_log import log as logging
@@ -377,7 +378,7 @@ class AgentCommunicator(object):
 # If no-one from Neutron talks to us in this long, get paranoid and check the
 # database for work.  We might have missed the kick (or another
 # process may have added work and then died before processing it).
-PARANOIA_TIME = 50              # TODO(ijw): make configurable?
+LEASE_TIME = cfg.CONF.ml2_vpp.journal_worker_master_lease_time
 # Our prefix for etcd keys, in case others are using etcd.
 LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
 # Model for representing a security group
@@ -895,6 +896,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def do_etcd_update(self, etcd_client, k, v):
         try:
             # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
+            greenthread.sleep(0)  # co-operative yield to ensure timeout
             if v is None:
                 try:
                     etcd_client.delete(k)
@@ -917,18 +919,23 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
         etcd_client = self.client_factory.client()
 
-        session = neutron_db_api.get_session()
         etcd_election = etcdutils.EtcdElection(etcd_client, 'forward_worker',
                                                self.election_key_space,
-                                               work_time=PARANOIA_TIME + 3,
+                                               work_time=LEASE_TIME + 3,
                                                recovery_time=3)
 
         while True:
             try:
                 etcd_election.wait_until_elected()
+                session = neutron_db_api.get_session()
 
                 def work(k, v):
-                    if self.do_etcd_update(etcd_client, k, v):
+                    etcd_timeout = (cfg.CONF.ml2_vpp.
+                                    journal_worker_etcd_update_timeout)
+                    res = False
+                    with eventlet.Timeout(etcd_timeout, False):
+                        res = self.do_etcd_update(etcd_client, k, v)
+                    if res:
                         return True
                     else:
                         # something went bad; breathe, in case we end
@@ -944,7 +951,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # threads after the specified wait_time
                 # if this runs too long
                 while db.journal_read(session, work):
-                    pass
+                    etcd_election.wait_until_elected()  # Ask to get re-elected
                 LOG.debug('forward worker has emptied journal')
 
                 # work queue is now empty.
@@ -952,10 +959,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # Wait to be kicked, or (in case of emergency) run every
                 # few seconds in case another thread or process dumped
                 # work and failed to process it
-                with eventlet.Timeout(PARANOIA_TIME, False):
+                with eventlet.Timeout(LEASE_TIME, False):
                     try:
                         etcd_client.watch(self.journal_kick_key,
-                                          timeout=PARANOIA_TIME - 5)
+                                          timeout=LEASE_TIME - 5)
                     except etcd.EtcdException:
                         # Check the DB queue now, anyway
                         pass

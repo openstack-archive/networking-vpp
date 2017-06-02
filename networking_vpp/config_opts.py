@@ -50,6 +50,14 @@ vpp_opts = [
                 help=_("Use TLS to access etcd")),
     cfg.StrOpt('etcd_ca_cert', default=None,
                help=_("etcd CA certificate file path")),
+    cfg.IntOpt('journal_worker_master_lease_time', default=120,
+               help=_("The slice of time alloted for a journal forward worker "
+                      "thread to run as master when elected.")),
+    cfg.IntOpt('journal_worker_etcd_update_timeout', default=50,
+               help=_("The maximum period of time an journal forward worker "
+                      "can try an etcd update before it is timed out. This"
+                      "should be much less than "
+                      "journal_worker_master_lease_time")),
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
     cfg.StrOpt('vhost_user_dir', default='/tmp',
