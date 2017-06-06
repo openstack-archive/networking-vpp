@@ -65,6 +65,7 @@ function set_hugepages {
 }
 
 function setup_host_env {
+    cd $TOP_DIR
     is_package_installed etcd || install_package etcd
     restart_service etcd
 
