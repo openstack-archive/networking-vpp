@@ -112,7 +112,7 @@ class TestAgentUtils(base.BaseTestCase):
         """Test parse_host_config with multiple host-port values """
         hosts = '192.168.1.10:1234,192.168.1.11:1235,192.168.1.12:1236'
         ret = self.parse_config_test_run(hosts, OVERRIDE_PORT)
-        self.assertTrue(isinstance(ret, tuple))
+        self.assertIsInstance(ret, tuple)
         self.assertThat(ret, matchers.Equals(
             (('192.168.1.10', 1234),
              ('192.168.1.11', 1235),
@@ -121,7 +121,7 @@ class TestAgentUtils(base.BaseTestCase):
 
         hosts = '192.168.1.10:1234,192.168.1.11,192.168.1.12:1236'
         ret = self.parse_config_test_run(hosts, OVERRIDE_PORT)
-        self.assertTrue(isinstance(ret, tuple))
+        self.assertIsInstance(ret, tuple)
         self.assertThat(ret, matchers.Equals(
             (('192.168.1.10', 1234),
              ('192.168.1.11', OVERRIDE_PORT),
@@ -144,7 +144,7 @@ class TestAgentUtils(base.BaseTestCase):
         """Test parse_host_config with single host new format """
         hosts = '192.168.1.10:1234'
         ret = self.parse_config_test_run(hosts, OVERRIDE_PORT)
-        self.assertTrue(isinstance(ret, tuple))
+        self.assertIsInstance(ret, tuple)
         self.assertThat(ret, matchers.Equals(
             (('192.168.1.10', 1234),)
         ))
