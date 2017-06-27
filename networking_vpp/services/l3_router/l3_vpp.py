@@ -25,6 +25,7 @@ from neutron.db import common_db_mixin
 from neutron.db import l3_gwmode_db
 from neutron_lib.api.definitions import provider_net as provider
 from neutron_lib import constants
+from neutron_lib.plugins import constants as plugin_constants
 
 from networking_vpp.agent import server
 from networking_vpp.db import db
@@ -148,7 +149,7 @@ class VppL3RouterPlugin(
         self.communicator.kick()
 
     def get_plugin_type(self):
-        return constants.L3
+        return plugin_constants.L3
 
     def get_plugin_description(self):
         """Returns string description of the plugin."""
