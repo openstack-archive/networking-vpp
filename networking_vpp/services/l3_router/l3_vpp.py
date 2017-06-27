@@ -26,6 +26,12 @@ from neutron.db import l3_gwmode_db
 from neutron_lib.api.definitions import provider_net as provider
 from neutron_lib import constants
 
+# TODO(ijw): backward compatibility doesn't really belong here
+try:
+    from neutron_lib.plugins import constants as plugin_constants
+except ImportError:
+    pass
+
 from networking_vpp.agent import server
 from networking_vpp.db import db
 from networking_vpp.mech_vpp import EtcdAgentCommunicator
@@ -148,7 +154,11 @@ class VppL3RouterPlugin(
         self.communicator.kick()
 
     def get_plugin_type(self):
-        return constants.L3
+        # TODO(ijw): not really the right place for backward compatibility...
+        try:
+            return plugin_constants.L3
+        except Exception:
+            return constants.L3
 
     def get_plugin_description(self):
         """Returns string description of the plugin."""
