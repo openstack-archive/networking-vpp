@@ -1832,11 +1832,13 @@ class VPPForwarder(object):
             self.vpp.del_lisp_vni_to_bd_mapping(vni=seg_id,
                                                 bridge_domain=bridge_idx)
 
-    def ensure_remote_gpe_mapping(self, vni, mac, remote_ip):
+    def ensure_remote_gpe_mapping(self, vni, mac, ip, remote_ip):
         """Ensures a remote GPE mapping
 
-        A remote GPE mapping contains a remote mac-address, vni and the
-        underlay ip address of the remote node (i.e. remote_ip)
+        A remote GPE mapping contains a remote mac-address of the instance,
+        vni and the underlay ip address of the remote node (i.e. remote_ip)
+        A remote GPE mapping also adds an ARP entry to the GPE control plane
+        using the mac and ip address arguments.
         """
         if (mac, vni) not in self.gpe_map['remote_map']:
             is_ip4 = 1 if ip_network(unicode(remote_ip)).version == 4 else 0
@@ -1847,12 +1849,38 @@ class VPPForwarder(object):
                               }
             self.vpp.add_lisp_remote_mac(mac, vni, remote_locator)
             self.gpe_map['remote_map'][(mac, vni)] = remote_ip
+            # Add a LISP ARP entry for remote instance's IPv4 address
+            # if it does not exist. If an ARP entry exists, replace it.
+            # A stale entry may exist and must be replaced during re-sync.
+            # One possible reason for a stale ARP entry could
+            # due to a VM being unbound when the agent was not
+            # running on the node.
+            if ip_network(unicode(ip)).version == 4:
+                bridge_domain = self.bridge_idx_for_lisp_segment(vni)
+                int_ip = int(ip_address(unicode(ip)))
+                if not self.vpp.exists_lisp_arp_entry(bridge_domain, int_ip):
+                    self.vpp.add_lisp_arp_entry(mac,
+                                                bridge_domain,
+                                                int_ip)
+                else:
+                    self.vpp.replace_lisp_arp_entry(mac,
+                                                    bridge_domain,
+                                                    int_ip)
 
-    def delete_remote_gpe_mapping(self, vni, mac):
+    def delete_remote_gpe_mapping(self, vni, mac, ip=None):
         """Delete a remote GPE vni to mac mapping."""
         if (mac, vni) in self.gpe_map['remote_map']:
             self.vpp.del_lisp_remote_mac(mac, vni)
             del self.gpe_map['remote_map'][(mac, vni)]
+            # Delete the LISP ARP entry for remote instance's IPv4 address
+            # if it's present and the IP address is present
+            if ip and ip_network(unicode(ip)).version == 4:
+                bridge_domain = self.bridge_idx_for_lisp_segment(vni)
+                int_ip = int(ip_address(unicode(ip)))
+                if self.vpp.exists_lisp_arp_entry(bridge_domain, int_ip):
+                    self.vpp.del_lisp_arp_entry(mac,
+                                                bridge_domain,
+                                                int_ip)
 
     def add_local_gpe_mapping(self, vni, mac):
         """Add a local GPE mapping between a mac and vni."""
@@ -1873,14 +1901,20 @@ class VPPForwarder(object):
         """Clear all GPE mac to seg_id remote mappings for the seg_id.
 
         When a segment is unbound from a host, all remote GPE mappings for
-        that segment are cleared.
+        that segment are cleared. Also any GPE ARP entries in the bridge
+        domain are removed. As we no longer bind on this GPE segment,
+        on this node, we need to clear all remote mappings and ARP data for
+        segment for scalability reasons.
         """
         LOG.debug("Clearing all gpe remote mappings for VNI:%s",
                   segmentation_id)
         for mac_vni_tpl in self.gpe_map['remote_map'].keys():
             mac, vni = mac_vni_tpl
             if segmentation_id == vni:
-                self.delete_remote_gpe_mapping(vni, mac)
+                self.delete_remote_gpe_mapping(vni, mac, None)
+        # Clear any static GPE ARP entries in the bridge-domain for this VNI
+        bridge_domain = self.bridge_idx_for_lisp_segment(segmentation_id)
+        self.vpp.clear_lisp_arp_entries(bridge_domain)
 
     def ensure_gpe_link(self):
         """Ensures that the GPE uplink interface is present and configured.
@@ -2259,7 +2293,15 @@ class EtcdListener(object):
         """
 
         def _secgroup_rule(r):
-            ip_addr = unicode(r['remote_ip_addr'])
+            # Please ignore as these changes will go away when rebased with
+            # remote-group-id changes. These are required temporarily
+            # in this patch, for testing compatibility with the new
+            # security-group etcd model for remote-group-id
+            if r['remote_ip_addr'] is not None:
+                ip_addr = unicode(r['remote_ip_addr'])
+            else:
+                ip_addr = u'0::0' if r['is_ipv6'] else u'0.0.0.0'
+                r['ip_prefix_len'] = 0
             # VPP API requires the IP addresses to be represented in binary
             return SecurityGroupRule(r['is_ipv6'],
                                      ip_address(ip_addr).packed,
@@ -2355,12 +2397,15 @@ class EtcdListener(object):
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
         rv = self.client_factory.client().read(key_space, recursive=True)
         for child in rv.children:
-            m = re.match(key_space + '/([^/]+)' + '/([^/]+)', child.key)
+            m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
+                         child.key)
             if m:
                 hostname = m.group(1)
                 mac = m.group(2)
+                ip = m.group(3)
                 if self.is_valid_remote_map(vni, hostname):
-                    self.vppf.ensure_remote_gpe_mapping(vni, mac, child.value)
+                    self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
+                                                        child.value)
 
     def ensure_gpe_remote_mappings(self, segmentation_id):
         """Ensure all the remote GPE mappings are present in VPP
@@ -2529,9 +2574,12 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
                 self.data.state_key_space + '/%s'
                 % port)
             if is_vxlan:
-                self.etcd_client.delete(
+                # Each IP address of the bound port is a GPE child key
+                gpe_child_keys = self.etcd_client.get(
                     self.data.gpe_key_space + '/%s/%s/%s'
                     % (seg_id, self.data.host, mac))
+                for result in gpe_child_keys.children:
+                    self.etcd_client.delete(result.key)
         except etcd.EtcdKeyNotFound:
             # Gone is fine; if we didn't delete it
             # it's no problem
@@ -2561,20 +2609,23 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # we have nothing we can do at this point.  We simply
         # decline to notify Nova the port is ready.
 
-        # For vxlan networks,
+        # For vxlan GPE networks,
         # write the remote mapping data to etcd to
-        # propagate the mac to underlay mapping to all
+        # propagate both the mac to underlay mapping and
+        # mac to instance's IP (for ARP) mapping to all
         # agents that bind this segment using GPE
         if data['network_type'] == 'vxlan':
             host_ip = self.data.vppf.gpe_underlay_addr
-            gpe_key = self.data.gpe_key_space + '/%s/%s/%s' % (
-                data['segmentation_id'],
-                self.data.host,
-                data['mac_address'])
-            LOG.debug('Writing gpe key %s with vxlan mapping '
-                      'to underlay IP address %s',
-                      gpe_key, host_ip)
-            self.etcd_client.write(gpe_key, host_ip)
+            for ip in [ip['ip_address'] for ip in data.get('fixed_ips')]:
+                gpe_key = self.data.gpe_key_space + '/%s/%s/%s/%s' % (
+                    data['segmentation_id'],
+                    self.data.host,
+                    data['mac_address'],
+                    ip)
+                LOG.debug('Writing gpe key %s with vxlan mapping '
+                          'to underlay IP address %s',
+                          gpe_key, host_ip)
+                self.etcd_client.write(gpe_key, host_ip)
 
 
 class RouterWatcher(etcdutils.EtcdChangeWatcher):
@@ -2676,31 +2727,35 @@ class GpeWatcher(etcdutils.EtcdChangeWatcher):
         pass
 
     def parse_key(self, gpe_key):
-        m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)', gpe_key)
-        vni, hostname, mac = None, None, None
+        m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
+                     gpe_key)
+        vni, hostname, mac, ip = None, None, None, None
         if m:
             vni = int(m.group(1))
             hostname = m.group(2)
             mac = m.group(3)
-        return (vni, hostname, mac)
+            ip = m.group(4)
+        return (vni, hostname, mac, ip)
 
     def added(self, gpe_key, value):
-        # gpe_key format is "vni/hostname/mac"
-        vni, hostname, mac = self.parse_key(gpe_key)
-        if (vni and hostname and mac and
+        # gpe_key format is "vni/hostname/mac/ip"
+        vni, hostname, mac, ip = self.parse_key(gpe_key)
+        if (vni and hostname and mac and ip and
                 self.data.is_valid_remote_map(vni, hostname)):
             self.data.vppf.ensure_remote_gpe_mapping(
                 vni=vni,
                 mac=mac,
+                ip=ip,
                 remote_ip=value)
 
     def removed(self, gpe_key):
-        vni, hostname, mac = self.parse_key(gpe_key)
-        if (vni and hostname and mac and
+        vni, hostname, mac, ip = self.parse_key(gpe_key)
+        if (vni and hostname and mac and ip and
                 self.data.is_valid_remote_map(vni, hostname)):
             self.data.vppf.delete_remote_gpe_mapping(
                 vni=vni,
-                mac=mac)
+                mac=mac,
+                ip=ip)
 
 
 class BindNotifier(object):
