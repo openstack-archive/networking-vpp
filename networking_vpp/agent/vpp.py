@@ -858,6 +858,24 @@ class VPPInterface(object):
                       locator_set_name=locator_set_name,
                       sw_if_index=sw_if_index)
 
+    def add_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
+        """Adds a static ARP entry to LISP."""
+        self.call_vpp('one_add_del_l2_arp_entry',
+                      is_add=1,
+                      mac=mac_to_bytes(mac),
+                      bd=bridge_domain,
+                      ip4=ipv4_address
+                      )
+
+    def del_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
+        """Removes a static ARP entry from LISP."""
+        self.call_vpp('one_add_del_l2_arp_entry',
+                      is_add=0,
+                      mac=mac_to_bytes(mac),
+                      bd=bridge_domain,
+                      ip4=ipv4_address
+                      )
+
     def get_lisp_local_locators(self, name):
         """Get lisp local locator sets and their corresponding locators.
 
