@@ -24,7 +24,7 @@ from networking_vpp.compat import n_const as constants
 from networking_vpp.db import db
 from networking_vpp.services.l3_router import l3_vpp
 
-from neutron.db import api as neutron_db_api
+from neutron.db import api as db_api
 from neutron.db import l3_db
 from neutron.extensions import external_net as external_net
 try:
@@ -77,25 +77,24 @@ class VppL3PluginBaseTestCase(
         mock.patch.object(l3_vpp, 'EtcdAgentCommunicator').start()
         super(VppL3PluginBaseTestCase, self).setUp(
             plugin=core_plugin, service_plugins=service_plugins)
-        self.db_session = neutron_db_api.get_session()
         self.plugin = directory.get_plugin()
         self.plugin._network_is_external = mock.Mock(return_value=True)
         self.driver = directory.get_plugin(constants.L3)
 
+        self.context = context.get_admin_context()
+
     @staticmethod
     def _get_mock_router_operation_info(network, subnet):
-        router_context = context.get_admin_context()
         router = {'router':
                   {'id': '8f3ad881-b92a-47f9-b644-63e56e265ddd',
                    'name': 'router1',
                    'admin_state_up': True,
                    'tenant_id': network['network']['tenant_id'],
                    'external_gateway_info': {}}}
-        return router_context, router
+        return router
 
     @staticmethod
     def _get_mock_router_with_gateway_operation_info(network, subnet):
-        router_context = context.get_admin_context()
         router = {'router':
                   {'id': '8f3ad881-b92a-47f9-b644-63e56e265ddd',
                    'name': 'router1',
@@ -103,23 +102,21 @@ class VppL3PluginBaseTestCase(
                    'tenant_id': network['network']['tenant_id'],
                    'external_gateway_info': {'network_id':
                                              network['network']['id']}}}
-        return router_context, router
+        return router
 
     @staticmethod
     def _get_mock_floatingip_operation_info(network, subnet):
-        floatingip_context = context.get_admin_context()
         floatingip = {'floatingip':
                       {'floating_network_id': network['network']['id'],
                        'tenant_id': network['network']['tenant_id'],
                        'port_id': PORT_ID}}
-        return floatingip_context, floatingip
+        return floatingip
 
     @staticmethod
     def _get_mock_router_interface_operation_info(network, subnet):
-        router_intf_context = context.get_admin_context()
         router_intf_dict = {'subnet_id': subnet['subnet']['id'],
                             'id': network['network']['id']}
-        return router_intf_context, router_intf_dict
+        return router_intf_dict
 
 
 class VppL3PluginRouterInterfaceTestCase(VppL3PluginBaseTestCase):
@@ -131,28 +128,27 @@ class VppL3PluginRouterInterfaceTestCase(VppL3PluginBaseTestCase):
         # Create network, subnet and router for testing.
         kwargs = {'arg_list': (external_net.EXTERNAL,),
                   external_net.EXTERNAL: False}
-        with self.network(**kwargs) as network:
-            router_context, router_dict = (
-                self._get_mock_router_operation_info(network, None))
-            new_router_dict = self.driver.create_router(router_context,
-                                                        router_dict)
-            # Check if a VRf was allocated to this router
-            vrf = db.get_router_vrf(self.db_session, new_router_dict['id'])
-            self.assertIsNotNone(vrf)
+        with db_api.context_manager.reader.using(self.context):
+            with self.network(**kwargs) as network:
+                router_dict = self._get_mock_router_operation_info(network, None)
+                new_router_dict = self.driver.create_router(self.context,
+                                                            router_dict)
+                # Check if a VRf was allocated to this router
+                vrf = db.get_router_vrf(self.context.session, new_router_dict['id'])
+                self.assertIsNotNone(vrf)
 
     def test_router_delete_vrf_unreserved(self):
         # Create network, subnet and router for testing.
         kwargs = {'arg_list': (external_net.EXTERNAL,),
                   external_net.EXTERNAL: False}
         with self.network(**kwargs) as network:
-            router_context, router_dict = (
-                self._get_mock_router_operation_info(network, None))
-            new_router_dict = self.driver.create_router(router_context,
+            router_dict = self._get_mock_router_operation_info(network, None)
+            new_router_dict = self.driver.create_router(self.context,
                                                         router_dict)
             # Check if the VRF is unallocated on a delete
-            self.driver.delete_router(router_context, new_router_dict['id'])
+            self.driver.delete_router(self.context, new_router_dict['id'])
             self.assertIsNone(
-                db.get_router_vrf(self.db_session, new_router_dict['id']))
+                db.get_router_vrf(self.context.session, new_router_dict['id']))
 
     def test_add_remove_router_interface_journal_row(self):
         # Create network, subnet and router for testing.
@@ -160,23 +156,21 @@ class VppL3PluginRouterInterfaceTestCase(VppL3PluginBaseTestCase):
                   external_net.EXTERNAL: False}
         with self.network(**kwargs) as network:
             with self.subnet(cidr='10.0.0.0/24') as subnet:
-                router_context, router_dict = (
-                    self._get_mock_router_operation_info(network, None))
-                new_router_dict = self.driver.create_router(router_context,
+                router_dict = self._get_mock_router_operation_info(network, None)
+                new_router_dict = self.driver.create_router(self.context,
                                                             router_dict)
-                router_intf_context, router_intf_dict = (
-                    self._get_mock_router_interface_operation_info(
-                        network, subnet))
+                router_intf_dict = self._get_mock_router_interface_operation_info(
+                        network, subnet)
                 self.driver.add_router_interface(
-                    router_intf_context, new_router_dict['id'],
+                    self.context, new_router_dict['id'],
                     router_intf_dict)
-                rows = db.get_all_journal_rows(self.db_session)
+                rows = db.get_all_journal_rows(self.context.session)
                 self.assertEqual(len(rows), 1)
 
                 self.driver.remove_router_interface(
-                    router_intf_context, new_router_dict['id'],
+                    self.context, new_router_dict['id'],
                     router_intf_dict)
-                rows = db.get_all_journal_rows(self.db_session)
+                rows = db.get_all_journal_rows(self.context.session)
                 self.assertEqual(len(rows), 2)
 
 
@@ -187,7 +181,6 @@ class VppL3PluginFloatingIPsTestCase(VppL3PluginBaseTestCase):
         self.floatingip = {'floatingip': FLOATINGIP_DICT}
         self.plugin.get_port = mock.Mock(return_value=PORT_DICT)
         self.plugin.get_network = mock.Mock(return_value=NETWORK_DICT)
-        self.context = context.get_admin_context()
         self.create_mock = mock.patch.object(
             l3_db.L3_NAT_dbonly_mixin, 'create_floatingip',
             return_value=FLOATINGIP_DICT).start()
@@ -295,8 +288,8 @@ class VppL3PluginRouterTestCase(VppL3PluginBaseTestCase):
             with self.subnet(cidr='10.0.0.0/24'):
                 router_context, router_dict = (
                     self._get_mock_router_operation_info(network, None))
-                self.driver.create_router(router_context, router_dict)
-                rows = db.get_all_journal_rows(self.db_session)
+                self.driver.create_router(self.context, router_dict)
+                rows = db.get_all_journal_rows(self.context.session)
                 self.assertEqual(len(rows), 0)
 
     def test_create_router_with_gateway_journal_row(self):
@@ -309,8 +302,8 @@ class VppL3PluginRouterTestCase(VppL3PluginBaseTestCase):
                     self._get_mock_router_with_gateway_operation_info(
                         network, None))
 
-                self.driver.create_router(router_context, router_dict)
-                rows = db.get_all_journal_rows(self.db_session)
+                self.driver.create_router(self.context, router_dict)
+                rows = db.get_all_journal_rows(self.context.session)
                 self.assertEqual(len(rows), 1)
 
     def test_update_router_with_gateway_journal_row(self):
@@ -321,7 +314,7 @@ class VppL3PluginRouterTestCase(VppL3PluginBaseTestCase):
             with self.subnet(cidr='10.0.0.0/24'):
                 router_context, router_dict = (
                     self._get_mock_router_operation_info(network, None))
-                self.driver.create_router(router_context, router_dict)
+                self.driver.create_router(self.context, router_dict)
 
                 kwargs[external_net.EXTERNAL] = True
                 with self.network(**kwargs) as network:
@@ -333,7 +326,7 @@ class VppL3PluginRouterTestCase(VppL3PluginBaseTestCase):
                             router_context, new_router_dict['router']['id'],
                             new_router_dict)
 
-                        rows = db.get_all_journal_rows(self.db_session)
+                        rows = db.get_all_journal_rows(self.context.session)
                         self.assertEqual(len(rows), 1)
 
     def test_delete_router_with_gateway_journal_row(self):
@@ -346,8 +339,8 @@ class VppL3PluginRouterTestCase(VppL3PluginBaseTestCase):
                     self._get_mock_router_with_gateway_operation_info(
                         network, None))
 
-                self.driver.create_router(router_context, router_dict)
+                self.driver.create_router(self.context, router_dict)
                 self.driver.delete_router(
                     router_context, router_dict['router']['id'])
-                rows = db.get_all_journal_rows(self.db_session)
+                rows = db.get_all_journal_rows(self.context.session)
                 self.assertEqual(len(rows), 2)
