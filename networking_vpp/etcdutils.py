@@ -648,3 +648,42 @@ class EtcdClientFactory(object):
         etcd_client = etcd.Client(**self.etcd_args)
 
         return etcd_client
+
+from eventlet import greenthread
+from collections import defaultdict
+
+# eventlet.corolocal suggests this should work
+def get_coroutine_ident():
+    return id(greenthread.getcurrent())
+
+class EtcdThreadClientFactory(object):
+    """Return a 'singleton' client per coroutine in eventlet.
+
+    This ensures that a coroutine gets its own client, without
+    creating a ton of unnmecessary clients or worrying about
+    passing them around.  It's necessary because the etcd
+    client library is bad with coroutines.
+
+    Note that if you have both threads and eventlets this cannot
+    be trusted to work in the non-eventletted threads.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.client_factory = EtcdClientFactory(*args, **kwargs)
+        # Safe to use dicts without locks (in coroutines)
+        self.clients = defaultdict(self.client_factory.client)
+
+    @property
+    def client(self):
+        return self.clients(get_coroutine_ident())
+
+
+# When combining threads, the per-thread factory and watchers you
+# probably want to use this to start them:
+def spawn_watcher(pool, factory, cls, *args, **kwargs):
+    def run_watcher(factory, cls, *args, **kwargs):
+        # This must run post-spawn to get the right thread ID
+        client = factory.client
+        cls(client, *args, **kwargs).watch_forever()
+
+    pool.spawn_n(run_watcher, factory, cls, *args, **kwargs)
