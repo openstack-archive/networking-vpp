@@ -156,8 +156,7 @@ class VppL3RouterPlugin(
                 "using VPP.")
 
     def create_router(self, context, router):
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             router_dict = super(VppL3RouterPlugin, self).create_router(
                 context, router)
             # Allocate VRF for this router
@@ -187,8 +186,7 @@ class VppL3RouterPlugin(
         return new_router
 
     def delete_router(self, context, router_id):
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             router = self.get_router(context, router_id)
             super(VppL3RouterPlugin, self).delete_router(context, router_id)
             if router.get('external_gateway_info', False):
@@ -199,8 +197,7 @@ class VppL3RouterPlugin(
             db.delete_router_vrf(context.session, router_id)
 
     def create_floatingip(self, context, floatingip):
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             fip_dict = super(VppL3RouterPlugin, self).create_floatingip(
                 context, floatingip,
                 initial_status=constants.FLOATINGIP_STATUS_ACTIVE)
@@ -215,8 +212,7 @@ class VppL3RouterPlugin(
     @kick_communicator_on_end
     def update_floatingip(self, context, floatingip_id, floatingip):
         org_fip_dict = self.get_floatingip(context, floatingip_id)
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             fip_dict = super(VppL3RouterPlugin, self).update_floatingip(
                 context, floatingip_id, floatingip)
             if fip_dict.get('port_id') is not None:
@@ -231,8 +227,7 @@ class VppL3RouterPlugin(
 
     def delete_floatingip(self, context, floatingip_id):
         org_fip_dict = self.get_floatingip(context, floatingip_id)
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             super(VppL3RouterPlugin, self).delete_floatingip(
                 context, floatingip_id)
             if org_fip_dict.get('port_id') is not None:
@@ -245,8 +240,7 @@ class VppL3RouterPlugin(
     def disassociate_floatingips(self, context, port_id, do_notify=True):
         fips = self.get_floatingips(context.elevated(),
                                     filters={'port_id': [port_id]})
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             router_ids = super(
                 VppL3RouterPlugin, self).disassociate_floatingips(
                 context, port_id, do_notify)
@@ -256,8 +250,7 @@ class VppL3RouterPlugin(
 
     @kick_communicator_on_end
     def add_router_interface(self, context, router_id, interface_info):
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             new_router = super(VppL3RouterPlugin, self).add_router_interface(
                 context, router_id, interface_info)
             router_dict = {}
@@ -272,8 +265,7 @@ class VppL3RouterPlugin(
 
     @kick_communicator_on_end
     def remove_router_interface(self, context, router_id, interface_info):
-        session = db_api.get_session()
-        with session.begin(subtransactions=True):
+        with context.session.begin(subtransactions=True):
             new_router = super(
                 VppL3RouterPlugin, self).remove_router_interface(
                 context, router_id, interface_info)
