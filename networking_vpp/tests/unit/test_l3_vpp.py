@@ -72,7 +72,12 @@ class VppL3PluginBaseTestCase(
         mock.patch.object(l3_vpp, 'EtcdAgentCommunicator').start()
         super(VppL3PluginBaseTestCase, self).setUp(
             plugin=core_plugin, service_plugins=service_plugins)
-        self.db_session = neutron_db_api.get_session()
+        try:
+            # The modern call
+            self.db_session = neutron_db_api.get_writer_session()
+        except Exception:
+            # The deprecated-in-Ocata call
+            self.db_session = neutron_db_api.get_session()
         self.plugin = directory.get_plugin()
         self.plugin._network_is_external = mock.Mock(return_value=True)
         self.driver = directory.get_plugin(constants.L3)
