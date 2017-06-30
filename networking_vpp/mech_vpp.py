@@ -452,7 +452,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.election_key_space = LEADIN + '/election'
         self.journal_kick_key = self.election_key_space + '/kick-journal'
 
-        etcd_client = self.client_factory.client()
+        etcd_client = self.client_factory.client
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
         etcd_helper.ensure_dir(self.state_key_space)
         etcd_helper.ensure_dir(self.port_key_space)
@@ -483,20 +483,23 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def start_threads(self, resource, event, trigger):
         LOG.debug('Starting background threads for Neutron worker')
-        self.return_thread = self.make_return_worker()
-        self.forward_thread = self.make_forward_worker()
+        self.make_return_worker()
+        self.make_forward_worker()
 
     def find_physnet(self, host, physnet):
         """Identify if an agent can connect to the physical network
 
         This can fail if the agent hasn't been configured for that
         physnet, or if the agent isn't alive.
+
+        This validates the physnet direct in etcd, as it's the client's
+        current opinion that matters.
         """
 
         # TODO(ijw): we use an on-the-fly created client so that we
         # don't have threading problems from the caller.
         try:
-            etcd_client = self.client_factory.client()
+            etcd_client = self.client_factory.client
             etcd_client.read('%s/state/%s/alive' % (LEADIN, host))
             etcd_client.read('%s/state/%s/physnets/%s' %
                              (LEADIN, host, physnet))
@@ -890,24 +893,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
 
     def make_forward_worker(self):
         # Assign a UUID to each worker thread to enable thread election
-        return eventlet.spawn(self._forward_worker)
-
-    def do_etcd_update(self, etcd_client, k, v):
-        try:
-            # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
-            if v is None:
-                try:
-                    etcd_client.delete(k)
-                except etcd.EtcdKeyNotFound:
-                    # The key may have already been deleted
-                    # no problem here
-                    pass
-            else:
-                etcd_client.write(k, jsonutils.dumps(v))
-            return True
-
-        except Exception:       # TODO(ijw) select your exceptions
-            return False
+        eventlet.spawn_n(self._forward_worker)
 
     def _forward_worker(self):
         LOG.debug('forward worker begun')
@@ -915,13 +901,30 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # So that we don't fight over a client shared by other threads,
         # we have our own, local to this one.
 
-        etcd_client = self.client_factory.client()
+        etcd_client = self.client_factory.client
 
         session = neutron_db_api.get_session()
         etcd_election = etcdutils.EtcdElection(etcd_client, 'forward_worker',
                                                self.election_key_space,
                                                work_time=PARANOIA_TIME + 3,
                                                recovery_time=3)
+
+        def do_etcd_update(self, etcd_client, k, v):
+            try:
+                # not needed? - do_etcd_mkdir('/'.join(k.split('/')[:-1]))
+                if v is None:
+                    try:
+                        etcd_client.delete(k)
+                    except etcd.EtcdKeyNotFound:
+                        # The key may have already been deleted
+                        # no problem here
+                        pass
+                else:
+                    etcd_client.write(k, jsonutils.dumps(v))
+                return True
+
+            except Exception:       # TODO(ijw) select your exceptions
+                return False
 
         while True:
             try:
@@ -1028,7 +1031,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     LOG.info('host %s has died', host)
 
         # Assign a UUID to each worker thread to enable thread election
-        return eventlet.spawn(
-            ReturnWatcher(self.client_factory.client(), 'return_worker',
-                          self.state_key_space, self.election_key_space,
-                          data=self).watch_forever)
+        etcdutils.spawn_watcher(eventlet, self.client_factory, ReturnWatcher,
+                                'return_worker',
+                                self.state_key_space, self.election_key_space,
+                                data=self)

@@ -2353,7 +2353,7 @@ class EtcdListener(object):
         """Fetch and add all remote mappings from etcd for the vni"""
         key_space = self.gpe_key_space + "/%s" % vni
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
-        rv = self.client_factory.client().read(key_space, recursive=True)
+        rv = self.client_factory.client.read(key_space, recursive=True)
         for child in rv.children:
             m = re.match(key_space + '/([^/]+)' + '/([^/]+)', child.key)
             if m:
@@ -2400,7 +2400,8 @@ class EtcdListener(object):
         self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
         self.gpe_key_space = LEADIN + "/global/networks/gpe"
 
-        etcd_client = self.client_factory.client()
+        etcd_client = self.client_factory.client
+
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
         # We need certain directories to exist so that we can write to
         # and watch them
@@ -2429,16 +2430,16 @@ class EtcdListener(object):
             self.vppf.load_gpe_mappings()
 
         self.binder = BindNotifier(self.client_factory, self.state_key_space)
-        self.pool.spawn(self.binder.run)
+        self.pool.spawn_n(self.binder.run)
 
         # Check if the vpp router service plugin is enabled
         if 'vpp-router' in cfg.CONF.service_plugins:
             LOG.debug("Spawning router_watcher")
-            self.pool.spawn(RouterWatcher(self.client_factory.client(),
-                                          'router_watcher',
-                                          self.router_key_space,
-                                          heartbeat=self.AGENT_HEARTBEAT,
-                                          data=self).watch_forever)
+            spawn_watcher(self.pool, self.client_factory, RouterWatcher,
+                          'router_watcher',
+                          self.router_key_space,
+                          heartbeat=self.AGENT_HEARTBEAT,
+                          data=self)
 
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
@@ -2448,31 +2449,31 @@ class EtcdListener(object):
                       "on host for secgroup_watcher spoof blocking")
             self.spoof_filter_on_host()
             LOG.debug("Spawning secgroup_watcher..")
-            self.pool.spawn(SecGroupWatcher(self.client_factory.client(),
-                                            'secgroup_watcher',
-                                            self.secgroup_key_space,
-                                            known_secgroup_ids,
-                                            heartbeat=self.AGENT_HEARTBEAT,
-                                            data=self).watch_forever)
+            spawn_watcher(self.pool, self.client_factory, SecGroupWatcher,
+                          'secgroup_watcher',
+                          self.secgroup_key_space,
+                          known_secgroup_ids,
+                          heartbeat=self.AGENT_HEARTBEAT,
+                          data=self)
 
         # The security group watcher will load the secgroups before
         # this point (before the thread is spawned) - that's helpful,
         # because it means that the ports will be immediately createable
         # as the secgroups are already available.
         LOG.debug("Spawning port_watcher")
-        self.pool.spawn(PortWatcher(self.client_factory.client(),
-                                    'port_watcher',
-                                    self.port_key_space,
-                                    heartbeat=self.AGENT_HEARTBEAT,
-                                    data=self).watch_forever)
+        spawn_watcher(self.pool, self.client_factory, PortWatcher,
+                      'port_watcher',
+                      self.port_key_space,
+                      heartbeat=self.AGENT_HEARTBEAT,
+                      data=self)
         # Spawn GPE watcher for vxlan tenant networks
         if 'vxlan' in cfg.CONF.ml2.type_drivers:
             LOG.debug("Spawning gpe_watcher")
-            self.pool.spawn(GpeWatcher(self.client_factory.client(),
-                                       'gpe_watcher',
-                                       self.gpe_key_space,
-                                       heartbeat=self.AGENT_HEARTBEAT,
-                                       data=self).watch_forever)
+            spawn_watcher(self.pool, self.client_factory, GpeWatcher,
+                          'gpe_watcher',
+                          self.gpe_key_space,
+                          heartbeat=self.AGENT_HEARTBEAT,
+                          data=self)
         self.pool.waitall()
 
 
@@ -2719,7 +2720,7 @@ class BindNotifier(object):
 
         self.state_key_space = state_key_space
 
-        self.etcd_client = client_factory.client()
+        self.client_factory = client_factory
 
     def add_notification(self, id, content):
         """Queue a notification for sending to Nova
@@ -2733,13 +2734,14 @@ class BindNotifier(object):
         self.notifications.put((id, content,))
 
     def run(self):
+
         while(True):
             try:
                 ent = self.notifications.get()
 
                 (port, props) = ent
 
-                self.etcd_client.write(
+                self.client_factory.client.write(
                     self.state_key_space + '/%s' % port,
                     jsonutils.dumps(props))
             except Exception:
@@ -2815,7 +2817,7 @@ def main():
               cfg.CONF.ml2_vpp.etcd_port,
               cfg.CONF.ml2_vpp.etcd_user)
 
-    client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
+    client_factory = etcdutils.EtcdThreadClientFactory(cfg.CONF.ml2_vpp)
 
     ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
 
