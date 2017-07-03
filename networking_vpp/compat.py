@@ -91,7 +91,11 @@ except ImportError:
             'enable_security_group', default=True,
             help=_('Controls whether neutron security groups is enabled '
                    'Set it to false to disable security groups')), ]
-    cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
+    # This can get loaded from other parts of Mitaka because other
+    # mechanism drivers respect this flag too
+    if not (hasattr(cfg.CONF, 'SECURITYGROUP') and
+            hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
+        cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
 
 import os
 import re
