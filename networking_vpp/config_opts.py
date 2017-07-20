@@ -50,6 +50,20 @@ vpp_opts = [
                 help=_("Use TLS to access etcd")),
     cfg.StrOpt('etcd_ca_cert', default=None,
                help=_("etcd CA certificate file path")),
+    cfg.IntOpt('etcd_write_time', default=20,
+               help=_("The period of time alloted to etcd write before it is "
+                      "timed out.")),
+    cfg.IntOpt('forward_worker_master_lease_time', default=30,
+               help=_("The slice of time alloted for a journal forward worker "
+                      "thread to run as master when elected.")),
+    cfg.IntOpt('forward_worker_recovery_time', default=3,
+               help=_("The worst case time a new forward worker master is "
+                      "elected after a forward worker is elected master and "
+                      "then dies")),
+    cfg.IntOpt('db_query_time', default=60,
+               help=_("The period of a db query can run before it is timed "
+                      "out. This is to ensure master election time is extended"
+                      " accordingly")),
     cfg.BoolOpt('enable_vpp_restart', default=False,
                 help=_("Agent restarts VPP during startup")),
     cfg.StrOpt('vhost_user_dir', default='/tmp',

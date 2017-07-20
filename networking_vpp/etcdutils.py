@@ -43,6 +43,10 @@ def cleanup_electors():
         f.clean()
 
 
+class EtcdElectionLost(Exception):
+    pass
+
+
 class EtcdElection(object):
     def __init__(self, etcd_client, name, election_path,
                  work_time,
@@ -97,7 +101,7 @@ class EtcdElection(object):
         elector_cleanup.append(self)
 
     def wait_until_elected(self):
-        """Elect a master thread among a group of worker threads.
+        """Wait indefinitely until we are the only master among a pool of workers.
 
         Election Algorithm:-
         1) Each worker thread is assigned a unique thread_id at launch time.
@@ -120,12 +124,9 @@ class EtcdElection(object):
            which begins doing the work.
 
         """
-        # Start the election
         attempt = 0
         while True:
-            attempt = attempt + 1
-            # LOG.debug('Thread %s attempting to get elected for %s, try %d',
-            #           self.thread_id, self.name, attempt)
+            attempt += 1
             try:
                 # Attempt to become master
                 self.etcd_client.write(self.master_key,
@@ -140,29 +141,20 @@ class EtcdElection(object):
             # the master
             except etcd.EtcdException:
                 try:
-                    # LOG.debug('Thread %s refreshing master for %s, try %d',
-                    #           self.thread_id, self.name, attempt)
+                    # We may already be the master.  Extend the election time.
+                    self.extend_election(self.work_time)
 
-                    # Refresh TTL if master == us, then break to do work
-                    # TODO(ijw): this can be a refresh
-                    self.etcd_client.write(self.master_key,
-                                           self.thread_id,
-                                           prevValue=self.thread_id,
-                                           ttl=self.work_time)
-                    LOG.debug('Thread %s refreshed master for %s, try %d',
+                    LOG.debug('Thread %s refreshed master for %s for try %d',
                               self.thread_id, self.name, attempt)
                     break
                 # All non-master threads will end up here, watch for
                 # recovery_time (in case some etcd connection fault means
                 # we don't get a watch notify) and become master if the
                 # current master is dead
-                except etcd.EtcdException:
-                    # LOG.debug('Thread %s failed to elect and is '
-                    #           'waiting for %d secs, group %s, try %d',
-                    #           self.thread_id, self.recovery_time,
-                    #           self.name, attempt)
+                except EtcdElectionLost:
                     try:
-                        with eventlet.Timeout(self.recovery_time + 5, False):
+                        with eventlet.Timeout(self.recovery_time + 1, False):
+                            # Most threads will be waiting here.
                             self.etcd_client.watch(
                                 self.master_key,
                                 timeout=self.recovery_time)
@@ -170,6 +162,19 @@ class EtcdElection(object):
                         pass
                     except etcd.EtcdException:
                         eventlet.sleep(self.recovery_time)
+
+    def extend_election(self, duration):
+        """We are the master; attempt to extend our election time."""
+
+        try:
+            self.etcd_client.write(self.master_key,
+                                   self.thread_id,
+                                   prevValue=self.thread_id,
+                                   ttl=duration)
+            LOG.debug("Master thread %s extended election by %d secs",
+                      self.thread_id, duration)
+        except etcd.EtcdException:
+            raise EtcdElectionLost()
 
     def clean(self):
         """Release the election lock if we're currently elected.
