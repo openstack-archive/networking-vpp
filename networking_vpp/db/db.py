@@ -53,44 +53,60 @@ def journal_read(session, func):
                    .order_by(models.VppEtcdJournal.id) \
                    .first()
 
-    if entry:
-        with session.begin(subtransactions=True):
-
-            first_id = entry.id
-
-            # Reselect with a lock, but without doing the range check
-            # so that the lock is row-specific
-            rs = session.query(models.VppEtcdJournal)\
-                .filter(models.VppEtcdJournal.id == first_id)\
-                .with_for_update().all()
-
-            if len(rs) > 0:  # The entry is still around, we are still master
-                entry = rs[0]
-                if func(entry.k, entry.v):  # Lets work on it, but can fail too
-                    # Once done, it should go.
-                    session.delete(entry)
-                    LOG.debug('forwarded etcd record %d', first_id)
-                else:
-                    # For some reason, we can't do the job.
-                    entry.retry_count += 1
-                    entry.last_retried = sa.func.now()
-                    entry.update(entry)
-                    LOG.debug("Couldn't forward etcd record %d, "
-                              "retrying later", first_id)
-
-            else:
-                # We cannot find that entry any more, means some other
-                # master kicking around.
-                # TODO(ijw): We should re-elect ourselves if we can
-                maybe_more = False
-                LOG.debug("etcd record %d processed by "
-                          "another forwarder", first_id)
-
+    if not entry:
+        return False  # Signal that we nothing more to do
     else:
-        # The table is empty - no work available.
-        maybe_more = False
+        with session.begin(subtransactions=True):
+            # The plan: get the next record into etcd and delete it from the
+            # journal table.  The transaction ensures that no-one else does the
+            # same thing (master elections are not perfect) while we're on the
+            # job, which can ultimately lead to out-of-order updates.
+            try:
+                first_id = entry.id
+                # Reselect with a lock, but without doing the range check
+                # so that the lock is row-specific
+                rs = session.query(models.VppEtcdJournal)\
+                    .filter(models.VppEtcdJournal.id == first_id)\
+                    .with_for_update().all()
 
-    return maybe_more
+                if len(rs) > 0:
+                    # The entry is still around, and we are still master
+                    entry = rs[0]
+                    try:
+                        func(entry.k, entry.v)  # do work, could fail
+                        session.delete(entry)  # This is now processed
+                        LOG.debug('forwarded etcd record %d', first_id)
+                    except Exception as e:
+                        # For some reason, we can't do the job.
+                        # This is uncommon.
+                        LOG.warning("Couldn't forward etcd record %d due to"
+                                    " exception %s. retrying later",
+                                    first_id, type(e).__name__)
+
+                        try:
+                            # The retry count and time are niceties for admin
+                            # debugging. The update can itself fail
+                            # (DB connection problems, etc.), but since it's a
+                            # nicety it's not critical.
+                            entry.retry_count += 1
+                            entry.last_retried = sa.func.now()
+                            entry.update(entry)
+                        except Exception as e:
+                            LOG.warning("Couldn't update retry info due to %s",
+                                        type(e).__name__)
+                            pass
+                else:
+                    # We cannot find that entry any more, means some other
+                    # master kicking around. Should be rare
+                    # TODO(ijw): We should re-elect ourselves if we can
+                    maybe_more = False
+                    LOG.debug("etcd record %d processed by "
+                              "another forwarder", first_id)
+            except Exception as e:
+                LOG.exception("forward worker journal read processing hit "
+                              "error. Error is: %s", e)
+
+        return maybe_more
 
 
 def journal_write(session, k, v):
