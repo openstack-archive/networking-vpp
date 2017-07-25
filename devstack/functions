@@ -47,6 +47,11 @@ EOF
 
 function start_vpp {
     is_package_installed vpp || install_vpp
+
+    # in case the package runs VPP or it's already installed
+    # we need to refresh its config because the permissions matter to the agent
+    stop_service vpp || true
+
     start_service vpp
 }
 
