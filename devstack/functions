@@ -22,6 +22,11 @@ EOF
   # stack fails without this package, ensuring it's installed
   install_package bridge-utils
   install_package vpp
+  if systemctl is-active vpp; then
+      # if vpp service is started while installing it will not have correct
+      # startup conf yet, stop the service it will be started later
+      stop_service vpp
+  fi
   # python api package name was renamed in 17.04, try to install both
   install_package vpp-python-api || install_package vpp-api-python
   # plugins are required to support security groups
@@ -34,10 +39,18 @@ EOF
           die $LINENO "VPP config file $VPP_STARTUP_CONFIG not a file or unreadable"
       fi
   elif is_set VPP_INT_PCI_DEV; then
+      # keep a copy of un-modified initial config file
+      sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak
+      have_dpdk_config=`sed -n '/'^$'dpdk/p' /etc/vpp/startup.conf | wc -l`
+      if [[ $have_dpdk_config -eq 0 ]]; then
+          # we do not have dpdk section, append it to startup.conf
+          echo "dpdk {" | sudo tee -a /etc/vpp/startup.conf
+          echo "}" | sudo tee -a /etc/vpp/startup.conf
+      fi
       # We have some very poor skills hacking this file - we add but don't substitute
       # and we don't make any attempt to parse the file, so this works with default
       # configs and not generally otherwise
-      sudo sed -i "/dpdk  *{/a\ \ dev $VPP_INT_PCI_DEV" /etc/vpp/startup.conf
+      sudo sed -i "/"^$"dpdk  *{/a\ \ dev $VPP_INT_PCI_DEV" /etc/vpp/startup.conf
   else
       die $LINENO "VPP_STARTUP_CONFIG or VPP_INT_PCI_DEV must be set"
   fi
