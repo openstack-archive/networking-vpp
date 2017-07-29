@@ -2836,21 +2836,34 @@ class VPPRestart(object):
     def wait(self):
         time.sleep(self.timeout)  # TODO(najoy): check if vpp is actually up
 
+def openstack_base_setup(process_name):
+    """General purpose entrypoint
 
-def main():
+    Sets up non-specific bits (the integration with OpenStack and its
+    config, and so on).
+    """
+    # Arguments, config files and options
     cfg.CONF(sys.argv[1:])
-    logging.setup(cfg.CONF, 'vpp_agent')
 
+    # General logging
+    logging.setup(cfg.CONF, process_name)
+
+    # Guru meditation support enabled
     gmr_opts.set_defaults(cfg.CONF)
     gmr.TextGuruMeditation.setup_autorun(
         version.version_info,
         service_name='vpp-agent')
-    # If the user and/or group are specified in config file, we will use
-    # them as configured; otherwise we try to use defaults depending on
-    # distribution. Currently only supporting ubuntu and redhat.
+
+
+def ml2_vpp_agent_main():
+    """Main function for VPP agent functionality
+    """
+
+    openstack_base_setup('vpp_agent')
+
     cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
-    if cfg.CONF.ml2_vpp.enable_vpp_restart:
-        VPPRestart().wait()
+
+    # Pull physnets out of config and interpret them
 
     if not cfg.CONF.ml2_vpp.physnets:
         LOG.critical("Missing physnets config. Exiting...")
@@ -2875,6 +2888,11 @@ def main():
                 sys.exit(1)
             physnets[k] = v
 
+    # Deal with VPP-side setup
+
+    if cfg.CONF.ml2_vpp.enable_vpp_restart:
+        VPPRestart().wait()
+
     # Convert to the minutes unit that VPP uses:
     # (we round *up*)
     mac_age_min = int((cfg.CONF.ml2_vpp.mac_age + 59) / 60)
@@ -2886,6 +2904,8 @@ def main():
                         gpe_locators=cfg.CONF.ml2_vpp.gpe_locators,
                         )
 
+    # Deal with etcd-side setup
+
     LOG.debug("Using etcd host:%s port:%s user:%s password:***",
               cfg.CONF.ml2_vpp.etcd_host,
               cfg.CONF.ml2_vpp.etcd_port,
@@ -2893,9 +2913,11 @@ def main():
 
     client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
 
+    # Do the work
+
     ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
 
     ops.process_ops()
 
 if __name__ == '__main__':
-    main()
+    ml2_vpp_agent_main()
