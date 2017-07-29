@@ -77,19 +77,39 @@ function set_hugepages {
 }
 
 function setup_host_env {
-    is_package_installed etcd || install_package etcd
-    restart_service etcd
+    if is_service_enabled etcd3; then
+        # We don't need to run it for ourselves, it's a devstack service
+        RUN_ETCD=no
+        if [ "$CLEAN_ETCD" = "yes" ] ; then
+            # Need to trap the etcd3 startup
+            eval "$(echo -n _vpp_orig_; declare -f start_etcd3)"
+            start_etcd3() {
+                _vpp_orig_start_etcd3
+                clean_etcd_vpp_area
+            }
+        fi
+    fi
 
-    # This relies on a bunch of etcd state, and if you're stacking and unstacking
-    # stale cruft builds up.
-
-    clean_etcd
+    if [ "$RUN_ETCD" = "yes" ] ; then
+        # TODO(ijw): in fact, we may not need to run it at all (it might be
+        # remote) - should add an option...
+        is_package_installed etcd || install_package etcd
+        restart_service etcd
+        if [ "$CLEAN_ETCD" = "yes" ] ; then
+            clean_etcd_vpp_area
+        fi
+    fi
 
     set_hugepages
     systemctl is-active vpp || start_vpp
 }
 
-function clean_etcd() {
+
+function clean_etcd_vpp_area() {
+    # This relies on a bunch of etcd state, and if you're stacking and unstacking
+    # stale cruft builds up.
+    # This is not a good idea if you're running multiple controllers, but it's
+    # fine for a single controller system.
 
     # etcd_host may be complex, so we do our best with it
     if [ ! -z "$ETCD_CA_CERT" ] ; then

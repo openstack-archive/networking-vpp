@@ -20,6 +20,11 @@ NR_HUGEPAGES=${NR_HUGEPAGES:-}
 
 MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:GigabitEthernet2/2/0}
 #Ip address of the host to connect to
+if is_service_enabled etcd3; then
+    # The standard service puts it here
+    ETCD_HOST=${ETCD_HOST:-${HOST_IP}}
+fi
+# By default, we put it here if we run it for ourselves
 ETCD_HOST=${ETCD_HOST:-127.0.0.1}
 #Etcd port to connect to
 ETCD_PORT=${ETCD_PORT:-2379}
@@ -43,3 +48,9 @@ GPE_LOCATORS=${GPE_LOCATORS:-}
 #VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 #VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
 #VXLAN_VRF=${VXLAN_VRF:-1}
+
+# Run a local copy of etcd
+# This will be disabled if the devstack etcd3 service is running
+RUN_ETCD=yes
+# Remove any cruft we found in our area of etcd
+CLEAN_ETCD=yes
