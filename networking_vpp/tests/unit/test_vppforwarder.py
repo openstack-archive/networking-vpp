@@ -24,6 +24,7 @@ sys.modules['threading'] = mock.MagicMock()
 from ipaddress import ip_address
 from networking_vpp.agent import server
 from networking_vpp.mech_vpp import SecurityGroupRule
+from networking_vpp.utils import tags
 from neutron.tests import base
 
 INTERNAL_SEGMENATION_ID = 100
@@ -70,27 +71,27 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     def test_interface_tag_len(self):
         uuid = uuidgen.uuid1()
-        assert (len(server.port_tag(uuid)) <= 64), 'TAG len must be <= 64'
+        assert (len(tags.port(uuid)) <= 64), 'TAG len must be <= 64'
 
     def test_uplink_tag_len(self):
         longest_physnet = '1234567890123456789012'
-        assert (len(server.uplink_tag(longest_physnet, 'flat', None)) <= 64), \
+        assert (len(tags.uplink(longest_physnet, 'flat', None)) <= 64), \
             'TAG len for flat networks  must be <= 64'
         max_vlan_id = 4095
-        assert (len(server.uplink_tag(longest_physnet, 'vlan', max_vlan_id)) <= 64), \
+        assert (len(tags.uplink(longest_physnet, 'vlan', max_vlan_id)) <= 64), \
             'TAG len for vlan overlays must be <= 64'
         max_vxlan_id = 16777215
-        assert (len(server.uplink_tag(longest_physnet, 'vxlan', max_vxlan_id)) <= 64), \
+        assert (len(tags.uplink(longest_physnet, 'vxlan', max_vxlan_id)) <= 64), \
             'TAG len for vxlan overlays must be <= 64'
 
     def test_decode_port_tag(self):
         uuid = uuidgen.uuid1()
-        r = server.decode_port_tag(server.TAG_L2IFACE_PREFIX + str(uuid))
+        r = tags.decode_port(tags.TAG_L2IFACE_PREFIX + str(uuid))
         assert (str(uuid) == r), "Expected '%s', got '%s'" % (str(uuid), r)
 
     def test_no_decode_port_tag(self):
         uuid = 'baduuid'
-        r = server.decode_port_tag(server.TAG_L2IFACE_PREFIX + str(uuid))
+        r = tags.decode_port(tags.TAG_L2IFACE_PREFIX + str(uuid))
         assert (r is None)
 
     def test_get_if_for_physnet(self):
