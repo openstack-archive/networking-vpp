@@ -362,7 +362,7 @@ communcations into something a little easier to work with.
 What does it support?
 ~~~~~~~~~~~~~~~~~~~~~
 
-For now, assume it moves packets to where they need to go. unless
+For now, assume it moves packets to where they need to go, unless
 they're firewalled, in which case it doesn't. It also integrates
 properly with stock ML2 L3, DHCP and Metadata functionality.
 In the 17.01 release, we supported the ACL functionality added for VPP 17.01.
@@ -373,31 +373,28 @@ extension and the port security flag.
 What have you just done?
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-In the 17.04 release, we have implemented an overlay networking 
-using VXLAN GPE, which has better horizontal scale than VLAN based overlays.
+In the 17.07 release, we improved overlay networking with VXLAN GPE.
+Previously, it was hard to use - the way GPE works, it programs routes to
+specific endpoints, and broadcast packets - ARP requests in particular -
+didn't work.  The new version implements proxy ARP on the local interface,
+which means you should be able to get VMs to talk to each other with no
+special extra behaviour.
 
-We have implemented L3 in VPP. In this case, using the same etcd
-and agent and an additional Neutron L3 driver, you'll be able to use
-VPP to create Neutron routers complete with NAT and floating
-IPs.
+We've also added support for remote-group-id within security group rules.
+When you set this on a security group, ports in a security group can talk
+to ports assigned to the other group but no-one else.
 
-We have tuned up the performance a bit by implementing a thread election
-algorithm that limits the number of server threads running to a single
-forward and reverse worker thread. If the primary worker thread fails,
-the sleeping threads will detect this, elect a master and start doing
-the work.
+Neutron-native L3 should work better; we've fixed some bugs related to
+handover when one agent goes down and you need to switch to a redundant
+spare.
 
-And we've dealt with restart cases.  When you run in production you should
-now be able to restart the agent (for upgrade, for instance) without
-stopping VPP - it will 'catch up' the state of VPP when it restarts, so
-you can do this upgrade without ever interrupting the traffic (a key
-requirement of NFV workloads).  If you do want to restart VPP, we
-recommend stopping the agent, then VPP, then starting VPP and then the agent
-- which will, again, catch up the state of VPP to where it needs to be (VPP
-is just a dataplane and always restarts with no state).
+There were a few bug fixes; one in particular makes networking-vpp 17.07
+work much better in highly loaded systems, where previously you may have
+encountered slowness and DB deadlock errors in the log.
 
-We've dropped the privilege of the agent.  This means it runs as a normal
-user and limits the damage it could cause if anything went wrong.
+That aside, there's the usual round of improvements in code style and
+structure, which will make it easier for us to add more features and
+functionality in the future.
 
 What is VXLAN-GPE and how can I get it to work?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -416,19 +413,19 @@ are handled in the code to make the user experience and service deployment
 much easier. We will walk you though all of it.
 
 If you are just interested in setting it up, you only need to understand
-the concept of a locator.VPP uses this name to identify the uplink interface
+the concept of a locator. VPP uses this name to identify the uplink interface
 on each compute node as the GPE underlay. If you are using devstack, just
 set the value of the variable "GPE_LOCATORS" to the name of the physnet
-that you want to use as the underlay interface on that compute node. 
+that you want to use as the underlay interface on that compute node.
 
 Besides this, set the devstack variable "GPE_SRC_CIDR" to a CIDR value for
 the underlay interface. The agent will program the underlay interface in VPP
-with the IP/mask value you set for this variable. 
+with the IP/mask value you set for this variable.
 
 In the current implementation, we only support one GPE locator per compute
 node.
 
-These are the only two new settings you need to know to get GPE working. 
+These are the only two new settings you need to know to get GPE working.
 
 Also ensure, that you have enabled vxlan as one of the tenant_network_type
 settings and allocated some vni's in the vni_ranges. It is a good practice
@@ -436,7 +433,7 @@ to keep your VLAN and VXLAN ranges in separate namespaces to avoid any
 conflicts.
 
 We do assume that you have setup IP routing for the locators within your
-network to enable all the underlay interfaces to reach one-another via either 
+network to enable all the underlay interfaces to reach one-another via either
 IPv4 or IPv6. This is required for GPE to deliver the encapsulated Layer2
 packets to the target locator.
 
@@ -469,28 +466,24 @@ watch events are uninteresting and ignored.
 the current implementation, we only support one locator within
 a pre-configured locator_set.
 
-Are there any limitations for VXLAN GPE?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-In the current release, broadcast layer2 packets are not supported.
-So for VM's to ping each other using GPE, they require a static ARP entry.
-
 Any known issues?
 ~~~~~~~~~~~~~~~~~
 
 In general, check the bugs at
 <https://bugs.launchpad.net/networking-vpp> - but worth noting:
 
--  Security groups don't yet support the remote_security_group_id
-   parameter. If you use this they will ignore it and accept traffic
-   from any source.
--  Some failure cases (agent reset, VPP reset) leave the agent
+-  Security groups don't yet support ethernet type filtering.
+   If you use this they will ignore it and accept traffic
+   from any source.  This is a relatively unusual setting so unless you're
+   doing something particularly special relating to VMs transmitting MPLS,
+   IS-IS, or similar, you'll probably not notice any difference.
+-  Some failure cases (VPP reset) leave the agent
    wondering what state VPP is currently in. For now, in these cases,
-   we take the coward's way out and reset the agent and VPP
-   simultaneously, recreating its state from what's in etcd. This
-   works, and will not go wrong, but you'll see a pause in your VM
-   traffic as it happens. At the moment, you'll most commonly see this
-   on software upgrades. See below for what we're doing about this.
+   we take the coward's way out and reset the agent at the same time.
+   This adds a little bit of thinking time (maybe a couple of seconds)
+   to the pause you see because the virtual switch went down.  It's still
+   better than OVS or LinuxBridge - if your switch went down (or you
+   needed to upgrade it) the kernel resets and the box reboots.
 
 What are you doing next?
 ~~~~~~~~~~~~~~~~~~~~~~~~
