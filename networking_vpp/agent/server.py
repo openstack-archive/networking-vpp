@@ -255,6 +255,7 @@ gpe_lset_name = 'net-vpp-gpe-lset-1'
 
 
 class UnsupportedInterfaceException(Exception):
+    """Used when ML2 has tried to ask for a weird binding type."""
     pass
 
 
@@ -801,8 +802,7 @@ class VPPForwarder(object):
                 path = get_vhostuser_name(uuid)
                 props = {'path': path}
             else:
-                raise UnsupportedInterfaceException(
-                    _('unsupported interface type'))
+                raise UnsupportedInterfaceException()
 
             tag = port_tag(uuid)
 
