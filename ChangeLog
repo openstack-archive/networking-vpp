@@ -1,6 +1,39 @@
 CHANGES
 =======
 
+17.07
+-----
+
+* Bump VPP install version in devstack
+* Update README
+* Update call to get Bridge domain interfaces
+* Fix devstack installation
+* ARP resolution support in VXLAN-GPE
+* Forward worker election refactoring
+* Fix Mitaka compatibility for enable_security_group
+* Support remote-group-id in security-group rules
+* use service type constants from neutron_lib plugins
+* Change assertTrue(isinstance()) by optimal assert
+* Handle failure conditions when removing members from bridges
+* Isolate vpp_etcd_journal table for update lock to a single row
+* Implement disassociate_floatingips in vpp l3 plugin
+* Fix typo which prevents ports being deleted in VPP
+* Set a default value for ports when the protocol is TCP or UDP
+* Change bridge code to consistently return bridge
+* Fix substitutions in log messages
+* Remove debugging log message
+* Remove the agent's 'utils' and 'exceptions' modules
+* Log rationalisation
+* Bugfix to set default is_vxlan during port unbind
+* Make devstack plugin compatible with Pike
+* Move watcher classes to top level
+* README.rst: Updating README to add note about existing defaults
+* Remove ML2_VPP prefixes from log messages
+* Convert etcd role config script to a Pythonic CLI
+* Align with neutron_lib standards
+* Remove old and incomplete VXLAN implementation
+* Tidyups in loop wait
+
 17.04
 -----
 
