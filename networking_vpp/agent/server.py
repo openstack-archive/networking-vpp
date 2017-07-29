@@ -42,6 +42,7 @@ import time
 import vpp
 
 from networking_vpp._i18n import _
+from networking_vpp.common import tags
 from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
@@ -112,139 +113,9 @@ def get_vpptap_name(uuid):
 def default_if_none(x, default):
     return default if x is None else x
 
-######################################################################
-
-
-def VPP_TAG(tag):
-    return 'net-vpp.' + tag
-
-# Interface tagging naming scheme :
-# tap and vhost interfaces: port:<uuid>
-# Uplink Connectivity: uplink:<net_type>.<seg_id>
-
-
-# MAX_PHYSNET_LENGTH + the tag format must be <= the 64 bytes of a VPP tag
-MAX_PHYSNET_LENGTH = 32
-TAG_PHYSNET_IF_PREFIX = VPP_TAG('physnet:')
-TAG_UPLINK_PREFIX = VPP_TAG('uplink:')
-TAG_L2IFACE_PREFIX = VPP_TAG('port:')
-
 
 def get_vhostuser_name(uuid):
     return os.path.join(cfg.CONF.ml2_vpp.vhost_user_dir, uuid)
-
-
-def physnet_if_tag(physnet_name):
-    return TAG_PHYSNET_IF_PREFIX + physnet_name
-
-
-def decode_physnet_if_tag(tag):
-    if tag is None:
-        return None
-    m = re.match('^' + TAG_PHYSNET_IF_PREFIX + '([^.]+)$', tag)
-    return None if m is None else m.group(1)
-
-
-def uplink_tag(physnet, net_type, seg_id):
-    return TAG_UPLINK_PREFIX + '%s.%s.%s' % (physnet, net_type, seg_id)
-
-
-def decode_uplink_tag(tag):
-    """Spot an uplink interface tag.
-
-    Return (net_type, seg_id) or None if not an uplink tag
-    """
-    if tag is None:
-        return None  # not tagged
-    m = re.match('^' + TAG_UPLINK_PREFIX + '([^.]+)\.([^.]+)\.([^.]+)$', tag)
-    return None if m is None else (m.group(1), m.group(2), m.group(3))
-
-
-def port_tag(port_uuid):
-    return TAG_L2IFACE_PREFIX + str(port_uuid)
-
-
-def decode_port_tag(tag):
-    """Spot a port interface tag
-
-    Return uuid or None if not a port interface tag.
-    """
-    if tag is None:
-        return None  # not tagged
-    m = re.match('^' + TAG_L2IFACE_PREFIX + '(' + n_const.UUID_PATTERN + ')$',
-                 tag)
-    return None if m is None else m.group(1)
-
-
-######################################################################
-
-# Security group tag formats used to tag ACLs in VPP for
-# re-identification on restart
-
-# When leaving VPP and entering the VM
-VPP_TO_VM = 1
-# When leaving the VM and entering VPP
-VM_TO_VPP = 0
-VPP_TO_VM_MARK = 'from-vpp'
-VM_TO_VPP_MARK = 'to-vpp'
-
-
-def VPP_TO_VM_TAG(tag):
-    return tag + '.' + VPP_TO_VM_MARK
-
-
-def VM_TO_VPP_TAG(tag):
-    return tag + '.' + VM_TO_VPP_MARK
-
-
-def DIRECTION_TAG(tag, is_vm_ingress):
-    if is_vm_ingress:
-        return VPP_TO_VM_TAG(tag)
-    else:
-        return VM_TO_VPP_TAG(tag)
-
-COMMON_SPOOF_TAG = VPP_TAG('common_spoof')
-COMMON_SPOOF_VPP_TO_VM_TAG = VPP_TO_VM_TAG(COMMON_SPOOF_TAG)
-COMMON_SPOOF_VM_TO_VPP_TAG = VM_TO_VPP_TAG(COMMON_SPOOF_TAG)
-
-
-def common_spoof_tag(is_vm_ingress):
-    if is_vm_ingress:
-        return COMMON_SPOOF_VPP_TO_VM_TAG
-    else:
-        return COMMON_SPOOF_VM_TO_VPP_TAG
-
-
-def decode_common_spoof_tag(tag):
-    """Work out if this tag is one of our common spoof filter tags
-
-    """
-    if COMMON_SPOOF_VPP_TO_VM_TAG == tag:
-        return 1
-    if COMMON_SPOOF_VM_TO_VPP_TAG == tag:
-        return 0
-
-    return None
-
-SECGROUP_TAG = VPP_TAG('secgroup:')
-
-
-def secgroup_tag(secgroup_id, is_vm_ingress):
-    base_tag = SECGROUP_TAG + secgroup_id
-    return DIRECTION_TAG(base_tag, is_vm_ingress)
-
-
-def decode_secgroup_tag(tag):
-    # Matches the formats constructed earlier
-    m = re.match('^' + SECGROUP_TAG + '(' + n_const.UUID_PATTERN + ')\.(.*)$',
-                 tag)
-    if m:
-        secgroup_id = m.group(1)
-        dirmark = m.group(2)
-        is_vm_ingress = dirmark == VPP_TO_VM_MARK
-        return secgroup_id, is_vm_ingress
-
-    return None, None
 
 ######################################################################
 # GPE constants
@@ -346,7 +217,7 @@ class VPPForwarder(object):
         for f in self.vpp.get_interfaces():
 
             # Find uplink ports on OpenStack networks
-            uplink_data = decode_uplink_tag(f['tag'])
+            uplink_data = tags.decode_uplink(f['tag'])
             if uplink_data is not None:
                 uplink_physnet, net_type, seg_id = uplink_data
                 uplink_ports_found.append([
@@ -356,7 +227,7 @@ class VPPForwarder(object):
                     else f['sup_sw_if_idx']])
 
             # Find physical network ports
-            physnet_name = decode_physnet_if_tag(f['tag'])
+            physnet_name = tags.decode_physnet_if(f['tag'])
             if physnet_name is not None:
                 physnet_ports_found[physnet_name] = f['sw_if_idx']
 
@@ -439,7 +310,7 @@ class VPPForwarder(object):
 
         for f in self.vpp.get_interfaces():
             # Find downlink ports
-            port_id = decode_port_tag(f['tag'])
+            port_id = tags.decode_port(f['tag'])
             if port_id is not None:
                 bound_ports.add(port_id)
 
@@ -501,7 +372,7 @@ class VPPForwarder(object):
             LOG.error('Physnet {1} interface {2} does not '
                       'exist in VPP', physnet, ifname)
             return None, None
-        self.vpp.set_interface_tag(ifidx, physnet_if_tag(physnet))
+        self.vpp.set_interface_tag(ifidx, tags.physnet_if(physnet))
         return ifname, ifidx
 
     def ensure_network_on_host(self, physnet, net_type, seg_id):
@@ -565,7 +436,7 @@ class VPPForwarder(object):
             self.ensure_interface_in_vpp_bridge(bridge_idx, if_uplink)
 
             self.vpp.set_interface_tag(if_uplink,
-                                       uplink_tag(physnet, net_type, seg_id))
+                                       tags.uplink(physnet, net_type, seg_id))
 
             self.vpp.ifup(if_uplink)
 
@@ -804,7 +675,7 @@ class VPPForwarder(object):
             else:
                 raise UnsupportedInterfaceException()
 
-            tag = port_tag(uuid)
+            tag = tags.port(uuid)
 
             props['bind_type'] = if_type
             props['mac'] = mac
@@ -1129,13 +1000,13 @@ class VPPForwarder(object):
             out_acl_rules = out_acl_rules + in_acl_return_rules
 
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
-                                              tag=secgroup_tag(secgroup.id,
-                                                               VPP_TO_VM),
+                                              tag=tags.secgroup(secgroup.id,
+                                                               tags.VPP_TO_VM),
                                               rules=in_acl_rules,
                                               count=len(in_acl_rules))
         out_acl_idx = self.vpp.acl_add_replace(acl_index=out_acl_idx,
-                                               tag=secgroup_tag(secgroup.id,
-                                                                VM_TO_VPP),
+                                               tag=tags.secgroup(secgroup.id,
+                                                                tags.VM_TO_VPP),
                                                rules=out_acl_rules,
                                                count=len(out_acl_rules))
         self.secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
@@ -1221,16 +1092,16 @@ class VPPForwarder(object):
             # decode_* functions attempt to match the tags to one of our
             # formats, and returns None if that's not a format it matches.
 
-            secgroup_id, direction = decode_secgroup_tag(item)
+            secgroup_id, direction = tags.decode_secgroup(item)
             if secgroup_id is None:
                 # Check if this is one of our common spoof ACL tag
                 # If so, get the tag direction and set the secgroup_id to
-                # COMMON_SPOOF_TAG so the correct spoof ACL can be read
-                direction = decode_common_spoof_tag(item)
+                # tags.COMMON_SPOOF_TAG so the correct spoof ACL can be read
+                direction = tags.decode_common_spoof(item)
                 if direction is not None:
                     # But it is a valid spoof tag
-                    secgroup_id = COMMON_SPOOF_TAG
-                    ingress = direction == VPP_TO_VM
+                    secgroup_id = tags.COMMON_SPOOF_TAG
+                    ingress = direction == tags.VPP_TO_VM
             else:  # one of our valid secgroup ACL tag
                 ingress = direction == VPP_TO_VM
 
@@ -1260,18 +1131,18 @@ class VPPForwarder(object):
     def get_secgroup_acl_map(self):
         """Read VPP ACL tag data, construct and return an acl_map based on tag
 
-        acl_map: {secgroup_tag : acl_idx}
+        acl_map: {secgroup-tag : acl_idx}
 
         """
         acl_map = {}
         try:
             for acl_index, tag in self.vpp.get_acl_tags():
                 # TODO(ijw): identify that this is one of our tags
-                id, direction = decode_secgroup_tag(tag)
+                id, direction = tags.decode_secgroup(tag)
                 if id is not None:
                     acl_map[tag] = acl_index
                 else:
-                    direction = decode_common_spoof_tag(tag)
+                    direction = tags.decode_common_spoof(tag)
                     if direction is not None:
                         acl_map[tag] = acl_index
 
@@ -1450,7 +1321,7 @@ class VPPForwarder(object):
         Return: VppAcl(in_idx, out_idx)
         """
         # Check if we have an existing spoof filter deployed on vpp
-        spoof_acl = self.secgroups.get(COMMON_SPOOF_TAG)
+        spoof_acl = self.secgroups.get(tags.COMMON_SPOOF_TAG)
         # Get the current anti-spoof filter rules. If a spoof filter is
         # present replace rules for good measure, else create a new
         # spoof filter
@@ -1462,14 +1333,14 @@ class VPPForwarder(object):
 
         in_acl_idx = self.vpp.acl_add_replace(
             acl_index=in_acl_idx,
-            tag=common_spoof_tag(VPP_TO_VM),
+            tag=tags.common_spoof(tags.VPP_TO_VM),
             rules=spoof_filter_rules['ingress'],
             count=len(spoof_filter_rules['ingress'])
             )
 
         out_acl_idx = self.vpp.acl_add_replace(
             acl_index=out_acl_idx,
-            tag=common_spoof_tag(VM_TO_VPP),
+            tag=tags.common_spoof(tags.VM_TO_VPP),
             rules=spoof_filter_rules['egress'],
             count=len(spoof_filter_rules['egress'])
             )
@@ -1477,7 +1348,7 @@ class VPPForwarder(object):
         if (in_acl_idx != 0xFFFFFFFF
                 and out_acl_idx != 0xFFFFFFFF and not spoof_acl):
             spoof_acl = VppAcl(in_acl_idx, out_acl_idx)
-            self.secgroups[COMMON_SPOOF_TAG] = spoof_acl
+            self.secgroups[tags.COMMON_SPOOF_TAG] = spoof_acl
         return spoof_acl
 
     def _pack_address(self, ip_addr):
