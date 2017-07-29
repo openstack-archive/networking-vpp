@@ -20,6 +20,8 @@ import uuid as uuidgen
 sys.modules['vpp_papi'] = mock.MagicMock()
 sys.modules['vpp'] = mock.MagicMock()
 sys.modules['threading'] = mock.MagicMock()
+from ipaddress import ip_address
+from mock import patch
 from networking_vpp.agent import server
 from neutron.tests import base
 
@@ -820,3 +822,117 @@ class VPPForwarderTestCase(base.BaseTestCase):
             bridge_domain=mock_net_data['bridge_domain_id'])
         assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] == set([]))
         assert (self.vpp.networks == {})
+
+    @mock.patch('networking_vpp.agent.server.EtcdListener')
+    def test_ensure_remote_gpe_mapping(self, mock_etcd_listener):
+        """Test Adding remote GPE mappings.
+
+        Patch the EtcdListener object in and create a mock GpeWatcher.
+        Then simulate an mock_gpe_key add.
+        Test the remote mapping and ARP entry modules
+        """
+        mock_gpe_key = "/networking-vpp/global/networks/gpe" + \
+                       "/1077/ml-ucs-02/fa:16:3e:47:2e:3c/10.1.1.2"
+        mock_remote_ip = "1.1.1.1"
+        mock_bridge_domain = 66077
+        with patch.object(server.GpeWatcher, 'added',
+                          autospec=True) as mock_add_key:
+            mock_etcd_client = mock.MagicMock()
+            mock_etcd_listener.is_valid_remote_map.return_value = True
+            mock_etcd_listener.vppf = self.vpp
+            self.vpp.gpe_map = {'remote_map': {}}
+            self.vpp.vpp.exists_lisp_arp_entry.return_value = False
+            remote_locator = {"is_ip4": 1,
+                              "priority": 1,
+                              "weight": 1,
+                              "addr": self.vpp._pack_address("1.1.1.1")
+                              }
+            server.GpeWatcher(mock_etcd_client,
+                              'gpe_watcher',
+                              mock_gpe_key,
+                              mock_etcd_listener
+                              ).added(mock_gpe_key,
+                                      mock_remote_ip)
+            mock_add_key.assert_called_once_with(mock.ANY,
+                                                 mock_gpe_key,
+                                                 mock_remote_ip)
+            self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                               '10.1.1.2', '1.1.1.1')
+            self.vpp.vpp.\
+                add_lisp_remote_mac.assert_called_once_with(
+                    'fa:16:3e:47:2e:3c', 1077, remote_locator)
+            assert ('fa:16:3e:47:2e:3c', 1077) in self.vpp.gpe_map[
+                'remote_map']
+            assert self.vpp.gpe_map['remote_map'][(
+                'fa:16:3e:47:2e:3c', 1077)] == "1.1.1.1"
+            self.vpp.vpp.\
+                add_lisp_arp_entry.assert_called_once_with(
+                    'fa:16:3e:47:2e:3c', mock_bridge_domain,
+                    int(ip_address(unicode('10.1.1.2'))))
+
+    @mock.patch('networking_vpp.agent.server.EtcdListener')
+    def test_delete_remote_gpe_mapping(self, mock_etcd_listener):
+        """Test Deleting a remote GPE mapping.
+
+        Patch the EtcdListener object in and create a mock GpeWatcher.
+        Then simulate an mock_gpe_key delete.
+        Test the remote mapping and ARP entry modules
+        """
+        mock_gpe_key = "/networking-vpp/global/networks/gpe" + \
+                       "/1077/ml-ucs-02/fa:16:3e:47:2e:3c/10.1.1.2"
+        mock_remote_ip = "1.1.1.1"
+        mock_bridge_domain = 66077
+        with patch.object(server.GpeWatcher, 'removed',
+                          autospec=True) as mock_remove_key:
+            mock_etcd_client = mock.MagicMock()
+            mock_etcd_listener.is_valid_remote_map.return_value = True
+            mock_etcd_listener.vppf = self.vpp
+            self.vpp.gpe_map = {'remote_map': {
+                                ('fa:16:3e:47:2e:3c', 1077): mock_remote_ip}}
+            self.vpp.vpp.exists_lisp_arp_entry.return_value = True
+            server.GpeWatcher(mock_etcd_client,
+                              'gpe_watcher',
+                              mock_gpe_key,
+                              mock_etcd_listener
+                              ).removed(mock_gpe_key)
+            mock_remove_key.assert_called_once_with(mock.ANY,
+                                                    mock_gpe_key)
+            self.vpp.delete_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                               '10.1.1.2')
+            self.vpp.vpp.\
+                del_lisp_remote_mac.assert_called_once_with(
+                    'fa:16:3e:47:2e:3c', 1077)
+            self.vpp.vpp.\
+                del_lisp_arp_entry.assert_called_once_with(
+                    'fa:16:3e:47:2e:3c', mock_bridge_domain,
+                    int(ip_address(unicode('10.1.1.2'))))
+
+    def test_replace_remote_gpe_arp_entry(self):
+        """Test replacing a GPE ARP Entry.
+
+        Mock add an ARP entry with an existing ARP entry for the same IP.
+        Test if the ARP entry is replaced
+        """
+        mock_bridge_domain = 66077
+        self.vpp.gpe_map = {'remote_map': {}}
+        self.vpp.vpp.exists_lisp_arp_entry.return_value = True
+        remote_locator = {"is_ip4": 1,
+                          "priority": 1,
+                          "weight": 1,
+                          "addr": self.vpp._pack_address("1.1.1.1")
+                          }
+        self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                           '10.1.1.2', '1.1.1.1')
+        self.vpp.vpp.\
+            add_lisp_remote_mac.assert_called_once_with(
+                'fa:16:3e:47:2e:3c', 1077, remote_locator)
+        assert ('fa:16:3e:47:2e:3c', 1077) in self.vpp.gpe_map[
+            'remote_map']
+        assert self.vpp.gpe_map['remote_map'][(
+            'fa:16:3e:47:2e:3c', 1077)] == "1.1.1.1"
+        self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                           '10.1.1.2', '1.1.1.1')
+        self.vpp.vpp.\
+            replace_lisp_arp_entry.assert_called_once_with(
+                'fa:16:3e:47:2e:3c', mock_bridge_domain,
+                int(ip_address(unicode('10.1.1.2'))))

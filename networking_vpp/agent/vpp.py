@@ -858,6 +858,62 @@ class VPPInterface(object):
                       locator_set_name=locator_set_name,
                       sw_if_index=sw_if_index)
 
+    def add_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
+        """Adds a static ARP entry to LISP.
+
+        ipv4_address is an integer representation of the IPv4 address.
+        """
+        self.call_vpp('one_add_del_l2_arp_entry',
+                      is_add=1,
+                      mac=mac_to_bytes(mac),
+                      bd=bridge_domain,
+                      ip4=ipv4_address
+                      )
+
+    def del_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
+        """Removes a static ARP entry from LISP.
+
+        ipv4_address is an integer representation of the IPv4 address.
+        """
+        self.call_vpp('one_add_del_l2_arp_entry',
+                      is_add=0,
+                      mac=mac_to_bytes(mac),
+                      bd=bridge_domain,
+                      ip4=ipv4_address
+                      )
+
+    def replace_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
+        """Replaces the LISP ARP entry in a bridge domain for the IP address.
+
+        ipv4_adddress is an integer representation of the IPv4 address.
+        """
+        # Delete the current ARP entry for the ipv4_address in the BD
+        for mac, ip4 in [(arp.mac, arp.ip4) for arp in
+                         self.call_vpp('one_l2_arp_entries_get',
+                                       bd=bridge_domain).entries
+                         if arp.ip4 == ipv4_address]:
+            self.call_vpp('one_add_del_l2_arp_entry',
+                          is_add=0, mac=mac, bd=bridge_domain, ip4=ip4)
+        # Add the new ARP entry
+        self.add_lisp_arp_entry(mac, bridge_domain, ipv4_address)
+
+    def exists_lisp_arp_entry(self, bridge_domain, ipv4_address):
+        """Return True if a LISP ARP entry exists in the bridge_domain.
+
+        ipv4_address is an integer representation of the IPv4 address.
+        """
+        return ipv4_address in [arp.ip4 for arp in
+                                self.call_vpp('one_l2_arp_entries_get',
+                                              bd=bridge_domain).entries]
+
+    def clear_lisp_arp_entries(self, bridge_domain):
+        """Clear LISP ARP entries in the bridge_domain."""
+        for mac, ip4 in [(arp.mac, arp.ip4) for arp in
+                         self.call_vpp('one_l2_arp_entries_get',
+                                       bd=bridge_domain).entries]:
+            self.call_vpp('one_add_del_l2_arp_entry',
+                          is_add=0, mac=mac, bd=bridge_domain, ip4=ip4)
+
     def get_lisp_local_locators(self, name):
         """Get lisp local locator sets and their corresponding locators.
 
