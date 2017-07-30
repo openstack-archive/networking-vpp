@@ -489,7 +489,7 @@ class VPPForwarder(object):
     ########################################
 
     def get_if_for_physnet(self, physnet):
-        """"Find (and mark used) the interface for a physnet"""
+        """Find (and mark used) the interface for a physnet"""
         ifname = self.physnets.get(physnet, None)
         if ifname is None:
             LOG.error('Physnet %s requested but not in config',
