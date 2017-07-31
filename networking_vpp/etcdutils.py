@@ -296,7 +296,7 @@ class EtcdWatcher(object):
             # abstract.
             return
 
-        stale_keys = self.expected_keys - set(short_keys)
+        stale_keys = set(self.expected_keys) - set(short_keys)
         for f in stale_keys:
             self.removed(f)
 
