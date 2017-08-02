@@ -181,7 +181,9 @@ class VPPMechanismDriverTestCase(
         self.mech.communicator.unbind.assert_called_once_with(
             port_context._plugin_context.session,
             port_context.original,
-            port_context.original_host)
+            port_context.original_host,
+            'fake_segment'
+            )
         # reset mocks and set the original host the same with host
         self.mech.communicator.bind.reset_mock()
         self.mech.communicator.unbind.reset_mock()
