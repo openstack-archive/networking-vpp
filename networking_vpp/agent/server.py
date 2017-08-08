@@ -944,6 +944,17 @@ class VPPForwarder(object):
         # because the VM's memory (hugepages) will not be
         # released.  So, here, we destroy it.
 
+        # GPE code in VPP does not clean up its data structures
+        # properly if the port
+        # is deleted from the bridge without first removing the
+        # local GPE eid mapping. So remove local mapping,
+        # if we are bound using GPE
+
+        if props['net_data']['network_type'] == 'vxlan':
+            mac = props['mac']
+            seg_id = props['net_data']['segmentation_id']
+            self.delete_local_gpe_mapping(seg_id, mac)
+
         if props['bind_type'] == 'vhostuser':
             # remove port from bridge (sets to l3 mode) prior to deletion
             self.vpp.delete_from_bridge(iface_idx)
@@ -986,11 +997,6 @@ class VPPForwarder(object):
         else:
             LOG.error('Unknown port type %s during unbind',
                       props['bind_type'])
-        # If network_type=vxlan delete local vni to mac gpe mapping
-        if props['net_data']['network_type'] == 'vxlan':
-            mac = props['mac']
-            seg_id = props['net_data']['segmentation_id']
-            self.delete_local_gpe_mapping(seg_id, mac)
         self.interfaces.pop(uuid)
 
     def _to_acl_rule(self, r, d, a=2):
