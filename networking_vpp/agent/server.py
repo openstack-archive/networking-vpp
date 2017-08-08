@@ -641,6 +641,13 @@ class VPPForwarder(object):
             # be rebound to another bridge domain
             if_idxes = self.vpp.get_ifaces_in_bridge_domain(bridge_domain_id)
 
+            # When this bridge domain is for an OpenStack flat network, the
+            # uplink interface may be a physical interface, i.e. not VLAN-based
+            # sub-interfaces. In this case, we will not bring down the uplink
+            # interface, and always leave it UP.
+            if_idxes_without_uplink = \
+                [i for i in if_idxes if i != uplink_if_idx]
+
             # At startup, this is downing the interfaces in a bridge that
             # is no longer required.  However, in free running, this
             # should never find interfaces at all - they should all have
@@ -648,7 +655,7 @@ class VPPForwarder(object):
             # the removal of interfaces is probably the best thing we can
             # do, but they may not stay down if it races with the binding
             # code.)
-            self.vpp.ifdown(*if_idxes)
+            self.vpp.ifdown(*if_idxes_without_uplink)
             self.vpp.delete_from_bridge(*if_idxes)
             self.vpp.delete_bridge_domain(bridge_domain_id)
         if net_type == 'vlan':
