@@ -896,12 +896,12 @@ class VPPInterface(object):
         ipv4_adddress is an integer representation of the IPv4 address.
         """
         # Delete the current ARP entry for the ipv4_address in the BD
-        for mac, ip4 in [(arp.mac, arp.ip4) for arp in
-                         self.call_vpp('one_l2_arp_entries_get',
-                                       bd=bridge_domain).entries
-                         if arp.ip4 == ipv4_address]:
+        for mac_addr, ip4 in [(arp.mac, arp.ip4) for arp in
+                              self.call_vpp('one_l2_arp_entries_get',
+                                            bd=bridge_domain).entries
+                              if arp.ip4 == ipv4_address]:
             self.call_vpp('one_add_del_l2_arp_entry',
-                          is_add=0, mac=mac, bd=bridge_domain, ip4=ip4)
+                          is_add=0, mac=mac_addr, bd=bridge_domain, ip4=ip4)
         # Add the new ARP entry
         self.add_lisp_arp_entry(mac, bridge_domain, ipv4_address)
 
