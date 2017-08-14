@@ -580,6 +580,14 @@ class EtcdHelper(object):
             # Thrown when the directory already exists, which is fine
             pass
 
+    def remove_dir(self, path):
+        try:
+            self.etcd_client.delete(path, dir=True)
+        except etcd.EtcdNotFile:
+            # Thrown if the directory is not empty, which we error log
+            LOG.error("Directory path:%s is not empty and cannot be deleted",
+                      path)
+
 
 class EtcdClientFactory(object):
 
