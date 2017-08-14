@@ -2661,11 +2661,13 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
                 % port)
             if is_vxlan:
                 # Each IP address of the bound port is a GPE child key
-                gpe_child_keys = self.etcd_client.get(
-                    self.data.gpe_key_space + '/%s/%s/%s'
-                    % (seg_id, self.data.host, mac))
+                gpe_dir = self.data.gpe_key_space + \
+                    '/%s/%s/%s' % (seg_id, self.data.host, mac)
+                gpe_child_keys = self.etcd_client.get(gpe_dir)
                 for result in gpe_child_keys.children:
                     self.etcd_client.delete(result.key)
+                # Delete the GPE directory as we no longer need it
+                etcdutils.EtcdHelper(self.etcd_client).remove_dir(gpe_dir)
         except etcd.EtcdKeyNotFound:
             # Gone is fine; if we didn't delete it
             # it's no problem
