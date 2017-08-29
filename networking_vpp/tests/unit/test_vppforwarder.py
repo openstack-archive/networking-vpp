@@ -16,7 +16,6 @@
 import mock
 from mock import patch
 import sys
-import time
 import uuid as uuidgen
 sys.modules['vpp_papi'] = mock.MagicMock()
 sys.modules['vpp'] = mock.MagicMock()
@@ -194,16 +193,17 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     @mock.patch('networking_vpp.agent.server.bridge_lib')
     @mock.patch('networking_vpp.agent.server.ip_lib')
-    def test_add_external_tap(self, m_ip_lib, m_br_lib):
+    def test_ensure_tap_in_bridge(self, m_ip_lib, m_br_lib):
         m_ip_lib.device_exists.return_value = True
         device_name = "fake_dev"
+
         bridge = mock.MagicMock()
-        bridge.owns_interface.return_value = False
+        bridge.exists = mock.Mock(return_value=True)
+        bridge.owns_interface = mock.Mock(return_value=False)
+        m_br_lib.BridgeDevice.return_value = bridge
         bridge_name = "fake_br"
-        self.vpp.add_external_tap(device_name, bridge, bridge_name)
-        # tap creation is done asynchronously, wait until the queue is empty
-        while not self.vpp._external_taps.empty():
-            time.sleep(2)
+        self.vpp.ensure_tap_in_bridge(device_name, bridge_name)
+
         bridge.addif.assert_called_once_with(device_name)
 
     def test_ensure_interface_on_host_exists(self):

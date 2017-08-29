@@ -48,6 +48,7 @@ from networking_vpp import config_opts
 from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
+from networking_vpp.utils import device_monitor
 from networking_vpp import version
 
 from neutron.agent.linux import bridge_lib
@@ -270,7 +271,6 @@ class VPPForwarder(object):
     def __init__(self,
                  physnets,  # physnet_name: interface-name
                  mac_age,
-                 tap_wait_time,
                  vpp_cmd_queue_len=None,
                  gpe_src_cidr=None,
                  gpe_locators=None):
@@ -319,9 +319,12 @@ class VPPForwarder(object):
         cb_event = self.vpp.CallbackEvents.VHOST_USER_CONNECT
         self.vpp.register_for_events(cb_event, self._vhost_ready_event)
 
-        self.tap_wait_time = tap_wait_time
-        self._external_taps = eventlet.Queue()
-        eventlet.spawn(self._add_external_tap_worker)
+        # Device monitor to ensure the tap interfaces are plugged into the
+        # right Linux brdige
+        self.device_monitor = device_monitor.DeviceMonitor()
+        self.device_monitor.on_add(self._consider_external_device)
+        # The worker will be in endless loop, so don't care the return value
+        eventlet.spawn_n(self.device_monitor.run)
 
     ########################################
     # Port resyncing on restart
@@ -700,61 +703,40 @@ class VPPForwarder(object):
 
     # end theft
     ########################################
-    def _add_external_tap_worker(self):
-        """Add an externally created TAP device to the bridge
+    def _consider_external_device(self, dev_name):
+        """See if we need to take action when a net device is created
 
-        Wait for the external tap device to be created by the DHCP agent.
-        When the tap device is ready, add it to bridge Run as a thread
-        so REST call can return before this code completes its
-        execution.
+        This function will be called as a callback when a new interface is
+        created in Linux kernel. We will filter for tap interfaces created by
+        OpenStack, and those will be added to the bridges that we create on the
+        Neutron side of things.
+        """
+        match = re.search(r'tap[0-9a-f]{8}-[0-9a-f]{2}', dev_name)
+        if not match:
+            return
+
+        # TODO(ijw) will act upon other mechanism drivers' taps
+
+        port_id = dev_name[3:]
+        bridge_name = "br-%s" % port_id
+        self.ensure_tap_in_bridge(dev_name, bridge_name)
+
+    def ensure_tap_in_bridge(self, tap_name, bridge_name):
+        """Add a TAP device to a bridge
+
+        Defend against this having been done already (common on restart)
+        and this missing a requirement (common when plugging external
+        tap interfaces).
         """
 
-        def _is_tap_configured(device_name, bridge, bridge_name):
+        bridge = bridge_lib.BridgeDevice(bridge_name)
+        if bridge.exists() and ip_lib.device_exists(tap_name) \
+           and not bridge.owns_interface(tap_name):
             try:
-                if ip_lib.device_exists(device_name):
-                    LOG.debug('Bridging tap interface %s on %s',
-                              device_name, bridge_name)
-                    if not bridge.owns_interface(device_name):
-                        bridge.addif(device_name)
-                    else:
-                        LOG.debug('Interface: %s is already added '
-                                  'to the bridge %s',
-                                  device_name, bridge_name)
-                    return True
-            except Exception as e:
-                LOG.exception(e)
-                # Something has gone bad, but we should not quit.
-                pass
-            return False
-
-        pending_taps = []
-        while True:
-            # While we were working, check if new taps have been requested
-            if not self._external_taps.empty():
-                pending_taps.append(self._external_taps.get())
-            elif len(pending_taps) == 0:
-                # We have no work to do and blocking is now OK,
-                # so wait on the empty external TAPs
-                pending_taps.append(self._external_taps.get())
-
-            for tap in pending_taps:
-                (tap_timeout, dev_name, bridge, br_name) = tap
-                if _is_tap_configured(dev_name, bridge, br_name):
-                    pending_taps.remove(tap)
-                elif time.time() > tap_timeout:
-                    LOG.warning("Timeout for tap %s", dev_name)
-                    pending_taps.remove(tap)
-
-            # If we have more work, go for it straight away, otherwise
-            # take a breather because the old tap state will take
-            # time to change.
-            if len(pending_taps) != 0:
-                eventlet.sleep(2)
-
-    def add_external_tap(self, device_name, bridge, bridge_name):
-        """Enqueue tap info for the tap worker."""
-        self._external_taps.put((time.time() + self.tap_wait_time,
-                                 device_name, bridge, bridge_name))
+                bridge.addif(tap_name)
+            except Exception:
+                LOG.exception("Can't add tap interface %s to bridge %s" %
+                              (tap_name, bridge_name))
 
     def _ensure_kernelside_plugtap(self, bridge_name, tap_name, int_tap_name):
         # This is the kernel-side config (and we should not assume
@@ -766,17 +748,15 @@ class VPPForwarder(object):
 
         # TODO(ijw): someone somewhere ought to be sorting
         # the MTUs out
-        br = self.ensure_kernel_bridge(bridge_name)
-
-        # TODO(ijw) idempotency
-        # This is the external TAP device that will be
-        # created by Nova or an agent, say the DHCP agent
-        # later in time.
-        self.add_external_tap(tap_name, br, bridge_name)
+        self.ensure_kernel_bridge(bridge_name)
 
         # This is the device that we just created with VPP
-        if not br.owns_interface(int_tap_name):
-            br.addif(int_tap_name)
+        self.ensure_tap_in_bridge(int_tap_name, bridge_name)
+
+        # This is the external TAP device that will be
+        # created by Nova or an agent, say the DHCP agent,
+        # later in time.
+        self.ensure_tap_in_bridge(tap_name, bridge_name)
 
     def ensure_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
@@ -3024,7 +3004,6 @@ def main():
     mac_age_min = int((cfg.CONF.ml2_vpp.mac_age + 59) / 60)
     vppf = VPPForwarder(physnets,
                         mac_age=mac_age_min,
-                        tap_wait_time=cfg.CONF.ml2_vpp.tap_wait_time,
                         vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,
                         gpe_src_cidr=cfg.CONF.ml2_vpp.gpe_src_cidr,
                         gpe_locators=cfg.CONF.ml2_vpp.gpe_locators,
