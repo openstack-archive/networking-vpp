@@ -151,10 +151,12 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         session = port_context._plugin_context.session
         port = port_context.current
         host = port_context.host
+        segment = port_context.binding_levels[-1]
         self.agent_communicator.unbind(
             session,
             port,
-            host)
+            host,
+            segment)
         m_db.journal_write.assert_called_once_with(
             session,
             self.agent_communicator._port_path(port_context.host,

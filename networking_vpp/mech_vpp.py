@@ -259,7 +259,9 @@ class VPPMechanismDriver(api.MechanismDriver):
 
                 self.communicator.unbind(port_context._plugin_context.session,
                                          port_context.original,
-                                         port_context.original_host)
+                                         port_context.original_host,
+                                         prev_bind[api.BOUND_SEGMENT]
+                                         )
 
         # (Re)bind port to the new host, if it needs to be bound
         if port_context.binding_levels is not None:
@@ -361,8 +363,9 @@ class VPPMechanismDriver(api.MechanismDriver):
         host = port_context.host
         # NB: Host is typically '' if the port is not bound
         if host:
+            segment = port_context.binding_levels[-1][api.BOUND_SEGMENT]
             self.communicator.unbind(port_context._plugin_context.session,
-                                     port, host)
+                                     port, host, segment)
 
     def delete_port_postcommit(self, port_context):
         self.communicator.kick()
@@ -462,6 +465,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.port_key_space = LEADIN + '/nodes'
         self.secgroup_key_space = LEADIN + '/global/secgroups'
         self.remote_group_key_space = LEADIN + '/global/remote_group'
+        self.gpe_key_space = LEADIN + '/global/networks/gpe'
         self.election_key_space = LEADIN + '/election'
         self.journal_kick_key = self.election_key_space + '/kick-journal'
 
@@ -875,6 +879,17 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _remote_group_path(self, secgroup_id, port_id):
         return self.remote_group_key_space + "/" + secgroup_id + "/" + port_id
 
+    def _gpe_remote_path(self, host, port, segmentation_id):
+        ip_addrs = port.get('fixed_ips', [])
+        gpe_dir = self.gpe_key_space + "/" + str(segmentation_id) + "/" + \
+            host + "/" + port['mac_address']
+        if ip_addrs and segmentation_id:
+            # Delete all GPE keys and the empty GPE directory itself in etcd
+            return [gpe_dir + "/" + ip_address['ip_address']
+                    for ip_address in ip_addrs] + [gpe_dir]
+        else:
+            return []
+
     # A remote_group_path is qualified with a port ID because the agent uses
     # the port ID to keep track of the dynamic set of ports associated with
     # the remote_group_id. The value of this key is the
@@ -943,9 +958,11 @@ class EtcdAgentCommunicator(AgentCommunicator):
                               data['fixed_ips']])
         self.kick()
 
-    def unbind(self, session, port, host):
-        LOG.debug("Queueing unbind request for port:%s, host:%s.",
-                  port, host)
+    def unbind(self, session, port, host, segment):
+        # GPE requires segmentation ID for removing its etcd keys
+        segmentation_id = segment.get(api.SEGMENTATION_ID, 0)
+        LOG.debug("Queueing unbind request for port:%s, host:%s, segment:%s",
+                  port, host, segmentation_id)
         # When a port is unbound, this journal entry will delete the
         # port key (and hence it's ip address value) from etcd. The behavior
         # is like removing the port IP address(es) from the
@@ -963,6 +980,12 @@ class EtcdAgentCommunicator(AgentCommunicator):
         for remote_group_path in self._remote_group_paths(port):
             db.journal_write(session, remote_group_path, None)
         db.journal_write(session, self._port_path(host, port), None)
+        # Remove all GPE remote keys from etcd, for this port
+        for gpe_remote_path in self._gpe_remote_path(host, port,
+                                                     segmentation_id):
+            db.journal_write(session,
+                             gpe_remote_path,
+                             None)
         self.kick()
 
     def unbind_port_from_remote_groups(self, session, original_port,
@@ -990,6 +1013,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
             if v is None:
                 try:
                     etcd_client.delete(k)
+                except etcd.EtcdNotFile:
+                    # We are asked to delete a directory as in the
+                    # case of GPE where the empty mac address directory
+                    # needs deletion after the key (IP) has been deleted.
+                    try:
+                        etcd_client.delete(k, dir=True)
+                    except Exception:  # pass any exceptions
+                        pass
                 except etcd.EtcdKeyNotFound:
                     # The key may have already been deleted
                     # no problem here
