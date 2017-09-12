@@ -573,9 +573,7 @@ class VPPInterface(object):
         for ifidx in ifidxes:
             self.call_vpp('sw_interface_set_flags',
                           sw_if_index=ifidx,
-                          admin_up_down=1,
-                          link_up_down=1,
-                          deleted=0)
+                          admin_up_down=1)
 
     def ifdown(self, *ifidxes):
         """Bring a list of interfaces down
@@ -585,9 +583,7 @@ class VPPInterface(object):
         for ifidx in ifidxes:
             self.call_vpp('sw_interface_set_flags',
                           sw_if_index=ifidx,
-                          admin_up_down=0,
-                          link_up_down=0,
-                          deleted=0)
+                          admin_up_down=0)
 
     def create_loopback(self, mac_address):
         # Create a loopback interface to act as a BVI
