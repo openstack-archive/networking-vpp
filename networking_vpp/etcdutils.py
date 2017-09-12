@@ -28,6 +28,8 @@ import uuid
 
 from networking_vpp import exceptions as vpp_exceptions
 
+from oslo_serialization import jsonutils
+
 
 LOG = logging.getLogger(__name__)
 
@@ -469,7 +471,7 @@ class EtcdChangeWatcher(EtcdWatcher):
 
     def __init__(self, etcd_client, name, watch_path, election_path=None,
                  wait_until_elected=False, recovery_time=5,
-                 data=None, heartbeat=60):
+                 data=None, heartbeat=60, encoder=EtcdJSONWriter):
         self.implemented_state = {}
         self.watch_path = watch_path
 
@@ -664,3 +666,135 @@ class EtcdClientFactory(object):
         etcd_client = etcd.Client(**self.etcd_args)
 
         return etcd_client
+
+@six.add_metaclass(abc.ABCMeta)
+class EtcdWriter(object):
+
+    @abstractmethod
+    def _process_read_value(self, key, value):
+        """Turn a string from etcd into a value in the style we prefer
+
+        May parse, validate and/or otherwise modify the result.
+        """
+
+        pass
+        
+    @abstractmethod
+    def _process_written_value(self, key, value):
+        """Turn a value into a serialised string to store in etcd
+
+        May serialise, sign and/or otherwise modify the result.
+        """
+        pass
+
+    def __init__(self, etcd_client):
+        self.etcd_client = etcd_client
+
+    def write(self, key, data, *args, **kwargs):
+        """Serialise and write a single data key in etcd.
+
+        The value is received as a Python data structure and stored in
+        a conventional format (serialised to JSON, in this class
+        instance).
+
+        """
+        str_data = jsonutils.dumps(data)
+
+        self.etcd_client.write(key, str_data, *args, **kwargs)
+
+    def read(self, *args, **kwargs):
+        """Watch and parse a data key in etcd.
+
+        The value is stored in a conventional format (serialised
+        somehow) and we parse it to Python.  This may throw an
+        exception if the data cannot be read when .value is called on
+        any part of the result.
+
+        """
+        return ParsedEtcdResult(self,
+                                self.etcd_client.read(*args, **kwargs))
+
+
+    def watch(self, *args, **kwargs):
+        """Watch and parse a data key in etcd.
+
+        The value is stored in a conventional format (serialised
+        somehow) and we parse it to Python.  This may throw an
+        exception if the data cannot be read when .value is called on
+        any part of the result.
+
+        """
+
+        return ParsedEtcdResult(self,
+                                self.etcd_client.watch(*args, **kwargs))
+
+    def delete(self, key):
+        # NB there's no way of clearly indicating that a delete is
+        # legitimate - the parser has no role in it, here.
+
+        # We do augment the delete to delete more throroughly.  This
+        # should probably be a mixin.
+        try:
+            self.etcd_client.delete(k)
+        except etcd.EtcdNotFile:
+            # We are asked to delete a directory as in the
+            # case of GPE where the empty mac address directory
+            # needs deletion after the key (IP) has been deleted.
+            try:
+                # TODO(ijw): define semantics: recursive delete?
+                etcd_writer.delete(k, dir=True)
+            except Exception:  # pass any exceptions
+                pass
+            except etcd.EtcdKeyNotFound:
+                # The key may have already been deleted
+                # no problem here
+                pass
+
+
+class ParsedEtcdResult(EtcdResult):
+    """Parsed version of an EtcdResult
+
+    An equivalent to EtcdResult that processes its values using the
+    parser that the reading class implements.
+    """
+
+    def __init__(self, reader, result):
+
+        self._reader = reader
+        self._result = result
+
+    @property
+    def value(self):
+        return self._reader._parse_read_value(self._result._key, self.result._value)
+        
+    def get_subtree(self, *args, **kwargs):
+        for f in self._result.get_subtree(*args, **kwargs):
+            # This returns a value which may itself have a subtree
+            # depending on args passed
+
+            return ParsedEtcdResult(self._reader, self._result)
+
+    # We know a bit too much about the internals of EtcdResult, but
+    # given that, we know that the internals all work from .value or
+    # .get_subtree() and the rest of the calls should use parsed
+    # result values.
+
+
+class EtcdJSONWriter(EtcdWriter):
+    """Write Python datastructures to etcd in a consistent form.
+
+    This takes values (typically as Python datastructures) and
+    converts them using JSON serialisation to a form that can be
+    stored in etcd, and vice versa.
+
+    """
+
+    def _process_read_value(self, key, value):
+
+        return jsonutils.loads(value)
+
+    def _process_written_value(self, key, value):
+
+        return jsonutils.dumps(value)
+
+
