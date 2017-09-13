@@ -97,6 +97,14 @@ except ImportError:
             hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
         cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
 
+try:
+    # (for, specifically, get_random_mac)
+    # Newer:
+    from neutron_lib.utils import net as net_utils
+except ImportError:
+    # Older:
+    from neutron.common import utils as net_utils
+
 import os
 import re
 
