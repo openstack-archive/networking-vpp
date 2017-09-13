@@ -26,6 +26,7 @@ import re
 import six
 import time
 
+from networking_vpp import compat
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
@@ -84,7 +85,9 @@ class VPPMechanismDriver(api.MechanismDriver):
     vif_details = {}
 
     def initialize(self):
-        cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
+        config_opts.register_vpp_opts(cfg.CONF)
+        compat.register_securitygroups_opts(cfg.CONF)
+
         self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
 
     def get_vif_type(self, port_context):
