@@ -43,6 +43,7 @@ import vpp
 
 from networking_vpp._i18n import _
 from networking_vpp import compat
+from networking_vpp.compat import config
 from networking_vpp.compat import n_const
 from networking_vpp import config_opts
 from networking_vpp import etcdutils
@@ -55,7 +56,6 @@ from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.plugins.common import constants as p_const
-from neutron.plugins.ml2 import config
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr

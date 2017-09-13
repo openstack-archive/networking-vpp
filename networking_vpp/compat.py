@@ -97,6 +97,13 @@ except ImportError:
             hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
         cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
 
+try:
+    # Older
+    from neutron.plugins.ml2 import config
+except ImportError:
+    # Newer (Pike-ish)
+    from neutron.conf.plugins.ml2 import config
+
 import os
 import re
 

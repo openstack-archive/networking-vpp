@@ -18,6 +18,7 @@ import sys
 
 sys.modules['vpp_papi'] = mock.MagicMock()
 
+from networking_vpp.compat import config
 from networking_vpp.compat import context
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const as constants
@@ -27,7 +28,6 @@ from networking_vpp.services.l3_router import l3_vpp
 from neutron.db import api as neutron_db_api
 from neutron.db import l3_db
 from neutron.extensions import external_net as external_net
-from neutron.plugins.ml2 import config
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2
 from neutron_lib.api.definitions import provider_net as provider
