@@ -107,6 +107,14 @@ def register_ml2_base_opts(cfg):
         from neutron.conf.plugins.ml2 import config
         config.register_ml2_plugin_opts(cfg)
 
+try:
+    # (for, specifically, get_random_mac)
+    # Newer:
+    from neutron_lib.utils import net as net_utils
+except ImportError:
+    # Older:
+    from neutron.common import utils as net_utils
+
 import os
 import re
 
