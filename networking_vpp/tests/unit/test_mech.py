@@ -16,10 +16,11 @@
 
 import mock
 
+from networking_vpp.compat import config
+
 import etcd
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
-from neutron.plugins.ml2 import config
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2
