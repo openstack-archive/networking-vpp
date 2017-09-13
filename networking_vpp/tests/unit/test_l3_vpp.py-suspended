@@ -18,6 +18,8 @@ import sys
 
 sys.modules['vpp_papi'] = mock.MagicMock()
 
+from networking_vpp import compat
+from networking_vpp import config_opts
 from networking_vpp.compat import context
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const as constants
@@ -27,7 +29,6 @@ from networking_vpp.services.l3_router import l3_vpp
 from neutron.db import api as neutron_db_api
 from neutron.db import l3_db
 from neutron.extensions import external_net as external_net
-from neutron.plugins.ml2 import config
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2
 from neutron_lib.api.definitions import provider_net as provider
@@ -62,10 +63,13 @@ class VppL3PluginBaseTestCase(
 
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator')
     def setUp(self, m_etcd):
-        config.cfg.CONF.set_override('mechanism_drivers',
-                                     ['logger', 'vpp'], 'ml2')
-        config.cfg.CONF.set_override('core_plugin',
-                                     'neutron.plugins.ml2.plugin.Ml2Plugin')
+        compat.register_ml2_base_opts(cfg.CONF)
+        compat.register_securitygroups_opts(cfg.CONF)
+        config_opts.register_vpp_opts(cfg.CONF)
+        cfg.CONF.set_override('mechanism_drivers',
+                              ['logger', 'vpp'], 'ml2')
+        cfg.CONF.set_override('core_plugin',
+                              'neutron.plugins.ml2.plugin.Ml2Plugin')
         cfg.CONF.set_override('service_plugins', ['vpp-router'])
         core_plugin = cfg.CONF.core_plugin
         service_plugins = {'l3_plugin_name': 'vpp-router'}
