@@ -55,7 +55,6 @@ from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.plugins.common import constants as p_const
-from neutron.plugins.ml2 import config
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -74,10 +73,6 @@ VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
 # VPP does not maintain any session states
 reflexive_acls = True
 
-# config_opts and config are required to configure the options within it, but
-# not referenced from here, so shut up tox:
-assert config_opts
-assert config
 
 # Apply monkey patch if necessary
 compat.monkey_patch()
@@ -2969,10 +2964,11 @@ def main():
     gmr.TextGuruMeditation.setup_autorun(
         version.version_info,
         service_name='vpp-agent')
-    # If the user and/or group are specified in config file, we will use
-    # them as configured; otherwise we try to use defaults depending on
-    # distribution. Currently only supporting ubuntu and redhat.
-    cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
+
+    compat.register_ml2_base_opts(cfg.CONF)
+    compat.register_securitygroups_opts(cfg.CONF)
+    config_opts.register_vpp_opts(cfg.CONF)
+
     if cfg.CONF.ml2_vpp.enable_vpp_restart:
         VPPRestart().wait()
 
