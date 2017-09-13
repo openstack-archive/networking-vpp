@@ -16,7 +16,7 @@
 from networking_vpp._i18n import _
 from oslo_config import cfg
 
-vpp_opts = [
+_vpp_opts = [
     cfg.StrOpt('physnets',
                help=_("Comma-separated list of net-name:interface-name for "
                       "physical connections")),
@@ -31,25 +31,6 @@ vpp_opts = [
                       "specified on compute and network nodes. In the "
                       "current implementation only a single locator "
                       "is supported.")),
-    cfg.StrOpt('etcd_host', default="127.0.0.1",
-               help=_("Etcd host IP address(es) to connect etcd client."
-                      "It takes two formats: single IP/host or a multiple "
-                      "hosts list with this format: 'IP:Port,IP:Port'. "
-                      "e.g: 192.168.1.1:2379,192.168.1.2:2379.  If port "
-                      "is absent, etcd_port is used.")),
-    cfg.IntOpt('etcd_port', default=4001,
-               help=_("Etcd port to connect the etcd client.  This can "
-                      "be overridden on a per-host basis if the multiple "
-                      "host form of etcd_host is used.")),
-    cfg.StrOpt('etcd_user', default=None,
-               help=_("Username for etcd authentication")),
-    cfg.StrOpt('etcd_pass', default=None,
-               help=_("Password for etcd authentication")),
-    # TODO(ijw): make false default
-    cfg.BoolOpt('etcd_insecure_explicit_disable_https', default=True,
-                help=_("Use TLS to access etcd")),
-    cfg.StrOpt('etcd_ca_cert', default=None,
-               help=_("etcd CA certificate file path")),
     cfg.IntOpt('etcd_write_time', default=20,
                help=_("The period of time alloted to etcd write before it is "
                       "timed out.")),
@@ -78,4 +59,6 @@ vpp_opts = [
                help=_("Hostname to render L3 services on.")),
 ]
 
-cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
+def register_vpp_opts():
+    cfg.CONF.register_opts(vpp_opts, "ml2_vpp")
+    etcdutils.register_etcd_conn_opts(cfg.CONF, "ml2_vpp")
