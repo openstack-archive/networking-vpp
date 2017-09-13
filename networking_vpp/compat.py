@@ -80,22 +80,32 @@ except ImportError:
     model_base = neutron.db.model_base
 
 # Register security group option
-# Mitaka compatibility
-try:
-    from neutron.conf.agent import securitygroups_rpc
-    securitygroups_rpc.register_securitygroups_opts()
-except ImportError:
-    from oslo_config import cfg
-    security_group_opts = [
-        cfg.BoolOpt(
-            'enable_security_group', default=True,
-            help=_('Controls whether neutron security groups is enabled '
-                   'Set it to false to disable security groups')), ]
-    # This can get loaded from other parts of Mitaka because other
-    # mechanism drivers respect this flag too
-    if not (hasattr(cfg.CONF, 'SECURITYGROUP') and
-            hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
-        cfg.CONF.register_opts(security_group_opts, 'SECURITYGROUP')
+def register_securitygroups_opts(cfg):
+    # Mitaka compatibility
+    try:
+        from neutron.conf.agent import securitygroups_rpc
+        securitygroups_rpc.register_securitygroups_opts()
+    except ImportError:
+        security_group_opts = [
+            cfg.BoolOpt(
+                'enable_security_group', default=True,
+                help=_('Controls whether neutron security groups is enabled '
+                       'Set it to false to disable security groups')), ]
+        # This can get loaded from other parts of Mitaka because other
+        # mechanism drivers respect this flag too
+        if not (hasattr(cfg.CONF, 'SECURITYGROUP') and
+                hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
+            cfg.register_opts(security_group_opts, 'SECURITYGROUP')
+
+def register_ml2_base_opts(cfg):
+    try:
+        # Older
+        from neutron.plugins.ml2 import config
+        # Calls register whether you like it or not, with no choice on arg
+    except ImportError:
+        # Newer (Pike-ish)
+        from neutron.conf.plugins.ml2 import config
+        config.register_ml2_plugin_opts(cfg)
 
 try:
     # (for, specifically, get_random_mac)

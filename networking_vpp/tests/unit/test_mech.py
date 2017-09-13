@@ -16,15 +16,12 @@
 
 import mock
 
+from networking_vpp import compat
+from networking_vpp import config_opts
+
 import etcd
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
-try:
-    # TODO(ijw): TEMPORARY, better fix coming that reverses this
-    from neutron.plugins.ml2 import config
-except ImportError:
-    from neutron.conf.plugins.ml2 import config
-    config.register_ml2_plugin_opts()
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2
@@ -66,13 +63,17 @@ class VPPMechanismDriverTestCase(
     @mock.patch('etcd.Client')
     @mock.patch('networking_vpp.etcdutils.EtcdClientFactory.client')
     def setUp(self, mock_eventlet, mock_client, mock_make_client):
+        compat.register_ml2_base_opts(cfg.CONF)
+        compat.register_securitygroups_opts(cfg.CONF)
+        config_opts.register_vpp_opts(cfg.CONF)
+
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
 
-        config.cfg.CONF.set_override('mechanism_drivers',
-                                     ['logger', 'vpp'], 'ml2')
-        config.cfg.CONF.set_override('core_plugin',
-                                     'neutron.plugins.ml2.plugin.Ml2Plugin')
+        cfg.CONF.set_override('mechanism_drivers',
+                              ['logger', 'vpp'], 'ml2')
+        cfg.CONF.set_override('core_plugin',
+                              'neutron.plugins.ml2.plugin.Ml2Plugin')
         core_plugin = cfg.CONF.core_plugin
         super(VPPMechanismDriverTestCase, self).setUp(plugin=core_plugin)
         self.mech = mech_vpp.VPPMechanismDriver()
