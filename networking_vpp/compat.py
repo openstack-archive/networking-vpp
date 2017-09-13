@@ -104,6 +104,14 @@ except ImportError:
     # Newer (Pike-ish)
     from neutron.conf.plugins.ml2 import config
 
+try:
+    # (for, specifically, get_random_mac)
+    # Newer:
+    from neutron_lib.utils import net as net_utils
+except ImportError:
+    # Older:
+    from neutron.common import utils as net_utils
+
 import os
 import re
 
