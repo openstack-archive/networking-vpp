@@ -150,7 +150,7 @@ class EtcdClientSecuredTestCase(base.BaseTestCase):
 
         mck.side_effect = self.fake_crypto
 
-        cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
+        config_opts.register_vpp_opts(cfg.CONF)
         cfg.CONF.ml2_vpp.jwt_controller_name_pattern = "etcd.*"
         cfg.CONF.ml2_vpp.jwt_node_private_key = "jwt_private_key.pem"
         cfg.CONF.ml2_vpp.jwt_node_cert = "jwt_node_cert.pem"

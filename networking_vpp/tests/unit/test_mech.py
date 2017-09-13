@@ -16,6 +16,9 @@
 
 import mock
 
+from networking_vpp import compat
+from networking_vpp import config_opts
+
 import etcd
 from networking_vpp.compat import plugin_constants
 from networking_vpp import mech_vpp
@@ -66,13 +69,17 @@ class VPPMechanismDriverTestCase(
     @mock.patch('etcd.Client')
     @mock.patch('networking_vpp.etcdutils.EtcdClientFactory.client')
     def setUp(self, mock_eventlet, mock_client, mock_make_client):
+        compat.register_ml2_base_opts(cfg.CONF)
+        compat.register_securitygroups_opts(cfg.CONF)
+        config_opts.register_vpp_opts(cfg.CONF)
+
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
 
-        config.cfg.CONF.set_override('mechanism_drivers',
-                                     ['logger', 'vpp'], 'ml2')
-        config.cfg.CONF.set_override('core_plugin',
-                                     'neutron.plugins.ml2.plugin.Ml2Plugin')
+        cfg.CONF.set_override('mechanism_drivers',
+                              ['logger', 'vpp'], 'ml2')
+        cfg.CONF.set_override('core_plugin',
+                              'neutron.plugins.ml2.plugin.Ml2Plugin')
         core_plugin = cfg.CONF.core_plugin
         super(VPPMechanismDriverTestCase, self).setUp(plugin=core_plugin)
         self.mech = mech_vpp.VPPMechanismDriver()
@@ -232,6 +239,13 @@ class VPPMechanismDriverTestCase(
 
 
 class EtcdAgentCommunicatorTestCases(base.BaseTestCase):
+    def setUp(self):
+        compat.register_ml2_base_opts(cfg.CONF)
+        compat.register_securitygroups_opts(cfg.CONF)
+        config_opts.register_vpp_opts(cfg.CONF)
+
+        super(EtcdAgentCommunicatorTestCases, self).setUp()
+
     @mock.patch('etcd.Client')
     def test_etcd_no_config(self, mock_client):
         # etcd_port should default to 127.0.0.1

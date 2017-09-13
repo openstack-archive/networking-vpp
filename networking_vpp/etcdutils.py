@@ -27,7 +27,7 @@ import time
 from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 import uuid
 
-from networking_vpp import config_opts
+from networking_vpp._i18n import _
 from networking_vpp import exceptions as vpp_exceptions
 from networking_vpp import jwt_agent
 
@@ -35,8 +35,6 @@ from oslo_serialization import jsonutils
 
 
 LOG = logging.getLogger(__name__)
-
-cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
 
 ETC_HOSTS_DELIMITER = ','
 ETC_PORT_HOST_DELIMITER = ':'
@@ -767,9 +765,37 @@ class EtcdHelper(object):
             # Already gone, so not a problem
             pass
 
+# Base connection to etcd, using standard options.
+
+_etcd_conn_opts = [
+    cfg.StrOpt('etcd_host', default="127.0.0.1",
+               help=_("Etcd host IP address(es) to connect etcd client."
+                      "It takes two formats: single IP/host or a multiple "
+                      "hosts list with this format: 'IP:Port,IP:Port'. "
+                      "e.g: 192.168.1.1:2379,192.168.1.2:2379.  If port "
+                      "is absent, etcd_port is used.")),
+    cfg.IntOpt('etcd_port', default=4001,
+               help=_("Etcd port to connect the etcd client.  This can "
+                      "be overridden on a per-host basis if the multiple "
+                      "host form of etcd_host is used.")),
+    cfg.StrOpt('etcd_user', default=None,
+               help=_("Username for etcd authentication")),
+    cfg.StrOpt('etcd_pass', default=None,
+               help=_("Password for etcd authentication")),
+    # TODO(ijw): make false default
+    cfg.BoolOpt('etcd_insecure_explicit_disable_https', default=True,
+                help=_("Use TLS to access etcd")),
+    cfg.StrOpt('etcd_ca_cert', default=None,
+               help=_("etcd CA certificate file path")),
+]
+
+
+def register_etcd_conn_opts(cfg, group):
+    global _etcd_conn_opts
+    cfg.register_opts(_etcd_conn_opts, group)
+
 
 class EtcdClientFactory(object):
-
     def _parse_host(self, etc_host_elem, default_port):
         """Parse a single etcd host entry (which can be host or host/port)
 
@@ -816,22 +842,22 @@ class EtcdClientFactory(object):
 
         return etc_hosts
 
-    def __init__(self, ml2_vpp_conf):
-        hostconf = self._parse_host_config(ml2_vpp_conf.etcd_host,
-                                           ml2_vpp_conf.etcd_port)
+    def __init__(self, conf_group):
+        hostconf = self._parse_host_config(conf_group.etcd_host,
+                                           conf_group.etcd_port)
 
         self.etcd_args = {
             'host': hostconf,
-            'username': ml2_vpp_conf.etcd_user,
-            'password': ml2_vpp_conf.etcd_pass,
+            'username': conf_group.etcd_user,
+            'password': conf_group.etcd_pass,
             'allow_reconnect': True}
 
-        if not ml2_vpp_conf.etcd_insecure_explicit_disable_https:
-            if ml2_vpp_conf.etcd_ca_cert is None:
+        if not conf_group.etcd_insecure_explicit_disable_https:
+            if conf_group.etcd_ca_cert is None:
                 raise vpp_exceptions.InvalidEtcdCAConfig()
 
             self.etcd_args['protocol'] = 'https'
-            self.etcd_args['ca_cert'] = ml2_vpp_conf.etcd_ca_cert
+            self.etcd_args['ca_cert'] = conf_group.etcd_ca_cert
 
         else:
             LOG.warning("etcd is not using HTTPS, insecure setting")

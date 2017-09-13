@@ -15,6 +15,7 @@
 import mock
 
 import etcd
+from networking_vpp import compat
 from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
 from networking_vpp import mech_vpp
@@ -75,7 +76,8 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
 
-        cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
+        config_opts.register_vpp_opts(cfg.CONF)
+        compat.register_securitygroups_opts(cfg.CONF)
 
         def callback(host, port):
             pass

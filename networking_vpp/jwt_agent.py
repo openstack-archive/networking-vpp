@@ -23,6 +23,8 @@ import jwt
 from OpenSSL import crypto
 import re
 
+from networking_vpp._i18n import _
+
 
 """
 These regular expressions are used to identify the etcd paths that need

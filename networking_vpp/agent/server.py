@@ -81,10 +81,6 @@ VppAcl = namedtuple('VppAcl', ['in_idx', 'out_idx'])
 # VPP does not maintain any session states
 reflexive_acls = True
 
-# config_opts and config are required to configure the options within it, but
-# not referenced from here, so shut up tox:
-assert config_opts
-
 # Apply monkey patch if necessary
 compat.monkey_patch()
 
@@ -3025,10 +3021,11 @@ def ml2_vpp_agent_main():
 
     openstack_base_setup('vpp_agent')
 
-    cfg.CONF.register_opts(config_opts.vpp_opts, "ml2_vpp")
+    compat.register_ml2_base_opts(cfg.CONF)
+    compat.register_securitygroups_opts(cfg.CONF)
+    config_opts.register_vpp_opts(cfg.CONF)
 
     # Pull physnets out of config and interpret them
-
     if not cfg.CONF.ml2_vpp.physnets:
         LOG.critical("Missing physnets config. Exiting...")
         sys.exit(1)
