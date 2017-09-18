@@ -37,6 +37,8 @@ from networking_vpp import config_opts
 from networking_vpp import constants as nvpp_const
 from networking_vpp.db import db
 from networking_vpp import etcdutils
+from networking_vpp.ext_manager import ExtensionManager
+from networking_vpp.extension import MechDriverExtensionBase
 
 from networking_vpp.compat import events
 from networking_vpp.compat import registry
@@ -89,6 +91,14 @@ class VPPMechanismDriver(api.MechanismDriver):
         compat.register_securitygroups_opts(cfg.CONF)
 
         self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
+
+        names = names = cfg.CONF.ml2_vpp.driver_extensions
+        if names is not '':
+            self.mgr = ExtensionManager(
+                'networking_vpp.driver.extensions',
+                names,
+                MechDriverExtensionBase)
+            self.mgr.call_all('run', self.communicator)
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""

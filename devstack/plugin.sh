@@ -76,6 +76,7 @@ function configure_networking_vpp {
     else
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_signing  False
     fi
+
 }
 
 function shut_networking_vpp_down {
