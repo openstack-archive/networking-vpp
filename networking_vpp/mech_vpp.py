@@ -37,10 +37,11 @@ from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp import etcdutils
 
-from neutron.callbacks import events
-from neutron.callbacks import registry
-from neutron.callbacks import resources
 from neutron.db import api as neutron_db_api
+from neutron_lib.callbacks import events
+from neutron_lib.callbacks import registry
+from neutron_lib.callbacks import resources
+
 
 try:
     # Newton and on
@@ -88,6 +89,10 @@ class VPPMechanismDriver(api.MechanismDriver):
         compat.register_securitygroups_opts(cfg.CONF)
 
         self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
+        self.etcdJournalHelper = \
+            etcdutils.EtcdJournalHelper(
+                self.communicator,
+                neutron_db_api.get_writer_session())
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""

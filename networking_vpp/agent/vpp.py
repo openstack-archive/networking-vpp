@@ -1132,3 +1132,69 @@ class VPPInterface(object):
                  'vni': val.vni
                  }
                 for val in t]
+
+    def cross_connect(self, source_idx, dest_idx):
+        self.LOG.debug("Enable cross connected between %d-->%d",
+                       source_idx, dest_idx)
+        self.call_vpp('l2_patch_add_del',
+                      rx_sw_if_index=source_idx,
+                      tx_sw_if_index=dest_idx,
+                      is_add=1)
+
+    #  direction : 1 = rx, 2 = tx, 3 tx & rx
+    def enable_port_mirroring(self, source_idx, dest_idx, direction=3):
+        self.LOG.debug("Enable span from %d to %d",
+                       source_idx, dest_idx)
+        self.call_vpp('sw_interface_span_enable_disable',
+                      sw_if_index_from=source_idx,
+                      sw_if_index_to=dest_idx,
+                      state=direction)
+
+    def disable_port_mirroring(self, source_idx, dest_idx):
+        self.LOG.debug("Disable span from %d to %d",
+                       source_idx, dest_idx)
+        self.call_vpp('sw_interface_span_enable_disable',
+                      sw_if_index_from=source_idx,
+                      sw_if_index_to=dest_idx,
+                      state=0)
+
+    def dump_port_mirroring(self):
+        self.LOG.debug("Dump span")
+        t = self.call_vpp('sw_interface_span_dump')
+        return t
+
+    def bridge_enable_flooding(self, bridge_domain_id):
+        L2_LEARN = (1 << 0)
+        L2_FWD = (1 << 1)
+        L2_FLOOD = (1 << 2)
+        L2_UU_FLOOD = (1 << 3)
+        L2_ARP_TERM = (1 << 4)
+
+        self.LOG.debug("Enable flooding (disable mac learning) for bridge %d",
+                       bridge_domain_id)
+        self.call_vpp('bridge_flags',
+                      bd_id=bridge_domain_id,
+                      is_set=0,
+                      feature_bitmap=(L2_LEARN | L2_FWD | L2_FLOOD |
+                                      L2_UU_FLOOD | L2_ARP_TERM))
+        self.call_vpp('bridge_flags',
+                      bd_id=bridge_domain_id,
+                      is_set=1,
+                      feature_bitmap=L2_UU_FLOOD)
+
+    def create_host_interface(self, if_name):
+        # Create an af packet interface
+        # The mac address will be replaced by a random address.
+        mac_address = mac_to_bytes("ff:ff:ff:ff:ff:ff")
+        host_itf = self.call_vpp('af_packet_create',
+                                 host_if_name=if_name,
+                                 hw_addr=mac_address,
+                                 use_random_hw_addr=True)
+
+        self.ifup(host_itf.sw_if_index)
+        return host_itf.sw_if_index
+
+    def delete_host_interface(self, if_name):
+        # Delete an af packet interface
+        self.call_vpp('af_packet_delete',
+                      host_if_name=if_name)
