@@ -76,6 +76,9 @@ function configure_networking_vpp {
     else
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp jwt_signing  False
     fi
+
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp vpp_agent_extensions taas_agent
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp driver_extensions taas_driver
 }
 
 function shut_networking_vpp_down {
