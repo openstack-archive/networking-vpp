@@ -73,6 +73,7 @@ from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
 from oslo_serialization import jsonutils
+from stevedore import extension
 
 
 LOG = logging.getLogger(__name__)
@@ -3503,6 +3504,13 @@ def main():
     # Do the work
 
     ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
+
+    names = cfg.CONF.ml2_vpp.agent_extensions
+    mgr = ExtensionManager(
+        'networking_vpp.agent.extensions',
+        names.split(','),
+        VPPAgentExtensionBase)
+    mgr.call_all('run', cfg.CONF.host, client_factory, vppf, ops.pool)
 
     ops.process_ops()
 

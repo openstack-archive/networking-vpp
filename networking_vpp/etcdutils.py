@@ -28,6 +28,7 @@ from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 import uuid
 
 from networking_vpp._i18n import _
+from networking_vpp.db import db
 from networking_vpp import exceptions as vpp_exceptions
 from networking_vpp import jwt_agent
 
@@ -891,3 +892,22 @@ class EtcdClientFactory(object):
         etcd_client = etcd.Client(**self.etcd_args)
 
         return etcd_client
+
+
+class EtcdJournalHelper(object):
+    __instance = None
+
+    def __new__(cls, communicator, session):
+        if EtcdJournalHelper.__instance is None:
+            EtcdJournalHelper.__instance = object.__new__(cls)
+            EtcdJournalHelper.__instance._communicator = communicator
+            EtcdJournalHelper.__instance._session = session
+        return EtcdJournalHelper.__instance
+
+    @classmethod
+    def etcd_write(cls, key, value):
+        if cls.__instance is not None:
+            db.journal_write(cls.__instance._session,
+                             key,
+                             value)
+            cls.__instance._communicator.kick()
