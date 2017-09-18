@@ -42,6 +42,8 @@ from networking_vpp.compat import events
 from networking_vpp.compat import registry
 from networking_vpp.compat import resources
 
+from neutron.db import api as neutron_db_api
+
 
 try:
     # Newton and on
@@ -89,6 +91,10 @@ class VPPMechanismDriver(api.MechanismDriver):
         compat.register_securitygroups_opts(cfg.CONF)
 
         self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
+        self.etcdJournalHelper = \
+            etcdutils.EtcdJournalHelper(
+                self.communicator,
+                neutron_db_api.get_writer_session())
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""
