@@ -69,6 +69,7 @@ from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
 from oslo_serialization import jsonutils
+from stevedore import extension
 
 
 LOG = logging.getLogger(__name__)
@@ -3284,6 +3285,15 @@ def main():
     # Do the work
 
     ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
+
+    mgr = extension.ExtensionManager(namespace='networking_vpp.agent.watchers',
+                                     invoke_on_load=True,
+                                     invoke_args=(cfg.CONF.host,
+                                                  client_factory,
+                                                  vppf))
+    agent_watchers = [ext.obj for ext in mgr.extensions]
+    for watcher in agent_watchers:
+        ops.pool.spawn(watcher.watch_forever)
 
     ops.process_ops()
 
