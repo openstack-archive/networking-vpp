@@ -15,22 +15,40 @@
 #
 
 from ipaddress import ip_network
-
 from oslo_config import cfg
 from oslo_log import log as logging
 
-from neutron.common import utils
+# from neutron.common import utils
 from neutron.db import api as db_api
 from neutron.db import common_db_mixin
+from neutron.db import extraroute_db
 from neutron.db import l3_gwmode_db
+# from neutron.db import models_v2
+# from neutron.db import _model_query as model_query
+# from neutron.plugins.common import utils as p_utils
+# from neutron_lib.callbacks import registry
 from neutron_lib.api.definitions import provider_net as provider
+# from neutron_lib.callbacks import events
+# from neutron_lib.callbacks import registry
+# from neutron_lib.callbacks import resources
 from neutron_lib import constants
-
+from neutron_lib import exceptions as n_exc
 # TODO(ijw): backward compatibility doesn't really belong here
 try:
     from neutron_lib.plugins import constants as plugin_constants
 except ImportError:
     pass
+
+try:
+    # Newton release compatibility
+    from neutron.db.l3_db import Router
+except ImportError:
+    from neutron.db.models.l3 import Router
+# try:
+#     # Newton release compatibility
+#     from neutron.db.l3_db import RouterPort
+# except ImportError:
+#     from neutron.db.models.l3 import RouterPort
 
 from networking_vpp.agent import server
 from networking_vpp.db import db
@@ -48,10 +66,9 @@ def kick_communicator_on_end(func):
     return new_func
 
 
-class VppL3RouterPlugin(
-    common_db_mixin.CommonDbMixin,
-    l3_gwmode_db.L3_NAT_dbonly_mixin):
-
+class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
+                        extraroute_db.ExtraRoute_db_mixin,
+                        l3_gwmode_db.L3_NAT_db_mixin):
     """Implementation of the VPP L3 Router Service Plugin.
 
     This class implements a L3 service plugin that provides
@@ -65,6 +82,8 @@ class VppL3RouterPlugin(
         self.communicator = EtcdAgentCommunicator(
             notify_bound=lambda *args: None)
         self.l3_host = cfg.CONF.ml2_vpp.l3_host
+        self.gpe_physnet = cfg.CONF.ml2_vpp.gpe_locators
+        LOG.info('vpp-router: router_service plugin has initialized')
 
     def _floatingip_path(self, fip_id):
         return (server.LEADIN + '/nodes/' + self.l3_host + '/' +
@@ -95,63 +114,123 @@ class VppL3RouterPlugin(
                          self._floatingip_path(fip_dict['id']),
                          vpp_floatingip_dict)
 
-    def _get_router_intf_details(self, context, router_id, interface_info,
-                                 router_dict):
-        # Returns a router dictionary populated with network and
-        # subnet information for the associated subnet
+    def _get_vpp_router(self, context, router_id):
+        try:
+            router = self._get_by_id(context, Router, router_id)
+        except Exception:
+            raise n_exc.BadRequest("L3 Router not found for router_id: %s",
+                                   router_id)
+        return router
 
-        # Get vlan id for this subnet's network
-        subnet = self._core_plugin.get_subnet(
-            context, interface_info['subnet_id'])
-        network = self._core_plugin.get_network(
-            context, subnet['network_id'])
+    def _get_router_interface(self, context, router_id, router_dict):
+
+        """Returns the populated router dictionary with interface data.
+
+        Returns the router_dict populated with the network, subnet
+        gateway ip_address, GPE locators for vxlan, network type,
+        segmentation ID, is_ipv6, VRF and prefix-length information so
+        vpp-agent can create the vpp router interface.
+
+        Arguments:-
+        1. router_dict: The router dictionary to be populated with data.
+        It must contain the key "port_id", which is used to populate the
+        router dict.
+        2. router_id: Router ID
+
+        """
+
+        port_id = router_dict['port_id']
+        port = self._core_plugin.get_port(context, port_id)
+        network = self._core_plugin.get_network(context,
+                                                port['network_id'])
+        fixed_ips = [ip for ip in port['fixed_ips']]
+        if not fixed_ips:
+            n_exc.BadRequest('vpp-router-service: A router port must '
+                             'have at least one fixed IP address')
+        # TODO(najoy): Handle multiple fixed-ips on a router port
+        fixed_ip = fixed_ips[0]
+        subnet = self._core_plugin.get_subnet(context,
+                                              fixed_ip['subnet_id'])
+        router_dict['gateway_ip'] = fixed_ip['ip_address']
+        router_dict['subnet_id'] = subnet['id']
+        router_dict['fixed_ips'] = fixed_ips
+
+        address = ip_network(subnet['cidr'])
+        router_dict['network_id'] = network['id']
+        router_dict['is_ipv6'] = True if address.version == 6 else False
+        router_dict['prefixlen'] = address.prefixlen
         router_dict['mtu'] = network['mtu']
         router_dict['segmentation_id'] = network[provider.SEGMENTATION_ID]
         router_dict['net_type'] = network[provider.NETWORK_TYPE]
-        router_dict['physnet'] = network[provider.PHYSICAL_NETWORK]
+        if router_dict['net_type'] == 'vxlan':
+            router_dict['physnet'] = self.gpe_physnet
+        else:
+            router_dict['physnet'] = network[provider.PHYSICAL_NETWORK]
         # Get VRF corresponding to the router
         vrf_id = db.get_router_vrf(context.session, router_id)
         router_dict['vrf_id'] = vrf_id
-        # Get internal gateway address for this subnet
-        router_dict['gateway_ip'] = subnet['gateway_ip']
-        # Get prefix and type for this subnet
-        router_dict['is_ipv6'] = False
-        address = ip_network(subnet['cidr'])
-        if address.version == 6:
-            router_dict['is_ipv6'] = True
-        router_dict['prefixlen'] = address.prefixlen
+        return router_dict
+
+    def _get_router_intf_path(self, router_id, port_id):
+        return (server.LEADIN + '/nodes/' +
+                self.l3_host + '/' + server.ROUTERS_DIR +
+                router_id + '/' + port_id)
 
     def _write_interface_journal(self, context, router_id, router_dict):
-        etcd_dir = (server.LEADIN + '/nodes/' + self.l3_host + '/' +
-                    server.ROUTER_INTF_DIR + router_id)
-        db.journal_write(context.session, etcd_dir, router_dict)
+        LOG.info("router-service: writing router interface journal for "
+                 "router_id:%s, router_dict:%s", router_id, router_dict)
+        router_intf_path = self._get_router_intf_path(
+            router_id,
+            router_dict['port_id'])
+        db.journal_write(context.session, router_intf_path, router_dict)
         self.communicator.kick()
 
-    def _write_router_journal(self, context, router_id, router_dict):
-        etcd_dir = (server.LEADIN + '/nodes/' + self.l3_host + '/' +
-                    server.ROUTER_DIR + router_id)
+    def _remove_interface_journal(self, context, router_id, port_id):
+        LOG.info("router-service: removing router interface journal for "
+                 "router_id:%s, port_id:%s", router_id, port_id)
+        router_intf_path = self._get_router_intf_path(
+            router_id,
+            port_id)
+        db.journal_write(context.session, router_intf_path, None)
+        self.communicator.kick()
+
+    def _write_router_external_gw_journal(self, context, router_id,
+                                          router_dict, delete=False):
+        LOG.info("Writing router external gateway using router_dict: %s",
+                 router_dict)
         router_dict['vrf_id'] = db.get_router_vrf(context.session, router_id)
         # Get the external network details
         network = self._core_plugin.get_network(
             context, router_dict['external_gateway_info']['network_id'])
+        LOG.debug("Router external gateway network data: %s", network)
         # Grab the external network info
         router_dict['external_physnet'] = network[provider.PHYSICAL_NETWORK]
-        router_dict['external_segment'] = network[provider.SEGMENTATION_ID]
+        router_dict['external_segmentation_id'] = network[
+            provider.SEGMENTATION_ID]
         router_dict['external_net_type'] = network[provider.NETWORK_TYPE]
         # Grab all external subnets' gateway IPs
-        # This is added to the router dictionary in the format:
-        # [(Router's IP Address from the external network's subnet,
-        #   External Subnet's prefix)]
+        # This is added to the router dictionary using the key: gateways
+        # The valus of gateways is a list of tuples:
+        # (gateway_ip, prefix_len, is_ipv6)
         fixed_ips = router_dict['external_gateway_info']['external_fixed_ips']
         gateways = []
+        # For each subnet/fixed-ip, write a key to create a gateway uplink
         for fixed_ip in fixed_ips:
+            subnet_id = fixed_ip['subnet_id']
             subnet = self._core_plugin.get_subnet(
-                context, fixed_ip['subnet_id'])
+                context, subnet_id)
+            address = ip_network(subnet['cidr'])
+            is_ipv6 = True if address.version == 6 else False
             gateways.append((fixed_ip['ip_address'],
-                            ip_network(subnet['cidr']).prefixlen))
-        router_dict['gateways'] = gateways
-        db.journal_write(context.session, etcd_dir, router_dict)
-        self.communicator.kick()
+                             address.prefixlen,
+                             is_ipv6))
+            router_dict['gateways'] = gateways
+            gateway_port = router_dict['gw_port_id']
+            etcd_key = self._get_router_intf_path(router_id, gateway_port)
+            if delete:
+                router_dict = None
+            db.journal_write(context.session, etcd_key, router_dict)
+            self.communicator.kick()
 
     def get_plugin_type(self):
         # TODO(ijw): not really the right place for backward compatibility...
@@ -173,7 +252,7 @@ class VppL3RouterPlugin(
             # Allocate VRF for this router
             db.add_router_vrf(context.session, router_dict['id'])
             if router_dict.get('external_gateway_info', False):
-                self._write_router_journal(
+                self._write_router_external_gw_journal(
                     context, router_dict['id'], router_dict)
 
         return router_dict
@@ -183,16 +262,20 @@ class VppL3RouterPlugin(
         old_router = self.get_router(context, router_id)
         new_router = super(VppL3RouterPlugin, self).update_router(
             context, router_id, router)
-        # Check if the gateway changed
         ext_gw = 'external_gateway_info'
+        # If external gateway has changed, delete the old external gateway
+        # states from etcd and write the new states, if we have a new valid
+        # external gateway
         if old_router[ext_gw] != new_router[ext_gw]:
-            # Check if the gateway has been removed
-            if not new_router[ext_gw]:
-                # Populate values from the old router
-                new_router[ext_gw] = old_router[ext_gw]
-                new_router['delete'] = True
-            # Update dictionary values
-            self._write_router_journal(context, router_id, new_router)
+            # If the old router has an external gateway delete and then set
+            # the new router's external gateway
+            if old_router[ext_gw]:
+                self._write_router_external_gw_journal(context, router_id,
+                                                       old_router,
+                                                       delete=True)
+            if new_router[ext_gw]:
+                self._write_router_external_gw_journal(context, router_id,
+                                                       new_router)
 
         return new_router
 
@@ -201,11 +284,10 @@ class VppL3RouterPlugin(
         with session.begin(subtransactions=True):
             router = self.get_router(context, router_id)
             super(VppL3RouterPlugin, self).delete_router(context, router_id)
+            # Delete the external gateway key from etcd
             if router.get('external_gateway_info', False):
-                router['delete'] = True
-                self._write_router_journal(context, router_id,
-                                           router)
-            # Delete VRF allocation for this router
+                self._write_router_external_gw_journal(context, router_id,
+                                                       router, delete=True)
             db.delete_router_vrf(context.session, router_id)
 
     def create_floatingip(self, context, floatingip):
@@ -264,18 +346,63 @@ class VppL3RouterPlugin(
                 self._process_floatingip(context, fip, 'disassociate')
         return router_ids
 
+    def _get_router_port_on_subnet(self, context, router_id, router_dict):
+        filters = {'device_id': [router_id]}
+        router_ports = self._core_plugin.get_ports(context,
+                                                   filters=filters)
+        fixed_ip = router_dict['fixed_ips'][0]
+        subnet_id = fixed_ip['subnet_id']
+        ip_address = fixed_ip['ip_address']
+        LOG.info("Router ports on subnet: %s == %s",
+                 subnet_id, router_ports)
+        router_port = [port for port in router_ports
+                       if port['fixed_ips'][0]['subnet_id'] == subnet_id
+                       and port['fixed_ips'][0]['ip_address'] == ip_address]
+        if router_port:
+            return router_port[0]['id']
+        else:
+            LOG.error("A router port could not be found on subnet: %s",
+                      router_dict['subnet_id'])
+
     @kick_communicator_on_end
     def add_router_interface(self, context, router_id, interface_info):
+        """Add a router port to a subnet or bind it to an existing port.
+
+        There are two ways to add a router interface. The interface_info
+        can provide a subnet using the 'subnet_id' key or a port using the
+        'port_id' key.
+        """
+        LOG.info("router_service: interface_info: %s", interface_info)
         session = db_api.get_session()
         with session.begin(subtransactions=True):
             new_router = super(VppL3RouterPlugin, self).add_router_interface(
                 context, router_id, interface_info)
-            router_dict = {}
+            LOG.info("Add router interface: New router is: %s",
+                     new_router)
+            # (najoy) We should use the router port's mac-address instead of
+            # a random mac-address
             # Get a random mac address for loopback
-            mac = utils.get_random_mac(cfg.CONF.base_mac.split(':'))
-            router_dict['loopback_mac'] = mac
-            self._get_router_intf_details(context, router_id,
-                                          interface_info, router_dict)
+            # mac = utils.get_random_mac(cfg.CONF.base_mac.split(':'))
+            router_dict = {}
+            port_id = new_router['port_id']
+            port = self._core_plugin.get_port(context, port_id)
+            router_dict['port_id'] = port_id
+            router_dict['loopback_mac'] = port['mac_address']
+            router_dict = self._get_router_interface(context, router_id,
+                                                     router_dict
+                                                     )
+            router = self._get_vpp_router(context, router_id)
+            port_data = {'tenant_id': router.tenant_id,
+                         'network_id': router_dict['network_id'],
+                         'fixed_ips': router_dict['fixed_ips'],
+                         'device_id': router.id,
+                         'device_owner': 'vpp-router'
+                         }
+
+            self._core_plugin.update_port(context, port_id,
+                                          {'port': port_data})
+            # router_dict['loopback_mac'] = mac
+
             self._write_interface_journal(context, router_id, router_dict)
 
         return new_router
@@ -287,10 +414,12 @@ class VppL3RouterPlugin(
             new_router = super(
                 VppL3RouterPlugin, self).remove_router_interface(
                 context, router_id, interface_info)
-            router_dict = {}
-            router_dict['delete'] = True
-            self._get_router_intf_details(context, router_id,
-                                          interface_info, router_dict)
-            self._write_interface_journal(context, router_id, router_dict)
+            LOG.info("Remove router interface: New router is: %s",
+                     new_router)
+            port_id = new_router['port_id']
+            self._core_plugin.delete_port(context,
+                                          port_id,
+                                          l3_port_check=False)
+            self._remove_interface_journal(context, router_id, port_id)
 
         return new_router
