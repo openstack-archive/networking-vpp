@@ -24,6 +24,7 @@
 
 # eventlet must be monkey patched early or we confuse urllib3.
 import eventlet
+# from pyang.syntax import segment
 
 # We actually need to co-operate with a threaded callback in VPP, so
 # don't monkey patch the thread operations.
@@ -303,6 +304,7 @@ class VPPForwarder(object):
 
         self.networks = {}      # (physnet, type, ID): datastruct
         self.interfaces = {}    # uuid: if idx
+        self.router_interfaces = {}  # router_port_uuid: {}
         # mac_ip acls do not support atomic replacement.
         # Here we create a mapping of sw_if_index to VPP ACL indices
         # so we can easily lookup the ACLs associated with the interface idx
@@ -1624,14 +1626,21 @@ class VPPForwarder(object):
         if router['external_net_type'] == p_const.TYPE_VLAN and if_idx:
             self.vpp.delete_vlan_subif(if_idx)
 
-    def create_router_interface_on_host(self, router):
-        """Create a router on the local host.
+    def ensure_router_interface_on_host(self, port_id, router_data):
+        # Create a new router interface, if we don't know about it
+        # TODO(najoy): handle updates to router interface data
+        if port_id not in self.router_interfaces:
+            self.create_router_interface_on_host(port_id, router_data)
+
+    def create_router_interface_on_host(self, port_id, router_data):
+        """Create a router interface on the local host.
 
         Creates a loopback interface and sets the bridge's BVI to the
         loopback interface to act as an L3 gateway for the bridge network.
         """
+        seg_id = router_data['segmentation_id']
         net_data = self.ensure_network_on_host(
-            router['physnet'], router['net_type'], router['segmentation_id'])
+            router_data['physnet'], router_data['net_type'], seg_id)
         net_br_idx = net_data['bridge_domain_id']
         # Get a list of all SNAT interfaces
         int_list = self.vpp.get_snat_interfaces()
@@ -1641,21 +1650,22 @@ class VPPForwarder(object):
             # Grab the BVI interface index
             loopback_idx = br_bvi
         else:
-            loopback_idx = self.vpp.create_loopback(router['loopback_mac'])
+            loopback_idx = self.vpp.create_loopback(
+                router_data['loopback_mac'])
             self.vpp.set_loopback_bridge_bvi(loopback_idx, net_br_idx)
-            self.vpp.set_interface_vrf(loopback_idx, router['vrf_id'],
-                                       router['is_ipv6'])
+            self.vpp.set_interface_vrf(loopback_idx, router_data['vrf_id'],
+                                       router_data['is_ipv6'])
             # MTU setting could be turned off in the config, make a best
             # effort to set it in that case
             try:
-                self.vpp.set_interface_mtu(loopback_idx, router['mtu'])
+                self.vpp.set_interface_mtu(loopback_idx, router_data['mtu'])
             except SystemExit:
                 # Log error and continue, do not exit here
                 LOG.error("Error setting MTU on router interface")
 
             # Set this BVI as an inside SNAT interface
-            # Only if it's not already set
-            if loopback_idx not in int_list:
+            # Only if it's not already set and not IPv6
+            if loopback_idx not in int_list and not router_data['is_ipv6']:
                 self.vpp.set_snat_on_interface(loopback_idx)
 
         # Check if the BVI interface has the IP address for this
@@ -1663,39 +1673,67 @@ class VPPForwarder(object):
         addresses = self.vpp.get_interface_ip_addresses(loopback_idx)
         found = False
         for address in addresses:
-            if address[0] == str(router['gateway_ip']):
+            if address[0] == str(router_data['gateway_ip']):
                 found = True
                 break
 
         if not found:
             # Add this IP address to this BVI interface
-            self.vpp.set_interface_ip(loopback_idx,
-                                      self._pack_address(router['gateway_ip']),
-                                      router['prefixlen'], router['is_ipv6'])
-        return loopback_idx
+            self.vpp.set_interface_ip(
+                loopback_idx, self._pack_address(router_data['gateway_ip']),
+                router_data['prefixlen'], router_data['is_ipv6'])
+        # For vxlan GPE networks create a local LISP mapping
+        if router_data['net_type'] == 'vxlan':
+            LOG.debug('Adding vxlan GPE local mappings for router intf:%s',
+                      port_id)
+            self.add_local_gpe_mapping(seg_id, router_data['loopback_mac'])
 
-    def delete_router_interface_on_host(self, router):
-        """Deletes a router from the host.
+        self.router_interfaces[port_id] = {
+            'segmentation_id': seg_id,
+            'physnet': router_data['physnet'],
+            'net_type': router_data['net_type'],
+            'bridge_domain_id': net_br_idx,
+            'bvi_if_idx': loopback_idx,
+            'gateway_ip': router_data['gateway_ip'],
+            'prefixlen': router_data['prefixlen'],
+            'is_ipv6': router_data['is_ipv6'],
+            'mac_address': router_data['loopback_mac']
+            }
+        LOG.debug('Created router interface on host: %s',
+                  self.router_interfaces[port_id])
+        return self.router_interfaces[port_id]
+
+    def delete_router_interface_on_host(self, port_id):
+        """Deletes a router interface from the host.
 
         Deletes a loopback interface from the host, this removes the BVI
         interface from the local bridge.
         """
-        net_data = self.ensure_network_on_host(
-            router['physnet'], router['net_type'], router['segmentation_id'])
-        net_br_idx = net_data['bridge_domain_id']
-        bvi_if_idx = self.vpp.get_bridge_bvi(net_br_idx)
-        # Get bvi interface from bridge details
-        if bvi_if_idx:
-            # Get all IP's assigned to the BVI interface
-            addresses = self.vpp.get_interface_ip_addresses(bvi_if_idx)
-            if len(addresses) > 1:
-                # Dont' delete the BVI, only remove one IP from it
-                self.vpp.del_interface_ip(
-                    bvi_if_idx, self._pack_address(router['gateway_ip']),
-                    router['prefixlen'], router['is_ipv6'])
-            else:
-                # Last subnet assigned, delete the interface
-                self.vpp.delete_loopback(bvi_if_idx)
+        if port_id not in self.router_interfaces:
+            LOG.error("Router port:%s deletion error...port not found",
+                      port_id)
+        else:
+            router = self.router_interfaces[port_id]
+            net_br_idx = router['bridge_domain_id']
+            bvi_if_idx = self.vpp.get_bridge_bvi(net_br_idx)
+            # Get bvi interface from bridge details
+            if bvi_if_idx:
+                # Get all IP's assigned to the BVI interface
+                addresses = self.vpp.get_interface_ip_addresses(bvi_if_idx)
+                if len(addresses) > 1:
+                    # Dont' delete the BVI, only remove one IP from it
+                    self.vpp.del_interface_ip(
+                        bvi_if_idx, self._pack_address(router['gateway_ip']),
+                        router['prefixlen'], router['is_ipv6'])
+                else:
+                    # Last subnet assigned, delete the interface
+                    self.vpp.delete_loopback(bvi_if_idx)
+            if router['net_type'] == 'vxlan':
+                LOG.debug('Removing local vxlan GPE mappings for router '
+                          'interface: %s', port_id)
+                self.delete_local_gpe_mapping(router['segmentation_id'],
+                                              router['mac_address'])
+            self.router_interfaces.pop(port_id)
 
     def associate_floatingip(self, floatingip_dict):
         """Add the VPP configuration to support One-to-One SNAT."""
@@ -2043,8 +2081,8 @@ class VPPForwarder(object):
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
-ROUTER_DIR = 'routers/router/'
-ROUTER_INTF_DIR = 'routers/interface/'
+ROUTERS_DIR = 'routers/'
+# ROUTER_INTF_DIR = 'routers/interface/'
 ROUTER_FIP_DIR = 'routers/floatingip/'
 
 
@@ -2454,17 +2492,45 @@ class EtcdListener(object):
         """Fetch and add all remote mappings from etcd for the vni"""
         key_space = self.gpe_key_space + "/%s" % vni
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
-        rv = self.client_factory.client().read(key_space, recursive=True)
-        for child in rv.children:
-            m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
-                         child.key)
-            if m:
-                hostname = m.group(1)
-                mac = m.group(2)
-                ip = m.group(3)
-                if self.is_valid_remote_map(vni, hostname):
-                    self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
-                                                        child.value)
+        try:
+            rv = self.client_factory.client().read(key_space, recursive=True)
+            for child in rv.children:
+                m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
+                             child.key)
+                if m:
+                    hostname = m.group(1)
+                    mac = m.group(2)
+                    ip = m.group(3)
+                    if self.is_valid_remote_map(vni, hostname):
+                        self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
+                                                            child.value)
+        except etcd.EtcdKeyNotFound:
+            # If the agent was unsuccessful in writing the GPE key to etcd
+            # the requested key may not be found. Pass it
+            pass
+
+    def add_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
+        """Create a remote GPE overlay to underlay mapping
+
+        Overlay = mac_address + ip_address of the VM's port
+        Underlay = IP address of the VPP's underlay interface
+        """
+        underlay_ip = self.vppf.gpe_underlay_addr
+        gpe_key = self.gpe_key_space + '/%s/%s/%s/%s' % (
+            segmentation_id, self.host, mac_address, ip
+            )
+        LOG.debug('Writing GPE key to etcd %s with underlay IP address:%s',
+                  gpe_key, underlay_ip)
+        self.client_factory.client().write(gpe_key, underlay_ip)
+
+    def delete_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
+        """Delete a remote GPE overlay to underlay mapping."""
+        gpe_dir = self.gpe_key_space + '/%s/%s/%s' % (segmentation_id,
+                                                      self.host,
+                                                      mac_address)
+        self.client_factory.client().delete(gpe_dir + '/' + ip)
+        etcdutils.EtcdHelper(self.client_factory.client()).remove_dir(
+            gpe_dir)
 
     def ensure_gpe_remote_mappings(self, segmentation_id):
         """Ensure all the remote GPE mappings are present in VPP
@@ -2538,7 +2604,11 @@ class EtcdListener(object):
         self.pool.spawn(self.binder.run)
 
         # Check if the vpp router service plugin is enabled
-        if 'vpp-router' in cfg.CONF.service_plugins:
+        enable_router_watcher = False
+        for service_plugin in cfg.CONF.service_plugins:
+            if 'vpp' in service_plugin:
+                enable_router_watcher = True
+        if enable_router_watcher:
             LOG.debug("Spawning router_watcher")
             self.pool.spawn(RouterWatcher(self.client_factory.client(),
                                           'router_watcher',
@@ -2706,59 +2776,107 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
     def do_tick(self):
         pass
 
-    def _del_key(self, key):
-        try:
-            self.etcd_client.delete(key)
-        except etcd.EtcdKeyNotFound:
-            # Gone is fine; if we didn't delete it
-            # it's no problem
-            pass
+#     def _del_key(self, key):
+#         try:
+#             self.etcd_client.delete(key)
+#         except etcd.EtcdKeyNotFound:
+#             # Gone is fine; if we didn't delete it
+#             # it's no problem
+#             pass
 
-    def key_change(self, action, key, value):
-        LOG.debug("router_watcher: doing work for %s %s %s" %
-                  (action, key, value))
-        m = re.match(self.data.router_key_space + '/([^/]+)/([^/]+)?$',
-                     key)
-        if m and m.group(1) == 'interface':
-            if action != 'delete':
-                router_id = m.group(2)
-                router = jsonutils.loads(value)
-                if router.get('delete', False):
-                    self.data.vppf.delete_router_interface_on_host(
-                        router)
-                    self._del_key(self.data.router_key_space +
-                                  '/interface/%s' % router_id)
-                else:
-                    self.data.vppf.create_router_interface_on_host(
-                        router)
-        elif m and m.group(1) == 'floatingip':
-            if action != 'delete':
-                floatingip_dict = jsonutils.loads(value)
-                if floatingip_dict['event'] == 'associate':
-                    self.data.vppf.associate_floatingip(
-                        floatingip_dict)
-                else:
-                    self.data.vppf.disassociate_floatingip(
-                        floatingip_dict)
-                    self._del_key(self.data.router_key_space +
-                                  '/floatingip/%s' % m.group(2))
-        elif m and m.group(1) == 'router':
-            if action != 'delete':
-                router_id = m.group(2)
-                router = jsonutils.loads(value)
-                if router.get('delete', False):
-                    # Delete an external gateway
-                    (self.data.vppf.
-                     delete_router_external_gateway_on_host(router))
-                    self._del_key(self.data.router_key_space +
-                                  '/router/%s' % router_id)
-                else:
-                    # Add the external gateway
-                    (self.data.vppf.
-                     create_router_external_gateway_on_host(router))
-        else:
-            LOG.warning('Unexpected key change in etcd router feedback,'
-                        ' key %s', key)
+    def parse_key(self, router_key):
+        m = re.match('([^/]+)' + '/([^/]+)', router_key)
+        floating_ip, router_id, port_id = None, None, None
+        if m and m.group(1) == 'floatingip':
+            floating_ip = m.group(2)
+            return ('floatingip', floating_ip)
+        elif m:
+            router_id = m.group(1)
+            port_id = m.group(2)
+            return (router_id, port_id)
+
+    def added(self, router_key, value):
+        LOG.debug("router_watcher: added key:%s value:%s",
+                  (router_key, value))
+        token1, token2 = self.parse_key(router_key)
+        if token1 and token2:
+            if token1 != 'floatingip':
+                port_id = token2
+                router_data = jsonutils.loads(value)
+                self.data.vppf.ensure_router_interface_on_host(
+                    port_id, router_data)
+                if router_data['net_type'] == 'vxlan':
+                    self.data.add_gpe_remote_mapping(
+                        router_data['segmentation_id'],
+                        router_data['loopback_mac'],
+                        router_data['gateway_ip'])
+            else:
+                pass
+                # floating_ip = token2
+                # floatingip_dict = jsonutils.loads(value)
+                # self.data.vppf.associate_floatingip(floating_ip,
+                #                                    floatingip_dict)
+
+    def removed(self, router_key):
+        LOG.debug("router_watcher: removed key:%s", router_key)
+        token1, token2 = self.parse_key(router_key)
+        if token1 and token2:
+            if token1 != 'floatingip':
+                port_id = token2
+                router_data = self.data.vppf.router_interfaces.get(port_id)
+                self.data.vppf.delete_router_interface_on_host(port_id)
+                if router_data and router_data['net_type'] == 'vxlan':
+                    self.data.delete_gpe_remote_mapping(
+                        router_data['segmentation_id'],
+                        router_data['mac_address'],
+                        router_data['gateway_ip'])
+            else:
+                pass
+                # floating_ip = token2
+                # self.data.vppf.disassociate_floatingip(floating_ip)
+
+#         m = re.match(self.data.router_key_space + '/([^/]+)/([^/]+)?$',
+#                      key)
+#         if m and m.group(1) == 'interface':
+#             if action != 'delete':
+#                 router_id = m.group(2)
+#                 router = jsonutils.loads(value)
+#                 if router.get('delete', False):
+#                     self.data.vppf.delete_router_interface_on_host(
+#                         router)
+#                     self._del_key(self.data.router_key_space +
+#                                   '/interface/%s' % router_id)
+#                 else:
+#                     self.data.vppf.create_router_interface_on_host(
+#                         router)
+#         elif m and m.group(1) == 'floatingip':
+#             if action != 'delete':
+#                 floatingip_dict = jsonutils.loads(value)
+#                 if floatingip_dict['event'] == 'associate':
+#                     self.data.vppf.associate_floatingip(
+#                         floatingip_dict)
+#                 else:
+#                     self.data.vppf.disassociate_floatingip(
+#                         floatingip_dict)
+#                     self._del_key(self.data.router_key_space +
+#                                   '/floatingip/%s' % m.group(2))
+#         elif m and m.group(1) == 'router':
+#             if action != 'delete':
+#                 router_id = m.group(2)
+#                 router = jsonutils.loads(value)
+#                 if router.get('delete', False):
+#                     # Delete an external gateway
+#                     (self.data.vppf.
+#                      delete_router_external_gateway_on_host(router))
+#                     self._del_key(self.data.router_key_space +
+#                                   '/router/%s' % router_id)
+#                 else:
+#                     # Add the external gateway
+#                     (self.data.vppf.
+#                      create_router_external_gateway_on_host(router))
+#         else:
+#             LOG.warning('Unexpected key change in etcd router feedback,'
+#                         ' key %s', key)
 
 
 class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
