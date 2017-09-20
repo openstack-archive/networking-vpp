@@ -639,6 +639,131 @@ class VPPInterface(object):
 
         return None
 
+    def add_ip_route(self, vrf, ip_address, prefixlen, next_hop_address,
+                     next_hop_sw_if_index, is_ipv6=False):
+        """Adds an IP route in the VRF.
+
+        Checks to see if a matching route is already present in the VRF.
+        If not, the route is added.
+        The params, ip_address and next_hop_address are integer
+        representations of the IPv4 or IPv6 address.
+        """
+        if not self.route_in_vrf(vrf, ip_address, prefixlen,
+                                 next_hop_address, is_ipv6):
+            ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
+                                                          is_ipv6)))
+            if next_hop_address is not None:
+                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                    next_hop_address, is_ipv6)))
+                self.LOG.debug('Adding route %s/%s to %s in router vrf:%s',
+                               ip, prefixlen, next_hop, vrf)
+                self.call_vpp('ip_add_del_route', is_add=1, table_id=vrf,
+                              dst_address=ip_address,
+                              dst_address_length=prefixlen,
+                              next_hop_address=next_hop_address,
+                              next_hop_sw_if_index=next_hop_sw_if_index,
+                              is_ipv6=is_ipv6,
+                              # The next_hop_via_label param is required due
+                              # to a bug in the 17.07 VPP release. VPP looks
+                              # for an MPLS label in the route and crashes if
+                              # it cannot find one. The label value:0xfffff+1
+                              # is an invalid MPLS label.
+                              next_hop_via_label=0xfffff + 1)
+            else:
+                self.LOG.debug('Exporting route %s/%s from vrf:%s to '
+                               'next_hop_swif_idx: %s',
+                               ip, prefixlen, vrf, next_hop_sw_if_index)
+                self.call_vpp('ip_add_del_route', is_add=1, table_id=vrf,
+                              dst_address=ip_address,
+                              dst_address_length=prefixlen,
+                              next_hop_sw_if_index=next_hop_sw_if_index,
+                              is_ipv6=is_ipv6,
+                              next_hop_via_label=0xfffff + 1)
+
+    def delete_ip_route(self, vrf, ip_address, prefixlen, next_hop_address,
+                        next_hop_sw_if_index, is_ipv6=False):
+        """Deleted an IP route in the VRF.
+
+        Checks to see if a matching route is present in the VRF.
+        If present, the route is deleted.
+        The params, ip_address and next_hop_address are integer
+        representations of the IPv4 or IPv6 address.
+        """
+        if self.route_in_vrf(vrf, ip_address, prefixlen,
+                             next_hop_address, is_ipv6):
+            ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
+                                                          is_ipv6)))
+            if next_hop_address is not None:
+                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                    next_hop_address, is_ipv6)))
+                self.LOG.debug('Deleting route %s/%s to %s in router vrf:%s',
+                               ip, prefixlen, next_hop, vrf)
+                self.call_vpp('ip_add_del_route', is_add=0, table_id=vrf,
+                              dst_address=ip_address,
+                              dst_address_length=prefixlen,
+                              next_hop_address=next_hop_address,
+                              next_hop_sw_if_index=next_hop_sw_if_index,
+                              is_ipv6=is_ipv6,
+                              next_hop_via_label=0xfffff + 1)
+            else:
+                self.LOG.debug('Deleting exported net:%s/%s in router '
+                               'vrf:%s to next_hop_swif_idx: %s',
+                               ip, prefixlen, vrf, next_hop_sw_if_index)
+                self.call_vpp('ip_add_del_route', is_add=0, table_id=vrf,
+                              dst_address=ip_address,
+                              dst_address_length=prefixlen,
+                              next_hop_sw_if_index=next_hop_sw_if_index,
+                              is_ipv6=is_ipv6,
+                              next_hop_via_label=0xfffff + 1)
+
+    def route_in_vrf(self, vrf, ip_address, prefixlen,
+                     next_hop_address, is_ipv6=False):
+        """Returns True, if the route if present in the VRF.
+
+        Pulls the VPP FIB to see if the route is present in the VRF.
+        The route is identified by the tuple,
+        (ip_address, prefixlen, next_hop_address)
+        If the route is present, returns True or else returns False.
+        The params: ip_address and next_hop_address are integer
+        representations of the IPv4 or Ipv6 address.
+        """
+        if not is_ipv6:
+            routes = self.call_vpp('ip_fib_dump')
+        else:
+            routes = self.call_vpp('ip6_fib_dump')
+        # Iterate though the routes and check for a matching route tuple
+        # in the VRF table by checking the ip_address, prefixlen and
+        # Convert the ip & next_hop addresses to an ipaddress format for
+        # comparison
+        ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
+                                                      is_ipv6)))
+        if next_hop_address is not None:
+            next_hop = ipaddress.ip_address(unicode(
+                bytes_to_ip(next_hop_address, is_ipv6)))
+            for route in routes:
+                if (route.table_id == vrf and
+                    route.address_length == prefixlen and
+                    # check if route.address == ip
+                    ipaddress.ip_address(
+                        unicode(bytes_to_ip(route.address,
+                                            is_ipv6))) == ip and
+                    # check if the next_hop is present the list
+                    # of next hops in the route's path
+                    next_hop in [ipaddress.ip_address(
+                        unicode(bytes_to_ip(p.next_hop,
+                                            is_ipv6))) for p in route.path]):
+                    self.LOG.debug('Route: %s/%s to %s exists in VRF:%s',
+                                   ip, prefixlen, next_hop, vrf)
+                    return True
+                # Note: The else clause in 'for' loop is executed when the
+                # loop terminates without finding a matching route
+            else:
+                self.LOG.debug('Route: %s/%s to %s does not exist in VRF:%s',
+                               ip, prefixlen, next_hop, vrf)
+                return False
+        else:  # next hop is none
+            return False
+
     def get_interface_ip_addresses(self, sw_if_idx):
         """Returns a list of all IP addresses assigned to an interface.
 
