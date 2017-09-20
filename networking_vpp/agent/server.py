@@ -2043,7 +2043,7 @@ class VPPForwarder(object):
 ######################################################################
 
 LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
-ROUTER_DIR = 'routers/router/'
+ROUTERS_DIR = 'routers/'
 ROUTER_INTF_DIR = 'routers/interface/'
 ROUTER_FIP_DIR = 'routers/floatingip/'
 
