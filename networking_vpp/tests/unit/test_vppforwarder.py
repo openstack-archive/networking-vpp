@@ -279,19 +279,63 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'external_segment': 100, 'vrf_id': 5,
                 'gateways': [('50.0.0.3', 24)]}
 
+    def _get_mock_external_router(self):
+        # Return a mock router with a gateway
+        return {"status": "ACTIVE",
+                'external_physnet': 'physnet1',
+                'external_net_type': 'vlan',
+                "external_segmentation_id": 100,
+                'vrf_id': 5,
+                "external_gateway_ip": "192.168.200.200",
+                "gw_port_id": "dc717009-489d-4f53-9e40-d346e1962d8d",
+                'gateways': [('50.0.0.3', 24, False)],
+                "loopback_mac": "fa:16:3e:26:3e:7b",
+                "mtu": 1500,
+                "external_gateway_info":
+                    {"network_id": "ecf2ff04-eb05-404a-a832-c2b8a8d33091",
+                     "enable_snat": True,
+                     "external_fixed_ips": [
+                         {"subnet_id": "f4c1e37f-e5fe-474c-b2b6-ea0349b848e8",
+                          "ip_address": "192.168.200.7"}]},
+                }
+
     def _get_mock_router_interface(self):
-        # Return a mock IPv4 router interface.
+        # Return a mock IPv4 internal router interface.
         return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
-                'segmentation_id': 100, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'segmentation_id': 100, 'mac_address': 'aa:bb:cc:dd:ee:ff',
                 'gateway_ip': '10.0.0.1', 'is_ipv6': False, 'prefixlen': 24,
-                'mtu': 1500}
+                'mtu': 1500, 'bridge_domain_id': 5, 'is_inside': True,
+                'external_gateway_ip': None, 'uplink_idx': 5,
+                'bvi_if_idx': 5, 'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
+
+    def _get_mock_router_external_interface(self):
+        # Return a mock IPv4 External gateway router interface.
+        return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
+                'segmentation_id': 100, 'mac_address': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '10.0.0.1', 'is_ipv6': False, 'prefixlen': 24,
+                'mtu': 1500, 'bridge_domain_id': 5, 'is_inside': False,
+                'external_gateway_ip': '10.1.1.200', 'uplink_idx': 5,
+                'bvi_if_idx': 5, 'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
 
     def _get_mock_v6_router_interface(self):
-        # Returns a mock IPv6 router interface.
+        # Returns a mock IPv6 internal router interface.
         return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
-                'segmentation_id': 100, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
-                'gateway_ip': '2001:db8:1234::1', 'is_ipv6': False,
-                'prefixlen': 64, 'mtu': 1500}
+                'segmentation_id': 100, 'mac_address': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '2001:db8:1234::1', 'is_ipv6': True,
+                'prefixlen': 64, 'mtu': 1500, 'bridge_domain_id': 5,
+                'is_inside': True, 'external_gateway_ip': None,
+                'uplink_idx': 5, 'bvi_if_idx': 5,
+                'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
+
+    def _get_mock_v6_router_external_interface(self):
+        # Returns a mock IPv6 External Router interface.
+        return {'physnet': 'physnet1', 'net_type': 'vlan', 'vrf_id': 5,
+                'segmentation_id': 100, 'mac_address': 'aa:bb:cc:dd:ee:ff',
+                'gateway_ip': '2001:db8:1234::1', 'is_ipv6': True,
+                'prefixlen': 64, 'mtu': 1500, 'bridge_domain_id': 5,
+                'is_inside': False, 'external_gateway_ip': '2001:db8:1234::f',
+                'uplink_idx': 5, 'bvi_if_idx': 5,
+                'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
 
     def _get_mock_floatingip(self):
         return {'internal_segmentation_id': INTERNAL_SEGMENATION_ID,
@@ -305,15 +349,17 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def _test_create_router_interface_on_host(self, m_network_on_host, router):
+    def _test_create_router_interface_on_host(self, m_network_on_host,
+                                              port, router):
         # Test adding an interface to the router to create it in VPP.
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
 
         with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
                                return_value=False):
-            loopback_idx = self.vpp.create_router_interface_on_host(router)
+            loopback_idx = self.vpp.ensure_router_interface_on_host(
+                port, router)
             self.vpp.vpp.create_loopback.assert_called_once_with(
-                router['loopback_mac'])
+                router['mac_address'])
             self.vpp.vpp.set_loopback_bridge_bvi.assert_called_once_with(
                 loopback_idx, 'fake_dom_id')
             self.vpp.vpp.set_interface_vrf.assert_called_once_with(
@@ -325,7 +371,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
     def _test_create_router_interface_with_existing_bvi_and_ip(
-        self, m_network_on_host, router):
+        self, m_network_on_host, port, router):
         # Test repeat adding the same router interface.
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
 
@@ -334,7 +380,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             with mock.patch.object(
                 self.vpp.vpp, 'get_interface_ip_addresses',
                 return_value=[(router['gateway_ip'], router['prefixlen'])]):
-                self.vpp.create_router_interface_on_host(router)
+                self.vpp.ensure_router_interface_on_host(port, router)
 
                 self.vpp.vpp.create_loopback.assert_not_called()
                 self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
@@ -344,7 +390,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
     def _test_create_router_interface_with_existing_bvi_different_ip(
-        self, m_network_on_host, router, other_router):
+        self, m_network_on_host, port, router, other_router):
         # Test adding a different router interface.
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
 
@@ -353,7 +399,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             with mock.patch.object(
                 self.vpp.vpp, 'get_interface_ip_addresses',
                 return_value=[]):
-                self.vpp.create_router_interface_on_host(router)
+                self.vpp.ensure_router_interface_on_host(port, router)
 
                 self.vpp.vpp.create_loopback.assert_not_called()
                 self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
@@ -364,251 +410,296 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def _test_delete_router_interface_on_host(self, m_network_on_host, router):
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.' +
+        'export_routes_from_tenant_vrfs')
+    def _test_delete_router_interface_on_host(self, m_export_routes,
+                                              m_network_on_host, port,
+                                              is_ipv6):
         # Test deleting a router interface to delete the router in VPP.
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
-
-        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
-                               return_value=5):
-            with mock.patch.object(
-                self.vpp.vpp, 'get_interface_ip_addresses',
-                return_value=[(router['gateway_ip'], router['prefixlen'])]):
-                self.vpp.delete_router_interface_on_host(router)
-                self.vpp.vpp.delete_loopback.called_once_with(5)
+        if not is_ipv6:
+            router_port = self._get_mock_router_interface()
+        else:
+            router_port = self._get_mock_v6_router_interface()
+        self.vpp.router_interfaces[port] = router_port
+        gateway_ip = router_port['gateway_ip']
+        prefixlen = router_port['prefixlen']
+        self.vpp.vpp.get_snat_interfaces.return_value = [5]
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_interface_ip_addresses.return_value = [(gateway_ip,
+                                                                prefixlen)]
+        self.vpp.delete_router_interface_on_host(port)
+        self.vpp.vpp.set_snat_on_interface.assert_called_once_with(
+            5, is_add=False, is_inside=True)
+        m_export_routes.assert_called_once_with(source_vrf=5, is_add=False)
+        self.vpp.vpp.get_bridge_bvi.assert_called_once_with(5)
+        self.vpp.vpp.delete_loopback.assert_called_once_with(5)
+        self.assertEqual(
+            self.vpp.router_interfaces.get(port), None
+            )
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
     def _test_delete_router_interface_with_multiple_interfaces(
-        self, m_network_on_host, router, other_router):
+        self, m_network_on_host, port, is_ipv6):
         # Test deleting a router interface with interfaces from other subnets
         # also present on the router.
         m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+        if not is_ipv6:
+            router_port = self._get_mock_router_interface()
+        else:
+            router_port = self._get_mock_v6_router_interface()
+        self.vpp.router_interfaces[port] = router_port
+        gateway_ip = router_port['gateway_ip']
+        prefixlen = router_port['prefixlen']
+        second_gateway_ip = '2.2.2.2' if not is_ipv6 else 'ff0e::1001'
+        second_gateway_prefixlen = 24
+        self.vpp.vpp.get_snat_interfaces.return_value = [5]
+        self.vpp.vpp.get_bridge_bvi.return_value = 5
+        self.vpp.vpp.get_interface_ip_addresses.return_value = [
+            (gateway_ip, prefixlen), (second_gateway_ip,
+                                      second_gateway_prefixlen)]
 
-        return_ip_list = [(router['gateway_ip'], router['prefixlen']),
-                          (other_router['gateway_ip'],
-                           other_router['prefixlen'])]
+        self.vpp.delete_router_interface_on_host(port)
+        self.vpp.vpp.delete_loopback.assert_not_called()
+        self.vpp.vpp.del_interface_ip.assert_called_once_with(
+            5, self.vpp._pack_address(gateway_ip),
+            prefixlen, router_port['is_ipv6'])
+
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_router_external_gateway_on_host(self, m_network_on_host):
+        router = self._get_mock_external_router()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
         with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
                                return_value=5):
-            with mock.patch.object(
-                self.vpp.vpp, 'get_interface_ip_addresses',
-                return_value=return_ip_list):
-                self.vpp.delete_router_interface_on_host(router)
-                self.vpp.vpp.delete_loopback.assert_not_called()
-                self.vpp.vpp.del_interface_ip.assert_called_once_with(
-                    5, self.vpp._pack_address(router['gateway_ip']),
-                    router['prefixlen'], router['is_ipv6'])
-
-    def test_create_router_external_gateway_on_host(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
             with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
                                    return_value=[]):
-                self.vpp.create_router_external_gateway_on_host(router)
-                self.vpp.vpp.add_del_snat_address.assert_called_once_with(
-                    self.vpp._pack_address(router['gateways'][0][0]),
-                    router['vrf_id'])
+                self.vpp.ensure_router_interface_on_host(
+                    uuidgen.uuid1(), router)
+                self.vpp.vpp.snat_overload_on_interface_address.\
+                    assert_called_once_with(5)
                 self.vpp.vpp.set_snat_on_interface.assert_called_once_with(
-                    5, is_inside=0)
+                    5, 0)
                 self.vpp.vpp.set_interface_ip.assert_called_once_with(
                     5, self.vpp._pack_address(router['gateways'][0][0]),
-                    router['gateways'][0][1])
+                    router['gateways'][0][1], router['gateways'][0][2])
 
-    def test_create_router_external_gateway_with_snat_interface_set(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_router_external_gateway_with_snat_interface_set(
+            self, m_network_on_host):
+        router = self._get_mock_external_router()
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
             with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
                                    return_value=[5]):
-                self.vpp.create_router_external_gateway_on_host(router)
-                self.vpp.vpp.add_del_snat_address.assert_called_once_with(
-                    self.vpp._pack_address(router['gateways'][0][0]),
-                    router['vrf_id'])
+                self.vpp.ensure_router_interface_on_host(
+                    uuidgen.uuid1(), router)
                 self.vpp.vpp.set_snat_on_interface.assert_not_called()
                 self.vpp.vpp.set_interface_ip.assert_called_once_with(
                     5, self.vpp._pack_address(router['gateways'][0][0]),
-                    router['gateways'][0][1])
+                    router['gateways'][0][1], router['gateways'][0][2])
 
-    def test_create_router_external_gateway_with_snat_int_and_ip_set(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_router_external_gateway_with_snat_int_and_ip_set(
+            self, m_network_on_host):
+        router = self._get_mock_external_router()
+        interface_ip = router['gateways'][0][0]
+        prefixlen = router['gateways'][0][1]
+        is_ipv6 = router['gateways'][0][2]
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
             with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
                                    return_value=[5]):
                 with mock.patch.object(
-                    self.vpp.vpp, 'get_snat_addresses',
-                    return_value=[router['gateways'][0][0]]):
-                    self.vpp.create_router_external_gateway_on_host(router)
-                    self.vpp.vpp.add_del_snat_address.assert_not_called()
+                    self.vpp.vpp, 'get_interface_ip_addresses',
+                    return_value=[]):
+                    self.vpp.ensure_router_interface_on_host(
+                        uuidgen.uuid1(), router)
                     self.vpp.vpp.set_snat_on_interface.assert_not_called()
                     self.vpp.vpp.set_interface_ip.assert_called_once_with(
-                        5, self.vpp._pack_address(router['gateways'][0][0]),
-                        router['gateways'][0][1])
+                        5, self.vpp._pack_address(interface_ip),
+                        prefixlen, is_ipv6)
 
-    def test_create_router_external_gateway_snat_int_ip_and_ext_gw_set(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
+    @mock.patch(
+        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
+    def test_create_router_external_gateway_snat_int_ip_and_ext_gw_set(
+            self, m_network_on_host):
+        router = self._get_mock_external_router()
+        interface_ip = router['gateways'][0][0]
+        prefixlen = router['gateways'][0][1]
+        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id'}
+        with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
+                               return_value=5):
             with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
                                    return_value=[5]):
-                with mock.patch.object(
-                    self.vpp.vpp, 'get_snat_addresses',
-                    return_value=[router['gateways'][0][0]]):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
-                        return_value=[(router['gateways'][0][0],
-                                       router['gateways'][0][1])]):
-                        self.vpp.create_router_external_gateway_on_host(router)
-                        self.vpp.vpp.add_del_snat_address.assert_not_called()
+                        return_value=[(interface_ip, prefixlen)]):
+                        self.vpp.ensure_router_interface_on_host(
+                            uuidgen.uuid1(), router)
                         self.vpp.vpp.set_snat_on_interface.assert_not_called()
                         self.vpp.vpp.set_interface_ip.assert_not_called()
 
     def test_delete_router_external_gateway_on_host(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
-            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
-                                   return_value=[5]):
-                with mock.patch.object(
-                    self.vpp.vpp, 'get_snat_addresses',
-                    return_value=[router['gateways'][0][0]]):
-                    with mock.patch.object(
-                        self.vpp.vpp, 'get_interface_ip_addresses',
-                        return_value=[(router['gateways'][0][0],
-                                       router['gateways'][0][1])]):
-                        self.vpp.delete_router_external_gateway_on_host(router)
-                        (self.vpp.vpp.add_del_snat_address.
-                            assert_called_once_with(
-                                self.vpp._pack_address(
-                                    router['gateways'][0][0]),
-                                router['vrf_id'], is_add=False))
-                        self.vpp.vpp.del_interface_ip.assert_called_once_with(
-                            5,
-                            self.vpp._pack_address(router['gateways'][0][0]),
-                            router['gateways'][0][1])
+        router_port = self._get_mock_router_external_interface()
+        port_id = uuidgen.uuid1()
+        self.vpp.router_external_interfaces[port_id] = router_port
+        with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                               return_value=[router_port['bvi_if_idx']]):
+            with mock.patch.object(self.vpp.vpp,
+                                   'get_outside_snat_interface_indices',
+                                   return_value=[router_port['bvi_if_idx']]):
+                with mock.patch.object(self.vpp.vpp,
+                                       'get_interface_ip_addresses',
+                                       return_value=[
+                                           (router_port['gateway_ip'],
+                                            router_port['prefixlen'])]):
+                    with mock.patch.object(self.vpp.vpp,
+                                           'get_bridge_bvi',
+                                           return_value=router_port[
+                                               'bvi_if_idx']):
+                        self.vpp.delete_router_interface_on_host(port_id)
+                        self.vpp.vpp.set_snat_on_interface.\
+                            assert_called_once_with(router_port['bvi_if_idx'],
+                                                    is_inside=False,
+                                                    is_add=False)
+                        self.vpp.vpp.snat_overload_on_interface_address.\
+                            assert_called_once_with(router_port['bvi_if_idx'],
+                                                    is_add=False)
+                        self.vpp.vpp.delete_loopback.assert_called_once_with(
+                            router_port['bvi_if_idx'])
 
     def test_delete_router_external_gateway_no_snat_addr(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
-            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
-                                   return_value=[5]):
+        router_port = self._get_mock_router_external_interface()
+        port_id = uuidgen.uuid1()
+        self.vpp.router_external_interfaces[port_id] = router_port
+        with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                               return_value=[]):
+            with mock.patch.object(self.vpp.vpp,
+                                   'get_outside_snat_interface_indices',
+                                   return_value=[]):
                 with mock.patch.object(
-                    self.vpp.vpp, 'get_snat_addresses',
-                    return_value=[]):
+                    self.vpp.vpp, 'get_bridge_bvi',
+                    return_value=router_port['bvi_if_idx']):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
-                        return_value=[(router['gateways'][0][0],
-                                       router['gateways'][0][1])]):
-                        self.vpp.delete_router_external_gateway_on_host(router)
-                        self.vpp.vpp.add_del_snat_address.assert_not_called()
-                        self.vpp.vpp.del_interface_ip.assert_called_once_with(
-                            5,
-                            self.vpp._pack_address(router['gateways'][0][0]),
-                            router['gateways'][0][1])
+                        return_value=[(router_port['gateway_ip'],
+                                       router_port['prefixlen'])]):
+                        self.vpp.delete_router_interface_on_host(port_id)
+                        self.vpp.vpp.set_snat_on_interface.\
+                            assert_not_called()
+                        self.vpp.vpp.snat_overload_on_interface_address.\
+                            assert_not_called()
+                        self.vpp.vpp.delete_loopback.assert_called_once_with(
+                            router_port['bvi_if_idx'])
 
     def test_delete_router_external_gateway_no_snat_addr_and_no_ext_gw(self):
-        router = self._get_mock_router()
-        with mock.patch.object(self.vpp, 'get_if_for_physnet',
-                               return_value=('test_iface', 5)):
-            with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
-                                   return_value=[5]):
-                with mock.patch.object(
-                    self.vpp.vpp, 'get_snat_addresses',
-                    return_value=[]):
+        router_port = self._get_mock_router_external_interface()
+        port_id = uuidgen.uuid1()
+        self.vpp.router_external_interfaces[port_id] = router_port
+        with mock.patch.object(self.vpp.vpp, 'get_snat_interfaces',
+                               return_value=[]):
+            with mock.patch.object(self.vpp.vpp,
+                                   'get_outside_snat_interface_indices',
+                                   return_value=[]):
+                with mock.patch.object(self.vpp.vpp,
+                                       'get_bridge_bvi', return_value=None):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
                         return_value=[]):
-                        self.vpp.delete_router_external_gateway_on_host(router)
-                        self.vpp.vpp.add_del_snat_address.assert_not_called()
-                        self.vpp.vpp.del_interface_ip.assert_not_called()
+                        self.vpp.delete_router_interface_on_host(port_id)
+                        self.vpp.vpp.set_snat_on_interface.\
+                            assert_not_called()
+                        self.vpp.vpp.snat_overload_on_interface_address.\
+                            assert_not_called()
+                        self.vpp.vpp.delete_loopback.assert_not_called()
 
     def test_v4_router_interface_create_on_host(self):
         self._test_create_router_interface_on_host(
+            port=uuidgen.uuid1(),
             router=self._get_mock_router_interface())
 
     def test_v6_router_interface_create_on_host(self):
         self._test_create_router_interface_on_host(
+            port=uuidgen.uuid1(),
             router=self._get_mock_v6_router_interface())
 
     def test_v4_router_interface_create_with_existing_bvi_and_ip(self):
         self._test_create_router_interface_with_existing_bvi_and_ip(
+            port=uuidgen.uuid1(),
             router=self._get_mock_router_interface())
 
     def test_v6_router_interface_create_with_existing_bvi_and_ip(self):
         self._test_create_router_interface_with_existing_bvi_and_ip(
+            port=uuidgen.uuid1(),
             router=self._get_mock_v6_router_interface())
 
     def test_v4_router_interface_create_with_existing_bvi_different_ip(self):
         self._test_create_router_interface_with_existing_bvi_different_ip(
+            port=uuidgen.uuid1(),
             router=self._get_mock_router_interface(),
             other_router=self._get_mock_v6_router_interface())
 
     def test_v6_router_interface_create_with_existing_bvi_different_ip(self):
         self._test_create_router_interface_with_existing_bvi_different_ip(
+            port=uuidgen.uuid1(),
             router=self._get_mock_v6_router_interface(),
             other_router=self._get_mock_router_interface())
 
     def test_v4_router_interface_delete(self):
         self._test_delete_router_interface_on_host(
-            router=self._get_mock_router_interface())
+            port=uuidgen.uuid1(), is_ipv6=False)
 
     def test_v6_router_interface_delete(self):
         self._test_delete_router_interface_on_host(
-            router=self._get_mock_v6_router_interface())
+            port=uuidgen.uuid1(), is_ipv6=True)
 
-    def test_v4_router_interface_delete_with_v6_address(self):
+    def test_v4_router_interface_delete_with_multiple_interfaces(self):
         self._test_delete_router_interface_with_multiple_interfaces(
-            router=self._get_mock_v6_router_interface(),
-            other_router=self._get_mock_router_interface())
+            port=uuidgen.uuid1(), is_ipv6=False)
 
-    def test_v6_router_interface_delete_with_v4_address(self):
+    def test_v6_router_interface_delete_with_multiple_interfaces(self):
         self._test_delete_router_interface_with_multiple_interfaces(
-            router=self._get_mock_v6_router_interface(),
-            other_router=self._get_mock_router_interface())
+            port=uuidgen.uuid1(), is_ipv6=True)
 
-    @mock.patch(
-        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def test_create_floatingip_on_vpp(self, m_network_on_host):
+    def test_create_floatingip_on_vpp(self):
         """Test create floatingip processing.
 
         Verify that the SNAT create APIs are called.
         """
         floatingip_dict = self._get_mock_floatingip()
-        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_uplink_idx': 'fake_up_idx'}
-        self.vpp.vpp.get_bridge_bvi.return_value = 5
-        mock.patch.object(self.vpp, '_get_external_vlan_subif',
-                          return_value=4).start()
-
-        self.vpp.associate_floatingip(floatingip_dict)
+        self.vpp.vpp.get_snat_interfaces.return_value = []
+        mock.patch.object(self.vpp, '_get_snat_indexes',
+                          return_value=(2, 3)).start()
+        self.vpp.associate_floatingip(floatingip_dict['floating_ip_address'],
+                                      floatingip_dict)
 
         self.assertEqual(self.vpp.vpp.set_snat_on_interface.call_count, 2)
         self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
             floatingip_dict['fixed_ip_address'],
             floatingip_dict['floating_ip_address'])
-        self.assertEqual(m_network_on_host.call_count, 1)
 
-    @mock.patch(
-        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def test_create_floatingip_on_vpp_existing_entry(
-            self, m_network_on_host):
+    def test_create_floatingip_on_vpp_existing_entry(self):
         """Test create floatingip processing with existing indexes.
 
         Verify that the SNAT interfaces are not created if they already
         exist on the VPP.
         """
         floatingip_dict = self._get_mock_floatingip()
-        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_uplink_idx': 4}
-        self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_snat_interfaces.return_value = [4, 5]
-        mock.patch.object(self.vpp, '_get_external_vlan_subif',
-                          return_value=4).start()
+        mock.patch.object(self.vpp, '_get_snat_indexes',
+                          return_value=(4, 5)).start()
         self.vpp.vpp.get_snat_local_ipaddresses.return_value = (
             [floatingip_dict['fixed_ip_address']])
 
-        self.vpp.associate_floatingip(floatingip_dict)
+        self.vpp.associate_floatingip(floatingip_dict['floating_ip_address'],
+                                      floatingip_dict)
 
         self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
         self.assertFalse(self.vpp.vpp.set_snat_static_mapping.call_count)
@@ -621,53 +712,48 @@ class VPPForwarderTestCase(base.BaseTestCase):
         """
         floatingip_dict = self._get_mock_floatingip()
 
-        self.vpp.associate_floatingip(floatingip_dict)
+        self.vpp.associate_floatingip(floatingip_dict['floating_ip_address'],
+                                      floatingip_dict)
 
         self.assertFalse(self.vpp.vpp.set_snat_on_interface.call_count)
 
-    @mock.patch(
-        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def test_delete_floatingip_on_vpp(self, m_network_on_host):
+    def test_delete_floatingip_on_vpp(self):
         """Test delete floatingip processing.
 
         Verify that the SNAT delete APIs are called.
         """
         floatingip_dict = self._get_mock_floatingip()
-        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_uplink_idx': 'fake_up_idx'}
-        self.vpp.vpp.get_bridge_bvi.return_value = 5
-        self.vpp.vpp.get_snat_local_ipaddresses.return_value = []
-        mock.patch.object(self.vpp, '_get_external_vlan_subif',
-                          return_value=4).start()
+        floating_ip = floatingip_dict['floating_ip_address']
+        self.vpp.floating_ips[floating_ip] = floatingip_dict
+        self.vpp.vpp.get_snat_local_ipaddresses.return_value = [
+            floatingip_dict['fixed_ip_address']]
 
-        self.vpp.disassociate_floatingip(floatingip_dict)
-
-        self.assertFalse(self.vpp.vpp.set_snat_static_mapping.call_count)
-
-    @mock.patch(
-        'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
-    def test_delete_floatingip_on_vpp_existing_indexes(
-            self, m_network_on_host):
-        """Test delete floatingip processing with existing indexes.
-
-        Verify that the SNAT interfaces are not deleted if SNAT IP
-        addresses are still present.
-        """
-        floatingip_dict = self._get_mock_floatingip()
-        m_network_on_host.return_value = {'bridge_domain_id': 'fake_dom_id',
-                                          'if_uplink_idx': 'fake_up_idx'}
-        self.vpp.vpp.get_bridge_bvi.return_value = 5
-        self.vpp.vpp.get_snat_local_ipaddresses.return_value = (
-            [FIXED_IP_ADDRESS])
-        mock.patch.object(self.vpp, '_get_external_vlan_subif',
-                          return_value=4).start()
-
-        self.vpp.disassociate_floatingip(floatingip_dict)
+        self.vpp.disassociate_floatingip(floating_ip)
 
         self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
             floatingip_dict['fixed_ip_address'],
             floatingip_dict['floating_ip_address'],
             is_add=0)
+        self.assertEqual(
+            self.vpp.floating_ips.get(floating_ip), None
+            )
+
+    def test_delete_floatingip_on_vpp_non_existing(self):
+        """Test delete a non-exisiting floatingip within VPP.
+
+        Verify that a SNAT delete operation is not performed.
+        """
+        floatingip_dict = self._get_mock_floatingip()
+        floating_ip = floatingip_dict['floating_ip_address']
+        self.vpp.floating_ips[floating_ip] = floatingip_dict
+        self.vpp.vpp.get_snat_local_ipaddresses.return_value = []
+
+        self.vpp.disassociate_floatingip(floating_ip)
+
+        self.vpp.vpp.set_snat_static_mapping.assert_not_called()
+        self.assertEqual(
+            self.vpp.floating_ips.get(floating_ip), None
+            )
 
     def test_ensure_gpe_network_on_host(self):
         self.vpp.networks = {}
