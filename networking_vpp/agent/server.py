@@ -735,13 +735,27 @@ class VPPForwarder(object):
         """
 
         bridge = bridge_lib.BridgeDevice(bridge_name)
+        bridge.set_log_fail_as_error(False)
         if bridge.exists() and ip_lib.device_exists(tap_name) \
            and not bridge.owns_interface(tap_name):
             try:
                 bridge.addif(tap_name)
-            except Exception:
-                LOG.exception("Can't add tap interface %s to bridge %s" %
-                              (tap_name, bridge_name))
+            except Exception as ex:
+                # External TAP interfaces created by DHCP or L3 agent will be
+                # added to corresponding Linux Bridge by vpp-agent to talk to
+                # VPP. During a regular port binding process, there are two
+                # code paths calling this function for adding the interface to
+                # the Linux Bridge, which may potentially cause a race
+                # condition and a non-harmful traceback in the log.
+
+                # The fix will eliminate the non-harmful traceback in the log.
+                match = re.search(r"Stderr\: device (vpp|tap)[0-9a-f]{8}-"
+                                  "[0-9a-f]{2} is already a member of a "
+                                  "bridge; can't enslave it to bridge br-"
+                                  "[0-9a-f]{8}-[0-9a-f]{2}\.", ex.message)
+                if not match:
+                    LOG.exception("Can't add interface %s to bridge %s: %s" %
+                                  (tap_name, bridge_name, ex.message))
 
     def _ensure_kernelside_plugtap(self, bridge_name, tap_name, int_tap_name):
         # This is the kernel-side config (and we should not assume
