@@ -362,7 +362,8 @@ class VPPMechanismDriver(api.MechanismDriver):
         port = port_context.current
         host = port_context.host
         # NB: Host is typically '' if the port is not bound
-        if host:
+        # A port can be in an invalid state with a host context
+        if host and port_context.binding_levels:
             segment = port_context.binding_levels[-1][api.BOUND_SEGMENT]
             self.communicator.unbind(port_context._plugin_context.session,
                                      port, host, segment)
