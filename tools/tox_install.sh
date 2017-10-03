@@ -15,18 +15,6 @@ if [ "$UPPER_CONSTRAINTS_FILE" != "unconstrained" ]; then
     install_cmd="$install_cmd -c$UPPER_CONSTRAINTS_FILE"
 fi
 
-if $(python -c "import neutronclient" 2> /dev/null); then
-    echo "Neutronclient already installed."
-elif [ -x $ZUUL_CLONER ]; then
-    # Use zuul-cloner to clone openstack/neutronclient, this will ensure the Depends-On
-    # references are retrieved from zuul and rebased into the repo, then installed.
-    $ZUUL_CLONER --cache-dir /opt/git --branch $NEUTRONCLIENT_BRANCH --workspace /tmp git://git.openstack.org openstack/python-neutronclient
-    pip install /tmp/openstack/python-neutronclient
-else
-    # Install neutron client from git.openstack.org
-    pip install -e git+https://git.openstack.org/openstack/python-neutronclient@$NEUTRONCLIENT_BRANCH#egg=python-neutronclient
-fi
-
 if $(python -c "import neutron" 2> /dev/null); then
     echo "Neutron already installed."
 elif [ -x $ZUUL_CLONER ]; then
