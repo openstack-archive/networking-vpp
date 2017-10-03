@@ -27,7 +27,12 @@ from networking_vpp.services.l3_router import l3_vpp
 from neutron.db import api as neutron_db_api
 from neutron.db import l3_db
 from neutron.extensions import external_net as external_net
-from neutron.plugins.ml2 import config
+try:
+    # TODO(ijw): TEMPORARY, better fix coming that reverses this
+    from neutron.plugins.ml2 import config
+except ImportError:
+    from neutron.conf.plugins.ml2 import config
+    config.register_ml2_plugin_opts()
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2
 from neutron_lib.api.definitions import provider_net as provider

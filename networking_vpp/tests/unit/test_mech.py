@@ -19,7 +19,12 @@ import mock
 import etcd
 from networking_vpp import mech_vpp
 from neutron.plugins.common import constants
-from neutron.plugins.ml2 import config
+try:
+    # TODO(ijw): TEMPORARY, better fix coming that reverses this
+    from neutron.plugins.ml2 import config
+except ImportError:
+    from neutron.conf.plugins.ml2 import config
+    config.register_ml2_plugin_opts()
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2

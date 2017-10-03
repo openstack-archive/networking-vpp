@@ -55,7 +55,13 @@ from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
 from neutron.plugins.common import constants as p_const
-from neutron.plugins.ml2 import config
+try:
+    # TODO(ijw): TEMPORARY, better fix coming that reverses this
+    from neutron.plugins.ml2 import config
+    assert config
+except ImportError:
+    from neutron.conf.plugins.ml2 import config
+    config.register_ml2_plugin_opts()
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -77,7 +83,6 @@ reflexive_acls = True
 # config_opts and config are required to configure the options within it, but
 # not referenced from here, so shut up tox:
 assert config_opts
-assert config
 
 # Apply monkey patch if necessary
 compat.monkey_patch()
