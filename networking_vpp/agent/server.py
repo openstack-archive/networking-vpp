@@ -90,7 +90,7 @@ DEV_NAME_PREFIX = n_const.TAP_DEVICE_PREFIX
 TAP_UUID_LEN = 11
 
 
-def get_tap_name(uuid):
+def get_exttap_name(uuid):
     return n_const.TAP_DEVICE_PREFIX + uuid[0:TAP_UUID_LEN]
 
 
@@ -314,7 +314,7 @@ class VPPForwarder(object):
         self.vpp.register_for_events(cb_event, self._vhost_ready_event)
 
         # Device monitor to ensure the tap interfaces are plugged into the
-        # right Linux brdige
+        # right Linux bridge
         self.device_monitor = device_monitor.DeviceMonitor()
         self.device_monitor.on_add(self._consider_external_device)
         # The worker will be in endless loop, so don't care the return value
@@ -704,6 +704,8 @@ class VPPForwarder(object):
         created in Linux kernel. We will filter for tap interfaces created by
         OpenStack, and those will be added to the bridges that we create on the
         Neutron side of things.
+
+        This is required for 'tap' and 'host' bound interfaces to work.
         """
         match = re.search(r'tap[0-9a-f]{8}-[0-9a-f]{2}', dev_name)
         if not match:
@@ -746,7 +748,14 @@ class VPPForwarder(object):
                     LOG.exception("Can't add interface %s to bridge %s: %s" %
                                   (tap_name, bridge_name, ex.message))
 
-    def _ensure_kernelside_tap(self, bridge_name, tap_name, int_tap_name):
+    def _ensure_ifs_in_kernel_bridge(self, bridge_name, tap_name, int_tap_name):
+
+        self._ensure_extif_in_kernel_bridge(self, bridge_name, tap_name)
+
+        # This is the device that we just created with VPP
+        self.ensure_tap_in_bridge(int_tap_name, bridge_name)
+
+    def _ensure_extif_in_kernel_bridge(self, bridge_name, tap_name):
         # This is the kernel-side config (and we should not assume
         # that, just because the interface exists in VPP, it has
         # been done previously - the crash could occur in the
@@ -757,9 +766,6 @@ class VPPForwarder(object):
         # TODO(ijw): someone somewhere ought to be sorting
         # the MTUs out
         self.ensure_kernel_bridge(bridge_name)
-
-        # This is the device that we just created with VPP
-        self.ensure_tap_in_bridge(int_tap_name, bridge_name)
 
         # This is the external TAP device that will be
         # created by Nova or an agent, say the DHCP agent,
@@ -782,15 +788,20 @@ class VPPForwarder(object):
 
             # TODO(ijw): naming not obviously consistent with
             # Neutron's naming
-            tap_name = get_tap_name(uuid)
+            ext_tap_name = get_exttap_name(uuid)
 
             if if_type == 'tap':
                 bridge_name = get_bridge_name(uuid)
                 int_tap_name = get_vpptap_name(uuid)
 
                 props = {'bridge_name': bridge_name,
-                         'ext_tap_name': tap_name,
+                         'ext_tap_name': ext_tap_name,
                          'int_tap_name': int_tap_name}
+            elif if_type == 'host':
+                bridge_name = get_bridge_name(uuid)
+
+                props = {'bridge_name': bridge_name,
+                         'ext_tap_name': ext_tap_name}
             elif if_type == 'vhostuser':
                 path = get_vhostuser_name(uuid)
                 props = {'path': path}
@@ -811,22 +822,27 @@ class VPPForwarder(object):
                 LOG.debug('port %s recovering existing port in VPP',
                           uuid)
 
-            else:
-                # Make an interface, and tag it for refinding.
-                LOG.debug('binding port %s as type %s' %
-                          (uuid, if_type))
-
-                if if_type == 'tap':
-                    iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
-                elif if_type == 'vhostuser':
-                    iface_idx = self.vpp.create_vhostuser(path, mac, tag)
+            # Make an interface, and tag it for refinding.
+            LOG.debug('binding port %s as type %s' %
+                      (uuid, if_type))
 
             if if_type == 'tap':
+                if iface_idx is None:
+                    iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
+
                 # Plugtap interfaces belong in a kernel bridge, and we need
                 # to monitor for the other side attaching.
-                self._ensure_kernelside_tap(bridge_name,
-                                            tap_name,
-                                            int_tap_name)
+                self._ensure_ifs_in_kernel_bridge(bridge_name,
+                    ext_tap_name,
+                    int_tap_name)
+            elif if_type == 'host':
+                self._ensure_extif_in_kernel_bridge(bridge_name,
+                    ext_tap_name)
+                if iface_idx is None:
+                    iface_idx = self.vpp.attach_host_interface(bridge_name, tag=tag)
+            elif if_type == 'vhostuser':
+                if iface_idx is None:
+                    iface_idx = self.vpp.create_vhostuser(path, mac, tag)
 
             props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
@@ -958,12 +974,20 @@ class VPPForwarder(object):
             # interface is notified as connected to qemu
             if iface_idx in self.iface_connected:
                 self.iface_connected.remove(iface_idx)
+        elif props['bind_type'] == 'host':
+            # remove port from bridge (sets to l3 mode) prior to deletion
+            self.vpp.delete_from_bridge(iface_idx)
+            self.vpp.detach_host_interface(props['bridge_name'])
         elif props['bind_type'] == 'tap':
             # remove port from bridge (sets to l3 mode) prior to deletion
             self.vpp.delete_from_bridge(iface_idx)
             self.vpp.delete_tap(iface_idx)
+        else:
+            LOG.error('Unknown port type %s during unbind',
+                      props['bind_type'])
 
-            bridge_name = get_bridge_name(uuid)
+        if props['bind_type'] in ('host', 'tap'):
+            # Both these types have a kernel bridge and it needs removing
 
             class FailableBridgeDevice(bridge_lib.BridgeDevice):
                 # For us, we expect failing commands and want them ignored.
@@ -976,18 +1000,17 @@ class VPPForwarder(object):
                         log_fail_as_error=False,
                         run_as_root=True
                     )
-            bridge = FailableBridgeDevice(bridge_name)
+            bridge = FailableBridgeDevice(props['bridge_name'])
             if bridge.exists():
                 # These may fail, don't care much
-                if bridge.owns_interface(props['int_tap_name']):
+                if 'int_tap_name' in props and \
+                  bridge.owns_interface(props['int_tap_name']):
                     bridge.delif(props['int_tap_name'])
                 if bridge.owns_interface(props['ext_tap_name']):
                     bridge.delif(props['ext_tap_name'])
                 bridge.link.set_down()
                 bridge.delbr()
-        else:
-            LOG.error('Unknown port type %s during unbind',
-                      props['bind_type'])
+
         self.interfaces.pop(uuid)
 
     def _to_acl_rule(self, r, d, a=2):

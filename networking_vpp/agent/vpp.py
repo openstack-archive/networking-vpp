@@ -979,3 +979,31 @@ class VPPInterface(object):
                  'vni': val.vni
                  }
                 for val in t]
+
+    def attach_host_interface(self, host_if_name, hw_addr=None):
+        """Make a VPP interface attached to a kernel interface
+
+        The name of the interface is host-xxx, and the kernel
+        AF_PACKET interface is used to inject and receive packets
+        from the equivalently named interface on the host (which
+        must exist).
+        """
+        if hw_addr is None:
+            t = self.call_vpp('af_packet_create',
+                host_if_name=host_if_name,
+                hw_addr = '',
+                use_random_hw_addr=1)
+        else:
+            # Since we have no plans to use this right now, it would be
+            # untested.
+            raise NotImplemented()
+
+        return t.sw_if_index
+
+   def detach_host_interface(self, host_if_name):
+        """Detach a VPP interface attached to a kernel interface
+
+        The VPP interface is deleted.  The kernel interface remains.
+        """
+        self.call_vpp('af_packet_delete',
+            host_if_name=host_if_name)

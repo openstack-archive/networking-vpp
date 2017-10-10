@@ -103,7 +103,10 @@ class VPPMechanismDriver(api.MechanismDriver):
         owner = port_context.current['device_owner']
         for f in n_const.DEVICE_OWNER_PREFIXES:
             if owner.startswith(f):
-                vif_type = 'tap'
+                if cfg.CONF.use_af_packet:
+                    vif_type = 'host'
+                else:
+                    vif_type = 'tap'
         LOG.debug("vif_type to be bound is: %s", vif_type)
         return vif_type
 
