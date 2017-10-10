@@ -158,7 +158,7 @@ def main():
         # Is this port bound to the VM correctly?
         pass
 
-    # "binding_type": "plugtap"
+    # "binding_type": "tap"
 
     # "mtu": 1500
     # "mac_address": "fa:16:3e:2e:1d:8d"
