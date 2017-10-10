@@ -758,7 +758,7 @@ class VPPForwarder(object):
                     LOG.exception("Can't add interface %s to bridge %s: %s" %
                                   (tap_name, bridge_name, ex.message))
 
-    def _ensure_kernelside_plugtap(self, bridge_name, tap_name, int_tap_name):
+    def _ensure_kernelside_tap(self, bridge_name, tap_name, int_tap_name):
         # This is the kernel-side config (and we should not assume
         # that, just because the interface exists in VPP, it has
         # been done previously - the crash could occur in the
@@ -796,9 +796,7 @@ class VPPForwarder(object):
             # Neutron's naming
             tap_name = get_tap_name(uuid)
 
-            if if_type == 'maketap':
-                props = {'name': tap_name}
-            elif if_type == 'plugtap':
+            if if_type == 'tap':
                 bridge_name = get_bridge_name(uuid)
                 int_tap_name = get_vpptap_name(uuid)
 
@@ -830,19 +828,17 @@ class VPPForwarder(object):
                 LOG.debug('binding port %s as type %s' %
                           (uuid, if_type))
 
-                if if_type == 'maketap':
-                    iface_idx = self.vpp.create_tap(tap_name, mac, tag)
-                elif if_type == 'plugtap':
+                if if_type == 'tap':
                     iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
                 elif if_type == 'vhostuser':
                     iface_idx = self.vpp.create_vhostuser(path, mac, tag)
 
-            if if_type == 'plugtap':
+            if if_type == 'tap':
                 # Plugtap interfaces belong in a kernel bridge, and we need
                 # to monitor for the other side attaching.
-                self._ensure_kernelside_plugtap(bridge_name,
-                                                tap_name,
-                                                int_tap_name)
+                self._ensure_kernelside_tap(bridge_name,
+                                            tap_name,
+                                            int_tap_name)
 
             props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
@@ -974,33 +970,33 @@ class VPPForwarder(object):
             # interface is notified as connected to qemu
             if iface_idx in self.iface_connected:
                 self.iface_connected.remove(iface_idx)
-        elif props['bind_type'] in ['maketap', 'plugtap']:
+        elif props['bind_type'] == 'tap':
             # remove port from bridge (sets to l3 mode) prior to deletion
             self.vpp.delete_from_bridge(iface_idx)
             self.vpp.delete_tap(iface_idx)
-            if props['bind_type'] == 'plugtap':
-                bridge_name = get_bridge_name(uuid)
 
-                class FailableBridgeDevice(bridge_lib.BridgeDevice):
-                    # For us, we expect failing commands and want them ignored.
-                    def _brctl(self, cmd):
-                        cmd = ['brctl'] + cmd
-                        ip_wrapper = ip_lib.IPWrapper(self.namespace)
-                        return ip_wrapper.netns.execute(
-                            cmd,
-                            check_exit_code=False,
-                            log_fail_as_error=False,
-                            run_as_root=True
-                        )
-                bridge = FailableBridgeDevice(bridge_name)
-                if bridge.exists():
-                    # These may fail, don't care much
-                    if bridge.owns_interface(props['int_tap_name']):
-                        bridge.delif(props['int_tap_name'])
-                    if bridge.owns_interface(props['ext_tap_name']):
-                        bridge.delif(props['ext_tap_name'])
-                    bridge.link.set_down()
-                    bridge.delbr()
+            bridge_name = get_bridge_name(uuid)
+
+            class FailableBridgeDevice(bridge_lib.BridgeDevice):
+                # For us, we expect failing commands and want them ignored.
+                def _brctl(self, cmd):
+                    cmd = ['brctl'] + cmd
+                    ip_wrapper = ip_lib.IPWrapper(self.namespace)
+                    return ip_wrapper.netns.execute(
+                        cmd,
+                        check_exit_code=False,
+                        log_fail_as_error=False,
+                        run_as_root=True
+                    )
+            bridge = FailableBridgeDevice(bridge_name)
+            if bridge.exists():
+                # These may fail, don't care much
+                if bridge.owns_interface(props['int_tap_name']):
+                    bridge.delif(props['int_tap_name'])
+                if bridge.owns_interface(props['ext_tap_name']):
+                    bridge.delif(props['ext_tap_name'])
+                bridge.link.set_down()
+                bridge.delbr()
         else:
             LOG.error('Unknown port type %s during unbind',
                       props['bind_type'])
@@ -2112,7 +2108,7 @@ class EtcdListener(object):
         includes the behaviour of whatever's on the other end of the
         interface.
         """
-        # args['binding_type'] in ('vhostuser', 'plugtap'):
+        # args['binding_type'] in ('vhostuser', 'tap'):
         # For GPE, fetch remote mappings from etcd for any "new" network
         # segments we will be binding to so we are aware of all the remote
         # overlay (mac) to underlay (IP) values
@@ -2696,10 +2692,18 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # an update.
 
         data = jsonutils.loads(value)
+
+        # For backward comatibility reasons, 'plugtap' now means 'tap'
+        # Post-17.07 'tap' is used, but this allows compatibility with
+        # previously stored information in etcd.
+        binding_type = data['binding_type']
+        if binding_type == 'plugtap':
+            binding_type = 'tap'
+
         self.data.bind(
             self.data.binder.add_notification,
             port,
-            data['binding_type'],
+            binding_type,
             data['mac_address'],
             data['physnet'],
             data['network_type'],
