@@ -29,6 +29,7 @@ import time
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
 from networking_vpp.compat import n_const
+from networking_vpp.compat import plugin_constants
 from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
@@ -38,7 +39,6 @@ from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
 from neutron.db import api as neutron_db_api
-from neutron.plugins.common import constants as p_constants
 from neutron.plugins.ml2 import driver_api as api
 from oslo_serialization import jsonutils
 
@@ -76,9 +76,9 @@ LOG = logging.getLogger(__name__)
 
 class VPPMechanismDriver(api.MechanismDriver):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
-    allowed_network_types = [p_constants.TYPE_FLAT,
-                             p_constants.TYPE_VLAN,
-                             p_constants.TYPE_VXLAN]
+    allowed_network_types = [plugin_constants.TYPE_FLAT,
+                             plugin_constants.TYPE_VLAN,
+                             plugin_constants.TYPE_VXLAN]
     MECH_NAME = 'vpp'
 
     vif_details = {}
@@ -201,7 +201,8 @@ class VPPMechanismDriver(api.MechanismDriver):
             )
             return False
 
-        if network_type in [p_constants.TYPE_FLAT, p_constants.TYPE_VLAN]:
+        if network_type in [plugin_constants.TYPE_FLAT,
+                            plugin_constants.TYPE_VLAN]:
             physnet = segment[api.PHYSICAL_NETWORK]
             if not self.physnet_known(host, physnet):
                 LOG.debug(

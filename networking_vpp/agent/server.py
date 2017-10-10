@@ -44,6 +44,7 @@ import vpp
 from networking_vpp._i18n import _
 from networking_vpp import compat
 from networking_vpp.compat import n_const
+from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
 from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
@@ -54,7 +55,6 @@ from networking_vpp import version
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
-from neutron.plugins.common import constants as p_const
 try:
     # TODO(ijw): TEMPORARY, better fix coming that reverses this
     from neutron.plugins.ml2 import config
@@ -1566,10 +1566,10 @@ class VPPForwarder(object):
         """
         if_name, if_idx = self.get_if_for_physnet(router['external_physnet'])
         # Set the external physnet/subif as a SNAT outside interface
-        if router['external_net_type'] == p_const.TYPE_VLAN:
+        if router['external_net_type'] == plugin_constants.TYPE_VLAN:
             if_idx = self._get_external_vlan_subif(
                 if_name, if_idx, router['external_segment'])
-        elif router['external_net_type'] == p_const.TYPE_FLAT:
+        elif router['external_net_type'] == plugin_constants.TYPE_FLAT:
             # Use the ifidx grabbed earlier
             pass
         else:
@@ -1608,10 +1608,10 @@ class VPPForwarder(object):
         SNAT external IP pool from this router's VRF.
         """
         if_name, if_idx = self.get_if_for_physnet(router['external_physnet'])
-        if router['external_net_type'] == p_const.TYPE_VLAN:
+        if router['external_net_type'] == plugin_constants.TYPE_VLAN:
             if_idx = self.vpp.get_vlan_subif(
                 if_name, router['external_segment'])
-        elif router['external_net_type'] == p_const.TYPE_FLAT:
+        elif router['external_net_type'] == plugin_constants.TYPE_FLAT:
             # Use physnet id_idx found earlier
             pass
         else:
@@ -1640,7 +1640,8 @@ class VPPForwarder(object):
                         if_idx, self._pack_address(addr[0]), int(addr[1]))
 
         # Delete the subinterface if type VLAN
-        if router['external_net_type'] == p_const.TYPE_VLAN and if_idx:
+        if (router['external_net_type'] == plugin_constants.TYPE_VLAN
+                and if_idx):
             self.vpp.delete_vlan_subif(if_idx)
 
     def create_router_interface_on_host(self, router):

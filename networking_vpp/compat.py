@@ -56,6 +56,13 @@ except ImportError:
     n_const = neutron.common.constants
     n_exec = neutron.common.exceptions
 
+# Some of the TYPE_XXX objects also moved in Pike/Queens
+if hasattr(n_const, 'TYPE_FLAT'):
+    plugin_constants = n_const
+else:
+    import neutron.plugin.common.constants
+    plugin_constants = neutron.plugin.common.constants
+
 try:
     n_const.UUID_PATTERN
 except AttributeError:

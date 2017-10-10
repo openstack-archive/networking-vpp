@@ -15,9 +15,9 @@
 import mock
 
 import etcd
+from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
 from networking_vpp import mech_vpp
-from neutron.plugins.common import constants
 from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 from oslo_config import cfg
@@ -45,14 +45,14 @@ FAKE_PORT = {'status': 'DOWN',
 LEADIN = '/networking-vpp'
 valid_segment = {
     api.ID: 'fake_id',
-    api.NETWORK_TYPE: constants.TYPE_FLAT,
+    api.NETWORK_TYPE: plugin_constants.TYPE_FLAT,
     api.SEGMENTATION_ID: 'fake_segId',
     api.PHYSICAL_NETWORK: 'fake_physnet',
     api.BOUND_SEGMENT: 'fake_segment',
     api.BOUND_DRIVER: 'vpp'}
 invalid_segment = {
     api.ID: 'API_ID',
-    api.NETWORK_TYPE: constants.TYPE_NONE,
+    api.NETWORK_TYPE: plugin_constants.TYPE_NONE,
     api.SEGMENTATION_ID: 'API_SEGMENTATION_ID',
     api.PHYSICAL_NETWORK: 'API_PHYSICAL_NETWORK'}
 
