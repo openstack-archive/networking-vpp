@@ -111,11 +111,13 @@ class VPPMechanismDriverTestCase(
     def test_get_vif_type(self):
         port_context = self.given_port_context()
         owner = "vhostuser"
-        self.assertEqual(self.mech.get_vif_type(port_context), owner,
+        self.assertEqual(
+            self.mech.get_vif_type(port_context), owner,
             "Device owner should have been \'%s\'" % owner)
         port_context.current['device_owner'] = "neutron:fake_owner"
         owner = "tap"
-        self.assertEqual(self.mech.get_vif_type(port_context), owner,
+        self.assertEqual(
+            self.mech.get_vif_type(port_context), owner,
             "Device owner should have been \'%s\'" % owner)
 
     @mock.patch('networking_vpp.mech_vpp.VPPMechanismDriver.physnet_known',
