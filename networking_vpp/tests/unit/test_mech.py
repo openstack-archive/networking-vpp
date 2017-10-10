@@ -111,12 +111,12 @@ class VPPMechanismDriverTestCase(
     def test_get_vif_type(self):
         port_context = self.given_port_context()
         owner = "vhostuser"
-        assert (self.mech.get_vif_type(port_context) == owner), \
-            "Device owner should have been \'%s\'" % owner
+        self.assertEqual(self.mech.get_vif_type(port_context), owner,
+            "Device owner should have been \'%s\'" % owner)
         port_context.current['device_owner'] = "neutron:fake_owner"
-        owner = "plugtap"
-        assert (self.mech.get_vif_type(port_context) == owner), \
-            "Device owner should have been \'%s\'" % owner
+        owner = "tap"
+        self.assertEqual(self.mech.get_vif_type(port_context), owner,
+            "Device owner should have been \'%s\'" % owner)
 
     @mock.patch('networking_vpp.mech_vpp.VPPMechanismDriver.physnet_known',
                 return_value=True)
@@ -153,21 +153,17 @@ class VPPMechanismDriverTestCase(
         # first test valid
         segment = port_context.segments_to_bind[0]
         host = port_context.host
-        assert(self.mech.check_segment(segment, host) is True), \
-            "Return value should have been True"
+        self.assertEqual(self.mech.check_segment(segment, host), True)
         # then test invalid bind
         segment = port_context.segments_to_bind[1]
-        assert(self.mech.check_segment(segment, host) is False), \
-            "Return value should have been False"
+        self.assertEqual(self.mech.check_segment(segment, host), False)
 
     def test_check_vlan_transparency(self):
         # shrircha: this is useless, as the function simply returns false.
         # placeholder, for when this is implemented in the future.
         # this test will need to be updated to reflect this.
         port_context = self.given_port_context()
-        assert(self.mech.check_vlan_transparency(port_context) is False), \
-            "Return value for port [%s] should have been False" % (
-                port_context.current.id)
+        self.assertFalse(self.mech.check_vlan_transparency(port_context))
 
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.unbind')
     @mock.patch('networking_vpp.mech_vpp.EtcdAgentCommunicator.bind')

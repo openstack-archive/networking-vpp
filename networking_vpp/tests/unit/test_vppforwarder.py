@@ -207,7 +207,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         bridge.addif.assert_called_once_with(device_name)
 
     def test_ensure_interface_on_host_exists(self):
-        if_type = 'maketap'
+        if_type = 'tap'
         uuid = 'fakeuuid'
         mac = 'fakemac'
         fake_iface = {'bind_type': if_type,
@@ -217,21 +217,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
         retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
         assert (retval == fake_iface)
 
-    def test_ensure_interface_on_host_maketap(self):
-        if_type = 'maketap'
-        uuid = 'fakeuuid'
-        mac = 'fakemac'
-        expected_tag = 'net-vpp.port:' + uuid
-        retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
-        self.vpp.vpp.create_tap.assert_called_once_with('tapfakeuuid',
-                                                        mac,
-                                                        expected_tag)
-        assert (retval == self.vpp.interfaces[uuid])
-
     @mock.patch('networking_vpp.agent.server.'
                 'VPPForwarder.ensure_kernel_bridge')
-    def test_ensure_interface_on_host_plugtap(self, m_en_br):
-        if_type = 'plugtap'
+    def test_ensure_interface_on_host_tap(self, m_en_br):
+        if_type = 'tap'
         uuid = 'fakeuuid'
         mac = 'fakemac'
         expected_tag = 'net-vpp.port:' + uuid
@@ -268,7 +257,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         'networking_vpp.agent.server.VPPForwarder.ensure_interface_on_host')
     def test_bind_interface_on_host(self, m_create_iface_on_host,
                                     m_network_on_host):
-        if_type = 'plugtap'
+        if_type = 'tap'
         uuid = 'fakeuuid'
         mac = 'fakemac'
         physnet = 'fakenet'
