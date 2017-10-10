@@ -69,41 +69,44 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     def test_interface_tag_len(self):
         uuid = uuidgen.uuid1()
-        assert (len(server.port_tag(uuid)) <= 64), 'TAG len must be <= 64'
+        self.assertLessEqual(len(server.port_tag(uuid)), 64, 'Overlong tag')
 
     def test_uplink_tag_len(self):
         longest_physnet = '1234567890123456789012'
-        assert (len(server.uplink_tag(longest_physnet, 'flat', None)) <= 64), \
-            'TAG len for flat networks  must be <= 64'
+        self.assertLessEqual(
+            len(server.uplink_tag(longest_physnet, 'flat', None)), 64,
+            'Overlong flag net tag')
         max_vlan_id = 4095
-        assert (len(server.uplink_tag(longest_physnet, 'vlan', max_vlan_id)) <= 64), \
-            'TAG len for vlan overlays must be <= 64'
+        self.assertLessEqual(
+            len(server.uplink_tag(longest_physnet, 'vlan', max_vlan_id)), 64,
+            'Overlong vlan uplink tag')
         max_vxlan_id = 16777215
-        assert (len(server.uplink_tag(longest_physnet, 'vxlan', max_vxlan_id)) <= 64), \
-            'TAG len for vxlan overlays must be <= 64'
+        self.assertLessEqual(
+            len(server.uplink_tag(longest_physnet, 'vxlan', max_vxlan_id)), 64,
+            'Overlong vxlan uplink tag')
 
     def test_decode_port_tag(self):
         uuid = uuidgen.uuid1()
         r = server.decode_port_tag(server.TAG_L2IFACE_PREFIX + str(uuid))
-        assert (str(uuid) == r), "Expected '%s', got '%s'" % (str(uuid), r)
+        self.assertEqual(str(uuid), r)
 
     def test_no_decode_port_tag(self):
         uuid = 'baduuid'
         r = server.decode_port_tag(server.TAG_L2IFACE_PREFIX + str(uuid))
-        assert (r is None)
+        self.assertIsNone(r)
 
     def test_get_if_for_physnet(self):
         (ifname, ifidx) = self.vpp.get_if_for_physnet('test_net')
         self.vpp.vpp.get_ifidx_by_name.assert_called_once_with('test_iface')
-        assert (ifname == 'test_iface'), 'test_net is on test_iface'
-        assert (ifidx == 720), 'test_iface has idx 720'
+        self.assertEqual(ifname, 'test_iface')
+        self.assertEqual(ifidx, 720)
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_in_vpp')
     def test_no_network_on_host(self, m_ensure_network_in_vpp):
         physnet = 'test'
         self.vpp.ensure_network_on_host(physnet, 'flat', 0)
-        assert m_ensure_network_in_vpp.called_once_with(physnet, 'flat', 0)
+        m_ensure_network_in_vpp.assert_called_once_with(physnet, 'flat', 0)
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_in_vpp')
@@ -111,12 +114,12 @@ class VPPForwarderTestCase(base.BaseTestCase):
         physnet = 'test'
         self.vpp.networks = {(physnet, 'flat', 0): 'test'}
         retval = self.vpp.ensure_network_on_host(physnet, 'flat', 0)
-        assert(retval == 'test'), "Return network value should be 'test'"
+        self.assertEqual(retval, 'test')
         m_ensure_network_in_vpp.assert_not_called()
 
     def test_none_ensure_network_on_host(self):
         retval = self.vpp.ensure_network_on_host('not_there', 'flat', None)
-        assert (retval is None), "Return value should have been None"
+        self.assertIsNone(retval)
 
     def test_flat_ensure_network_on_host(self):
         net_length = len(self.vpp.networks)
@@ -127,8 +130,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             720, 'net-vpp.physnet:test_net')
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(720, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(720, 720)
-        assert (len(self.vpp.networks) == 1 + net_length), \
-            "There should be one more network now"
+        self.assertEqual(len(self.vpp.networks), 1 + net_length)
 
     def test_vlan_ensure_network_on_host(self):
         net_length = len(self.vpp.networks)
@@ -141,8 +143,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             sorted(self.vpp.vpp.set_interface_tag.mock_calls))
         self.vpp.vpp.create_bridge_domain.assert_called_once_with(740, 180)
         self.vpp.vpp.add_to_bridge.assert_called_once_with(740, 740)
-        assert (len(self.vpp.networks) == 1 + net_length), \
-            "There should be one more network now"
+        self.assertEqual(len(self.vpp.networks), 1 + net_length)
 
     def test_delete_network_on_host(self):
         physnet = 'test'
@@ -170,7 +171,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch('networking_vpp.agent.server.ip_lib')
     def test_bridge_exists_and_ensure_up(self, m_ip_lib):
         retval = self.vpp._bridge_exists_and_ensure_up('test')
-        assert (retval is True), "Bridge link should have been found"
+        self.assertTrue(retval)
 
     @mock.patch('networking_vpp.agent.server.bridge_lib')
     @mock.patch(
@@ -215,7 +216,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                       'mac': mac}
         self.vpp.interfaces = {uuid: fake_iface}
         retval = self.vpp.ensure_interface_on_host(if_type, uuid, mac)
-        assert (retval == fake_iface)
+        self.assertEqual(retval, fake_iface)
 
     @mock.patch('networking_vpp.agent.server.'
                 'VPPForwarder.ensure_kernel_bridge')
@@ -229,7 +230,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                         mac,
                                                         expected_tag)
         self.vpp.ensure_kernel_bridge.assert_called_once_with('br-fakeuuid')
-        assert (retval == self.vpp.interfaces[uuid])
+        self.assertEqual(retval, self.vpp.interfaces[uuid])
 
     def test_ensure_interface_on_host_vhostuser(self):
         if_type = 'vhostuser'
@@ -240,7 +241,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.create_vhostuser.assert_called_once_with('/tmp/fakeuuid',
                                                               mac,
                                                               expected_tag)
-        assert (retval == self.vpp.interfaces[uuid])
+        self.assertEqual(retval, self.vpp.interfaces[uuid])
 
     def test_ensure_interface_on_host_unsupported(self):
         if_type = 'unsupported'
@@ -270,7 +271,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         retval = self.vpp.bind_interface_on_host(if_type,
                                                  uuid, mac, physnet,
                                                  net_type, seg_id)
-        assert (retval == expected_val)
+        self.assertEqual(retval, expected_val)
 
     def _get_mock_router(self):
         # Return a mock router with a gateway
@@ -722,14 +723,14 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.delete_network_on_host(physnet, net_type, seg_id)
         self.vpp.vpp.del_lisp_vni_to_bd_mapping.assert_called_once_with(
             vni=5000, bridge_domain=70000)
-        assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] == set([]))
+        self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['vnis'], set([]))
         self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
             'fake-mac1', 5000)
         self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
             'fake-mac2', 5000)
-        assert (self.vpp.gpe_map['remote_map'] == {
+        self.assertEqual(self.vpp.gpe_map['remote_map'], {
             ('fake-mac3', 5001): 'fake-remote-ip2'})
-        assert (self.vpp.networks == {})
+        self.assertEqual(self.vpp.networks, {})
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.' +
@@ -765,12 +766,14 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                         mock_props['mac'], 'uplink', 'vxlan',
                                         5000)
         mock_ensure_int_in_bridge.assert_called_once_with(70000, 10)
-        assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] ==
-                set([5000]))
+        self.assertEqual(
+            self.vpp.gpe_map[gpe_lset_name]['vnis'],
+            set([5000]))
         self.vpp.vpp.add_lisp_local_mac.assert_called_once_with(
             mock_props['mac'], 5000, gpe_lset_name)
-        assert (self.vpp.gpe_map[gpe_lset_name]['local_map']
-                [mock_props['mac']] == 5000)
+        self.assertEqual(
+            self.vpp.gpe_map[gpe_lset_name]['local_map'][mock_props['mac']],
+            5000)
 
     def test_unbind_gpe_interface_on_host(self):
         gpe_lset_name = 'net-vpp-gpe-lset-1'
@@ -809,15 +812,15 @@ class VPPForwarderTestCase(base.BaseTestCase):
             mock_props['mac'],
             mock_net_data['segmentation_id'],
             gpe_lset_name)
-        assert (self.vpp.gpe_map[gpe_lset_name]['local_map'] == {})
-        assert (self.vpp.interfaces == {})
+        self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['local_map'], {})
+        self.assertEqual(self.vpp.interfaces, {})
         self.vpp.vpp.delete_bridge_domain.assert_called_once_with(
             mock_net_data['bridge_domain_id'])
         self.vpp.vpp.del_lisp_vni_to_bd_mapping.assert_called_once_with(
             vni=mock_net_data['segmentation_id'],
             bridge_domain=mock_net_data['bridge_domain_id'])
-        assert (self.vpp.gpe_map[gpe_lset_name]['vnis'] == set([]))
-        assert (self.vpp.networks == {})
+        self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['vnis'], set([]))
+        self.assertEqual(self.vpp.networks, {})
 
     @mock.patch('networking_vpp.agent.server.EtcdListener')
     def test_ensure_remote_gpe_mapping(self, mock_etcd_listener):
@@ -857,10 +860,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
             self.vpp.vpp.\
                 add_lisp_remote_mac.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', 1077, remote_locator)
-            assert ('fa:16:3e:47:2e:3c', 1077) in self.vpp.gpe_map[
-                'remote_map']
-            assert self.vpp.gpe_map['remote_map'][(
-                'fa:16:3e:47:2e:3c', 1077)] == "1.1.1.1"
+            self.assertIn(('fa:16:3e:47:2e:3c', 1077),
+                          self.vpp.gpe_map['remote_map'])
+            self.assertEqual(
+                self.vpp.gpe_map['remote_map'][('fa:16:3e:47:2e:3c', 1077)],
+                "1.1.1.1")
             self.vpp.vpp.\
                 add_lisp_arp_entry.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', mock_bridge_domain,
@@ -922,10 +926,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.\
             add_lisp_remote_mac.assert_called_once_with(
                 'fa:16:3e:47:2e:3c', 1077, remote_locator)
-        assert ('fa:16:3e:47:2e:3c', 1077) in self.vpp.gpe_map[
-            'remote_map']
-        assert self.vpp.gpe_map['remote_map'][(
-            'fa:16:3e:47:2e:3c', 1077)] == "1.1.1.1"
+        self.assertIn(('fa:16:3e:47:2e:3c', 1077),
+                      self.vpp.gpe_map['remote_map'])
+        self.assertEqual(
+            self.vpp.gpe_map['remote_map'][('fa:16:3e:47:2e:3c', 1077)],
+            "1.1.1.1")
         self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
                                            '10.1.1.2', '1.1.1.1')
         self.vpp.vpp.\
@@ -979,8 +984,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 "port_max": 1000}]
             }
         self.etcd_listener.acl_add_replace(sec_group, fake_rule_data)
-        assert ("fake-secgroup" in
-                self.vpp.remote_group_secgroups["remote-group1"])
+        self.assertIn("fake-secgroup",
+                      self.vpp.remote_group_secgroups["remote-group1"])
         # Compute ingress and egress rule products using the IP addresses
         # in the remote-group named remote-group1
         ingress_rules = [
@@ -1010,6 +1015,6 @@ class VPPForwarderTestCase(base.BaseTestCase):
                               128, 'remote-group1', 6, 443, 1000),
             ]
         (security_group, ) = mock_acl_add_replace.call_args[0]
-        assert security_group.id == "fake-secgroup"
-        assert set(security_group.ingress_rules) == set(ingress_rules)
-        assert set(security_group.egress_rules) == set(egress_rules)
+        self.assertEqual(security_group.id, "fake-secgroup")
+        self.assertEqual(set(security_group.ingress_rules), set(ingress_rules))
+        self.assertEqual(set(security_group.egress_rules), set(egress_rules))

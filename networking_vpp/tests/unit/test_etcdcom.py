@@ -86,8 +86,9 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         """A trivial test"""
         host = 'vpp0'
         port = {'id': '1234-5678-9012-3456'}
-        assert (self.agent_communicator._port_path(host, port) ==
-                "/networking-vpp/nodes/vpp0/ports/1234-5678-9012-3456")
+        self.assertEqual(
+            self.agent_communicator._port_path(host, port),
+            "/networking-vpp/nodes/vpp0/ports/1234-5678-9012-3456")
 
     def given_port_context(self):
         from neutron.plugins.ml2 import driver_context as ctx
