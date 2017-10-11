@@ -32,34 +32,54 @@ EOF
   install_package vpp-plugins
   if is_set VPP_STARTUP_CONFIG; then
       if [[ -f "$VPP_STARTUP_CONFIG" && -r "$VPP_STARTUP_CONFIG" ]]; then
-          sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak
+          sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak || true
           sudo cp -f $VPP_STARTUP_CONFIG /etc/vpp/startup.conf
       else
           die $LINENO "VPP config file $VPP_STARTUP_CONFIG not a file or unreadable"
       fi
-  elif is_set VPP_INT_PCI_DEV; then
-      # keep a copy of un-modified initial config file
-      sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak
-      have_dpdk_config=`sed -n '/'^$'dpdk/p' /etc/vpp/startup.conf | wc -l`
-      if [[ $have_dpdk_config -eq 0 ]]; then
-          # we do not have dpdk section, append it to startup.conf
-          echo "dpdk {" | sudo tee -a /etc/vpp/startup.conf
-          echo "}" | sudo tee -a /etc/vpp/startup.conf
-      fi
-      # We have some very poor skills hacking this file - we add but don't substitute
-      # and we don't make any attempt to parse the file, so this works with default
-      # configs and not generally otherwise
-      sudo sed -i "/"^$"dpdk  *{/a\ \ dev $VPP_INT_PCI_DEV" /etc/vpp/startup.conf
+      echo "NOTE: startup config file should specify all add-ons required by networking-vpp"
+      echo "NOTE: devstack plugin no longer adds uid settings, startup file, etc."
   else
-      die $LINENO "VPP_STARTUP_CONFIG or VPP_INT_PCI_DEV must be set"
+      # keep a copy of un-modified initial config file
+      sudo cp -f /etc/vpp/startup.conf /etc/vpp/startup.conf.devstack_bak || true
+      # We start from our base config file ('startup.yaml')
+      # We add some settings
+      # VPP 17.10 will not open a socket for vppctl unless you ask
+      # TODO: note that the 'tap' interface for uplink is *not* automatically created
+      user="$(id -un)"
+      group="$(id -gn)"
+      sudo touch /etc/vpp-startup.conf
+(      cat <<EOF
+unix:
+EOF
+    if [ "$VPP_INT_PCI_DEV" != "" ] ; then
+      echo "    dev: \"$VPP_INT_PCI_DEV\""
+    fi
+    cat <<EOF
+    cli-listen: /run/vpp/cli.sock
+    gid: $group
+    startup-config: /etc/vpp-startup.conf
+
+api-segment:
+    uid: $user
+
+EOF
+) >/tmp/addons
+      thisdir="$DEST/networking-vpp/devstack/"
+      if [ -z "$VPP_STARTUP_OVERRIDE_CONFIG" ] ; then
+          python "$thisdir"/make-config.py "$thisdir"/startup.yaml /tmp/addons
+      else
+          python "$thisdir"/make-config.py "$thisdir"/startup.yaml /tmp/addons "$VPP_STARTUP_OVERRIDE_CONFIG"
+      fi | sudo tee /etc/vpp/startup.conf >/dev/null
+
   fi
-  user="$(id -un)"
-  sudo sed -i "/api-segment  *{/a\ \ uid $user" /etc/vpp/startup.conf
+
 }
 
 function start_vpp {
-    is_package_installed vpp || install_vpp
-    start_service vpp
+    install_vpp
+    # Start if not started; restart if stopped, because we have changed config
+    restart_service vpp
 }
 
 function set_hugepages {
@@ -73,6 +93,8 @@ function set_hugepages {
                 die $LINENO "Failed to set system huge page count to $NR_HUGEPAGES"
             fi
         fi
+        # TODO(ijw): max_map_count wants to be *way* bigger than twice this, some other elements of
+        # openstack share memory with each other
     fi
 }
 
@@ -101,7 +123,7 @@ function setup_host_env {
     fi
 
     set_hugepages
-    systemctl is-active vpp || start_vpp
+    start_vpp
 }
 
 

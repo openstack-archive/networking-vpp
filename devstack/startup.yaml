@@ -1,0 +1,10 @@
+unix:
+  nodaemon: null
+  log: /tmp/vpp.log
+  full-coredump: null
+
+api-trace:
+  'on': null
+
+dpdk:
+    socket-mem: 256

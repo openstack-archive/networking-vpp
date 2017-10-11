@@ -5,20 +5,21 @@ MECH_VPP_DIR="$DEST/networking-vpp"
 MECH_VPP_BIN_DIR=$(get_python_exec_prefix)
 VPP_CP_BINARY="$MECH_VPP_BIN_DIR/vpp-agent"
 
-VPP_BRANCH=${VPP_BRANCH:-stable.1707}
+VPP_BRANCH=${VPP_BRANCH:-stable.1710}
 
 #VPP interface pci device. Only used if VPP is being installed when devstack is run.
-VPP_INT_PCI_DEV=${VPP_INT_PCI_DEV:-'0000:02:02.0'}
+VPP_INT_PCI_DEV=${VPP_INT_PCI_DEV:-''}
 
 #VPP startup config file path. If specified, it will overwrite /etc/vpp/startup.conf
 #VPP_INT_PCI_DEV will be ignored if VPP_STARTUP_CONFIG is set.
 VPP_STARTUP_CONFIG=${VPP_STARTUP_CONFIG:-}
+VPP_STARTUP_OVERRIDE_CONFIG=${VPP_STARTUP_OVERRIDE_CONFIG:-}
 
 #If specified, ensure system hugepage count is at least configured as specified.
 #If the system is already configured with more huge pages than NR_HUGEPAGES, no action will be taken.
 NR_HUGEPAGES=${NR_HUGEPAGES:-}
 
-MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:GigabitEthernet2/2/0}
+MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:tap-0}
 #Ip address of the host to connect to
 if is_service_enabled etcd3; then
     # The standard service puts it here
