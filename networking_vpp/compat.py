@@ -60,8 +60,8 @@ except ImportError:
 if hasattr(n_const, 'TYPE_FLAT'):
     plugin_constants = n_const
 else:
-    import neutron.plugin.common.constants
-    plugin_constants = neutron.plugin.common.constants
+    import neutron.plugins.common.constants
+    plugin_constants = neutron.plugins.common.constants
 
 try:
     n_const.UUID_PATTERN
