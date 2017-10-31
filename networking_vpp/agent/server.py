@@ -3016,7 +3016,7 @@ def openstack_base_setup(process_name):
         service_name='vpp-agent')
 
 
-def ml2_vpp_agent_main():
+def main():
     """Main function for VPP agent functionality."""
 
     openstack_base_setup('vpp_agent')
@@ -3080,4 +3080,4 @@ def ml2_vpp_agent_main():
     ops.process_ops()
 
 if __name__ == '__main__':
-    ml2_vpp_agent_main()
+    main()
