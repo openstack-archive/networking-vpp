@@ -20,6 +20,7 @@ from networking_vpp import compat
 from networking_vpp import config_opts
 
 import etcd
+from networking_vpp.compat import driver_api as api
 from networking_vpp.compat import plugin_constants
 from networking_vpp import mech_vpp
 try:
@@ -28,7 +29,6 @@ try:
 except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
-from neutron.plugins.ml2 import driver_api as api
 from neutron.tests import base
 from neutron.tests.unit.db import test_db_base_plugin_v2
 

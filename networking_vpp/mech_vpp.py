@@ -29,6 +29,7 @@ import time
 from networking_vpp import compat
 from networking_vpp.compat import context as n_context
 from networking_vpp.compat import directory
+from networking_vpp.compat import driver_api as api
 from networking_vpp.compat import n_const
 from networking_vpp.compat import plugin_constants
 from networking_vpp.compat import portbindings
@@ -40,7 +41,6 @@ from neutron.callbacks import events
 from neutron.callbacks import registry
 from neutron.callbacks import resources
 from neutron.db import api as neutron_db_api
-from neutron.plugins.ml2 import driver_api as api
 
 try:
     # Newton and on
