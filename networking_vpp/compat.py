@@ -122,6 +122,12 @@ except ImportError:
     # Older:
     from neutron.common import utils as net_utils
 
+try:
+    from neutron.plugins.ml2 import driver_api
+except:
+    # Between Pike and Queens
+    from neutron_lib.plugins.ml2 import api as driver_api
+
 import os
 import re
 
