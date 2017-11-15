@@ -77,7 +77,9 @@ _vpp_opts = [
 
     cfg.StrOpt('jwt_controller_name_pattern', default="Controller.*",
                help=_("Openstack Controller Host name for JWT verification")),
-
+    cfg.StrOpt('vpp_base_mac', default="fa:16:3c:00:00:00",
+               help=_("The base MAC address used for VPP."
+                      "The last 3 octets will be randomly generated.")),
 ]
 
 
