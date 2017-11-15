@@ -52,6 +52,7 @@ from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
 from networking_vpp.utils import device_monitor
+from networking_vpp.utils import file_monitor
 from networking_vpp import version
 
 from neutron.agent.linux import bridge_lib
@@ -64,6 +65,7 @@ try:
 except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
+from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -331,6 +333,12 @@ class VPPForwarder(object):
         self.device_monitor.on_add(self._consider_external_device)
         # The worker will be in endless loop, so don't care the return value
         eventlet.spawn_n(self.device_monitor.run)
+
+        # Start Vhostsocket filemonitor to bind sockets as soon as they appear.
+        self.filemonitor = file_monitor.FileMonitor()
+        self.filemonitor.register_on_add_cb(
+            self.ensure_interface_for_vhost_socket_binding)
+        eventlet.spawn_n(self.filemonitor.run)
 
     ########################################
     # Port resyncing on restart
@@ -778,7 +786,20 @@ class VPPForwarder(object):
         # later in time.
         self.ensure_tap_in_bridge(tap_name, bridge_name)
 
+    @lockutils.synchronized('vpp-lock')
     def ensure_interface_on_host(self, if_type, uuid, mac):
+        """Create or update vpp interface on host based on if_type.
+
+        Depending on the if_type (maketap, plugtap or vhostuser) call vpp papi
+        to do vpp side of the plumbing. This will change depending on the
+        if_type. The interfaces are tagged saved in the internal dict for easy
+        retrieval.
+
+        The call is idempotent if the uuid and its associated
+        interface is already present.
+
+        :return: dict indexed on uuid
+        """
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
             pass
@@ -787,8 +808,10 @@ class VPPForwarder(object):
             # - and what exists may be wrong so we may have to
             # recreate it
             # TODO(ijw): idempotency
-            LOG.debug('creating port %s as type %s',
-                      uuid, if_type)
+            mac = (mac if mac is not None
+                   else self.generate_mac_from_uuid(uuid))
+            LOG.debug('creating port %s as type %s with mac %s',
+                      uuid, if_type, mac)
 
             # Deal with the naming conventions of interfaces
 
@@ -843,6 +866,18 @@ class VPPForwarder(object):
             props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
         return self.interfaces[uuid]
+
+    def generate_mac_from_uuid(self, uuid):
+        basemac = cfg.CONF.base_mac
+        macsuffix = uuid[-6:]
+        macsuffix = ':'.join(s.encode('hex') for s in macsuffix.decode('hex'))
+        return basemac[0:9] + macsuffix
+
+    def ensure_interface_for_vhost_socket_binding(self, uuid):
+        mac = self.generate_mac_from_uuid(uuid)
+        LOG.debug("Calling VPP interface creation on vhost socket with props "
+                  "vif_type: %s , uuid: %s, mac: %s", 'vhostuser', uuid, mac)
+        self.ensure_interface_on_host('vhostuser', uuid, mac)
 
     def ensure_interface_in_vpp_bridge(self, net_br_idx, iface_idx):
         """Idempotently ensure that a bridge contains an interface
@@ -2904,8 +2939,8 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         self.data.bind(
             self.data.binder.add_notification,
             port,
-            binding_type,
-            data['mac_address'],
+            data['binding_type'],
+            None,  # We will set this closer to the actual vpp call
             data['physnet'],
             data['network_type'],
             data['segmentation_id'],
