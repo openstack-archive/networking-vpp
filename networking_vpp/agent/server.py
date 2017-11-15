@@ -52,6 +52,7 @@ from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
 from networking_vpp.utils import device_monitor
+from networking_vpp.utils import file_monitor
 from networking_vpp import version
 
 from neutron.agent.linux import bridge_lib
@@ -64,6 +65,8 @@ try:
 except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
+from neutron.common import utils as c_utils
+from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -331,6 +334,20 @@ class VPPForwarder(object):
         self.device_monitor.on_add(self._consider_external_device)
         # The worker will be in endless loop, so don't care the return value
         eventlet.spawn_n(self.device_monitor.run)
+
+        # Start Vhostsocket filemonitor to bind sockets as soon as they appear.
+        self.filemonitor = file_monitor.FileMonitor(
+            watch_pattern=n_const.UUID_PATTERN,
+            watch_dir=cfg.CONF.ml2_vpp.vhost_user_dir)
+        # Register to handle ON_CREATE event.
+        self.filemonitor.register_on_add_cb(
+            self.ensure_interface_for_vhost_socket_binding)
+        # Register to handle ON_DELETE event.
+        # We are expecting the port unbinding call flow to clean up vhost
+        # sockets, hence ignoring delete events on vhost file handle.
+        self.filemonitor.register_on_del_cb(lambda *args: None)
+        # Finally start the file monitor.
+        eventlet.spawn_n(self.filemonitor.run)
 
     ########################################
     # Port resyncing on restart
@@ -778,7 +795,20 @@ class VPPForwarder(object):
         # later in time.
         self.ensure_tap_in_bridge(tap_name, bridge_name)
 
-    def ensure_interface_on_host(self, if_type, uuid, mac):
+    @lockutils.synchronized('vpp-lock')
+    def ensure_interface_on_host(self, if_type, uuid, mac=None):
+        """Create or update vpp interface on host based on if_type.
+
+        Depending on the if_type (maketap, plugtap or vhostuser) call vpp papi
+        to do vpp side of the plumbing. This will change depending on the
+        if_type. The interfaces are tagged saved in the internal dict for easy
+        retrieval.
+
+        The call is idempotent if the uuid and its associated
+        interface is already present.
+
+        :return: dict indexed on uuid
+        """
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
             pass
@@ -787,8 +817,16 @@ class VPPForwarder(object):
             # - and what exists may be wrong so we may have to
             # recreate it
             # TODO(ijw): idempotency
-            LOG.debug('creating port %s as type %s',
-                      uuid, if_type)
+
+            # Unfortunately call_vpp() expects a mac and we need to pass one.
+            # We will create a random mac if none is passed. We are setting
+            # base_mac from neutron, assuming neutron is the sole consumer of
+            # code at the moment. This is an assumption which might need a todo
+
+            mac = (mac if mac is not None
+                   else c_utils.get_random_mac(cfg.CONF.base_mac.split(':')))
+            LOG.debug('creating port %s as type %s with mac %s',
+                      uuid, if_type, mac)
 
             # Deal with the naming conventions of interfaces
 
@@ -843,6 +881,23 @@ class VPPForwarder(object):
             props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
         return self.interfaces[uuid]
+
+    def ensure_interface_for_vhost_socket_binding(self, name):
+        """Ensure vpp interface for imminent vhost socket binding.
+
+        Somebody has dropped a file in the vhost_socket_directory which matched
+        our watch pattern (Neutron port uuid). We are expecting an imminent
+        vhost socket binding (from presumably Nova), so lets get ahead of the
+        curve and create a vhost socket for it.
+
+        Inteface name is the vhost socket file name and since we don't know
+        the mac, let vhost interface create function make one.
+
+        """
+
+        LOG.debug("Calling VPP interface creation on vhost socket with props "
+                  "vif_type: %s , uuid: %s ", 'vhostuser', name)
+        self.ensure_interface_on_host('vhostuser', uuid=name, mac=None)
 
     def ensure_interface_in_vpp_bridge(self, net_br_idx, iface_idx):
         """Idempotently ensure that a bridge contains an interface
@@ -2905,7 +2960,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
             self.data.binder.add_notification,
             port,
             binding_type,
-            data['mac_address'],
+            None,  # We will set this closer to the actual vpp call
             data['physnet'],
             data['network_type'],
             data['segmentation_id'],
