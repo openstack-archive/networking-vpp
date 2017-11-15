@@ -18,3 +18,5 @@ oslo_serialization
 PyJWT
 cryptography>=2.0,<3
 pyOpenSSL
+inotifyx==0.2.2
+eventlet-inotifyx==0.0.1

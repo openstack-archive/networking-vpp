@@ -64,6 +64,7 @@ try:
 except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
+from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -331,6 +332,13 @@ class VPPForwarder(object):
         self.device_monitor.on_add(self._consider_external_device)
         # The worker will be in endless loop, so don't care the return value
         eventlet.spawn_n(self.device_monitor.run)
+
+        # Vhost socket file monitor to ensure live migration succeeds
+        from networking_vpp.utils import file_monitor
+        self.filemonitor = file_monitor.FileMonitor()
+        self.filemonitor.register_on_add_cb(
+            self.ensure_interface_on_host_nova_livemigration)
+        eventlet.spawn_n(self.filemonitor.run)
 
     ########################################
     # Port resyncing on restart
@@ -778,6 +786,7 @@ class VPPForwarder(object):
         # later in time.
         self.ensure_tap_in_bridge(tap_name, bridge_name)
 
+    @lockutils.synchronized('vpp-lock')
     def ensure_interface_on_host(self, if_type, uuid, mac):
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
@@ -787,8 +796,10 @@ class VPPForwarder(object):
             # - and what exists may be wrong so we may have to
             # recreate it
             # TODO(ijw): idempotency
-            LOG.debug('creating port %s as type %s',
-                      uuid, if_type)
+            mac = (mac if mac is not None
+                   else self.generate_mac_from_uuid(uuid))
+            LOG.debug('creating port %s as type %s with mac %s',
+                      uuid, if_type, mac)
 
             # Deal with the naming conventions of interfaces
 
@@ -843,6 +854,18 @@ class VPPForwarder(object):
             props['iface_idx'] = iface_idx
             self.interfaces[uuid] = props
         return self.interfaces[uuid]
+
+    def generate_mac_from_uuid(self, uuid):
+        basemac = cfg.CONF.base_mac
+        macsuffix = uuid[-6:]
+        macsuffix = ':'.join(s.encode('hex') for s in macsuffix.decode('hex'))
+        return basemac[0:9] + macsuffix
+
+    def ensure_interface_on_host_nova_livemigration(self, uuid):
+        mac = self.generate_mac_from_uuid(uuid)
+        LOG.debug("Calling VPP interface creation for live mgr with props "
+                  "vif_type: %s , uuid: %s, mac: %s", 'vhostuser', uuid, mac)
+        self.ensure_interface_on_host('vhostuser', uuid, mac)
 
     def ensure_interface_in_vpp_bridge(self, net_br_idx, iface_idx):
         """Idempotently ensure that a bridge contains an interface
@@ -2905,7 +2928,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
             self.data.binder.add_notification,
             port,
             binding_type,
-            data['mac_address'],
+            None,  # We will set this closer to the actual vpp call
             data['physnet'],
             data['network_type'],
             data['segmentation_id'],
