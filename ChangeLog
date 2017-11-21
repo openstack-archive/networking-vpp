@@ -1,6 +1,39 @@
 CHANGES
 =======
 
+17.10
+-----
+
+* L3 router service plugin enhancement
+* Add compat layer for driver_api file
+* Bump VPP version to 17.10
+* Fix main function to match setup.cfg
+* compat.py: Updating neutron.plugins module name
+* Add compatibility for ml2 config module
+* Restructure and comment main routine for agent
+* Clean up tests
+* Remove obsolete 'maketap' plugging type
+* ETCD message signatures
+* Update location of TYPE_XXX constants for compatibility
+* Stop using get_random_mac via neutron.common.utils
+* Eliminate non-harmful logs when adding external tap into bridges
+* Fix unbind error when deleting an external network.
+* Fix py27 test in upstream Jenkins
+* changes needed to maintain parity with the changes in
+   sw_interface_set_flags in VPP python api
+* Adding eventlet worker to ensure tap interfaces in the right bridge
+* we should use 'vppctl show interface'
+* Remove empty GPE directories in etcd after port unbind
+* Delete GPE remote keys from etcd when ports are unbound
+* Correctly replace existing GPE ARP entries
+* Document UnsupportedInterfaceException
+* Leave uplink interface UP when deleting bridge domains
+* Properly unbind a GPE bound port
+* Add configurability to etcd running
+* Force init_resync_start's return value to a set()
+* Remove leading quote in docstring
+* Fix default resync code to actually resync
+
 17.07
 -----
 
