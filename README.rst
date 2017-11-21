@@ -370,32 +370,6 @@ This includes security groups, the anti-spoof filters
 (including the holes for things like DHCP), the allowed address pair
 extension and the port security flag.
 
-What have you just done?
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-In the 17.07 release, we improved overlay networking with VXLAN GPE.
-Previously, it was hard to use - the way GPE works, it programs routes to
-specific endpoints, and broadcast packets - ARP requests in particular -
-didn't work.  The new version implements proxy ARP on the local interface,
-which means you should be able to get VMs to talk to each other with no
-special extra behaviour.
-
-We've also added support for remote-group-id within security group rules.
-When you set this on a security group, ports in a security group can talk
-to ports assigned to the other group but no-one else.
-
-Neutron-native L3 should work better; we've fixed some bugs related to
-handover when one agent goes down and you need to switch to a redundant
-spare.
-
-There were a few bug fixes; one in particular makes networking-vpp 17.07
-work much better in highly loaded systems, where previously you may have
-encountered slowness and DB deadlock errors in the log.
-
-That aside, there's the usual round of improvements in code style and
-structure, which will make it easier for us to add more features and
-functionality in the future.
-
 What is VXLAN-GPE and how can I get it to work?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -484,6 +458,8 @@ In general, check the bugs at
    to the pause you see because the virtual switch went down.  It's still
    better than OVS or LinuxBridge - if your switch went down (or you
    needed to upgrade it) the kernel resets and the box reboots.
+-  The L3 tests need rework due to compatibility issues introduced with
+   Neutron Pike, and are currently disabled when running unit tests.
 
 What are you doing next?
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -491,13 +467,10 @@ What are you doing next?
 We also keep our job list in <https://bugs.launchpad.net/networking-vpp>
 anything starting 'RFE' is a 'request for enhancement'.
 
-We will be hardening the native L3 router implementation (vpp-router) in
-future releases. This will include fixes to the etcd communication routines,
-support for resync and high availablilty. Support for L3 extensions like
-extraroute etc. will also be added to the service plugin.
-
 We'll be dealing with a few of the minor details of a good Neutron
-network driver, like sorting out MTU configuration.
+network driver, like sorting out MTU configuration of Neutron routers.
+
+We will be adding HA support for the L3 plugin.
 
 What can I do to help?
 ~~~~~~~~~~~~~~~~~~~~~~
