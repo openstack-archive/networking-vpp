@@ -40,11 +40,11 @@ function init_networking_vpp {
         uplink=$(echo $MECH_VPP_PHYSNETLIST | cut -d ':' -f 2)
         # checking specifically for tap-0 to avoid problems in developer
         # test envs where other logical interfaces may be specified.
-        if ! [[ `vppctl show interface` =~ "$uplink" ]] && [[ "$uplink" == 'tap-0' ]]; then
+        if ! [[ `sudo vppctl show interface` =~ "$uplink" ]] && [[ "$uplink" == 'tap-0' ]]; then
             echo "$uplink not found in vppctl show interface"
             # by default, vpp will internally name the first tap device 'tap-0'
-            vppctl tap connect test
-            vppctl set interface state $uplink up
+            sudo vppctl tap connect test
+            sudo vppctl set interface state $uplink up
         fi
     fi
 }
