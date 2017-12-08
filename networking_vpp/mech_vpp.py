@@ -780,7 +780,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
                         'icmp': 1,
                         'icmpv6': 58}[rule['protocol']]
         else:
-            protocol = rule['protocol']
+            # Convert protocol string value to an integer
+            protocol = int(rule['protocol'])
         # If IPv6 and protocol == icmp, convert protocol to icmpv6
         if is_ipv6 and protocol == 1:
             protocol = 58
@@ -818,10 +819,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
             # Set the required attribute in the SecurityGroupRule tuple
             # remote_group_id to None.
             remote_group_id = None
-        # Neutron uses -1 or None to represent all ports
+        # Neutron uses -1 or None or 0 to represent all ports
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
-        if rule['port_range_min'] == -1 or rule['port_range_min'] is None:
+        if rule['port_range_min'] == -1 or not rule['port_range_min']:
             # Valid TCP/UDP port ranges
             if protocol in [6, 17]:
                 port_min, port_max = (0, 65535)
