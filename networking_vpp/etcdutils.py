@@ -795,6 +795,11 @@ def register_etcd_conn_opts(cfg, group):
     cfg.register_opts(_etcd_conn_opts, group)
 
 
+def list_opts():
+    """Return config details for use with Oslo-config generator"""
+    return _etcd_conn_opts
+
+
 class EtcdClientFactory(object):
     def _parse_host(self, etc_host_elem, default_port):
         """Parse a single etcd host entry (which can be host or host/port)
