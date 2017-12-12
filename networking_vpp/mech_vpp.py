@@ -770,15 +770,29 @@ class EtcdAgentCommunicator(AgentCommunicator):
         """
         is_ipv6 = 0 if rule['ethertype'] == 'IPv4' else 1
         # Neutron uses None to represent any protocol
-        # Use 0 to represent any protocol
+        # We use 0 to represent any protocol
         if rule['protocol'] is None:
             protocol = 0
         # VPP rules require IANA protocol numbers
-        elif rule['protocol'] in ['tcp', 'udp', 'icmp', 'icmpv6']:
-            protocol = {'tcp': 6,
-                        'udp': 17,
-                        'icmp': 1,
-                        'icmpv6': 58}[rule['protocol']]
+        # Neutron supports the following IP protocols
+        # ah or 51, dccp or 33, egp or 8, esp or 50, gre or 47, icmp or 1,
+        # icmpv6 or 58, igmp or 2, ipv6-encap or 41, ipv6-frag or 44,
+        # ipv6-icmp or 58, ipv6-nonxt or 59, ipv6-opts or 60,
+        # ipv6-route or 43, ospf or 89, pgm or 113, rsvp or 46,
+        # sctp or 132, tcp or 6, udp or 17, udplite or 136, vrrp or 112.
+        elif rule['protocol'] in ['tcp', 'udp', 'icmp', 'icmpv6', 'ah',
+                                  'dccp', 'egp', 'esp', 'gre', 'igmp',
+                                  'ipv6-encap', 'ipv6-frag', 'ipv6-icmp',
+                                  'ipv6-nonxt', 'ipv6-opts', 'ipv6-route',
+                                  'ospf', 'pgm', 'rsvp', 'sctp', 'udplite',
+                                  'vrrp']:
+            protocol = {'tcp': 6, 'udp': 17, 'icmp': 1, 'icmpv6': 58,
+                        'ah': 51, 'dccp': 33, 'egp': 8, 'esp': 50, 'gre': 47,
+                        'igmp': 2, 'ipv6-encap': 41, 'ipv6-frag': 44,
+                        'ipv6-icmp': 58, 'ipv6-nonxt': 59, 'ipv6-opts': 60,
+                        'ipv6-route': 43, 'ospf': 89, 'pgm': 113, 'rsvp': 46,
+                        'sctp': 132, 'udplite': 136,
+                        'vrrp': 112}[rule['protocol']]
         else:
             # Convert protocol string value to an integer
             protocol = int(rule['protocol'])
@@ -823,13 +837,14 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # VPP uses 0-65535 for all tcp/udp ports, Use -1 to represent all
         # ranges for ICMP types and codes
         if rule['port_range_min'] == -1 or not rule['port_range_min']:
-            # Valid TCP/UDP port ranges
-            if protocol in [6, 17]:
+            # Valid TCP/UDP port ranges for TCP(6), UDP(17) and UDPLite(136)
+            if protocol in [6, 17, 136]:
                 port_min, port_max = (0, 65535)
             # A Value of -1 represents all ICMP/ICMPv6 types & code ranges
             elif protocol in [1, 58]:
                 port_min, port_max = (-1, -1)
-            # Ignore port_min and port_max fields
+            # Ignore port_min and port_max fields as other protocols don't
+            # use them
             else:
                 port_min, port_max = (0, 0)
         else:
