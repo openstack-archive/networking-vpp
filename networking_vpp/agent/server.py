@@ -2138,9 +2138,9 @@ class VPPForwarder(object):
     def add_local_gpe_mapping(self, vni, mac):
         """Add a local GPE mapping between a mac and vni."""
         lset_mapping = self.gpe_map[gpe_lset_name]
-        LOG.debug('Adding vni %s to gpe_map', vni)
+        LOG.debug('Adding vni %s to gpe_map with mac %s', vni, mac)
         lset_mapping['vnis'].add(vni)
-        if mac not in lset_mapping['local_map']:
+        if mac and mac not in lset_mapping['local_map']:
             self.vpp.add_lisp_local_mac(mac, vni, gpe_lset_name)
             lset_mapping['local_map'][mac] = vni
 
@@ -2713,16 +2713,25 @@ class EtcdListener(object):
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
         rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).read(
             key_space, recursive=True)
-        for child in rv.children:
+        # The SignedEtcdJSONWriter returns a parsed EtcdResult Object
+        # Iterate through it's results
+        for child in rv._result.children:
             m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
                          child.key)
             if m:
                 hostname = m.group(1)
                 mac = m.group(2)
                 ip = m.group(3)
+                # Sometimes the value returned is a Json string resulting in
+                # an exception - Handle it to avoid an agent error
+                try:
+                    value = jsonutils.loads(child.value)
+                except ValueError:
+                    value = child.value
                 if self.is_valid_remote_map(vni, hostname):
-                    self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
-                                                        child.value)
+                    if mac and ip and value:
+                        self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
+                                                            value)
 
     def add_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
         """Create a remote GPE overlay to underlay mapping
