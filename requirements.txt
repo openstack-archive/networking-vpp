@@ -14,7 +14,7 @@ pyudev>=0.21.0
 eventlet
 ipaddress
 click
-oslo_serialization
+oslo.serialization
 PyJWT
 cryptography>=2.0,<3
 pyOpenSSL
