@@ -19,3 +19,4 @@ PyJWT
 cryptography>=2.0,<3
 pyOpenSSL
 pyinotify
+-e git://git.openstack.org/openstack/neutron.git#egg=neutron
