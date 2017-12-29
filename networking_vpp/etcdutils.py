@@ -123,6 +123,13 @@ class EtcdWriter(object):
             pass
 
 
+def _unchanged(name):
+    def pt_get(self):
+        return getattr(self._result, name)
+
+    return property(pt_get)
+
+
 class ParsedEtcdResult(etcd.EtcdResult):
     """Parsed version of an EtcdResult
 
@@ -135,6 +142,24 @@ class ParsedEtcdResult(etcd.EtcdResult):
         self._reader = reader
         self._result = result
 
+    # A whole set of result properties are as they are on the original
+    # result.
+
+    key = _unchanged('key')
+    expiration = _unchanged('expiration')
+    ttl = _unchanged('ttl')
+    modifiedIndex = _unchanged('modifiedIndex')
+    createdIndex = _unchanged('createdIndex')
+    newKey = _unchanged('newKey')
+    dir = _unchanged('dir')
+    etcd_index = _unchanged('etcd_index')
+    raft_index = _unchanged('raft_index')
+    action = _unchanged('action')
+
+    # used internally by etcd.client.Client
+    _prev_node = _unchanged('_prev_node')
+
+    # The one special case, where we need to change things
     @property
     def value(self):
         return self._reader._process_read_value(self._result.key,
@@ -145,7 +170,7 @@ class ParsedEtcdResult(etcd.EtcdResult):
             # This returns a value which may itself have a subtree
             # depending on args passed
 
-            return ParsedEtcdResult(self._reader, self._result)
+            return ParsedEtcdResult(self._reader, f)
 
     # We know a bit too much about the internals of EtcdResult, but
     # given that, we know that the internals all work from .value or
