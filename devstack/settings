@@ -63,4 +63,7 @@ JWT_NODE_PRIVATE_KEY=${JWT_NODE_PRIVATE_KEY:-}
 JWT_CONTROLLER_NAME_PATTERN=${JWT_CONTROLLER_NAME_PATTERN:-}
 JWT_MAX_DURATION=${JWT_MAX_DURATION:-0}
 
+# Layer3 Router/HA Settings
+# Provide a hostname or a comma separated list of L3 hostnames
+L3_HOSTS=${L3_HOSTS:-localhost}
 
