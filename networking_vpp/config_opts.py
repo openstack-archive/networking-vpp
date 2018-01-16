@@ -56,8 +56,9 @@ _vpp_opts = [
                help=_("bridge domain MAC aging TTL (in seconds)")),
     cfg.IntOpt('vpp_cmd_queue_len', default=None,
                help=_("Size of the VPP command queue (in messages)")),
-    cfg.StrOpt('l3_host', default="127.0.0.1",
-               help=_("Hostname to render L3 services on.")),
+    cfg.StrOpt('l3_hosts', default="127.0.0.1",
+               help=_("A comma separated list of Hostnames "
+                      "to render L3 services on.")),
     cfg.BoolOpt('jwt_signing', default=False,
                 help=_("Activate JWT token in etcd messages")),
 
