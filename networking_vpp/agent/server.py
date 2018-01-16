@@ -312,6 +312,10 @@ class VPPForwarder(object):
         self.router_interfaces = {}  # router_port_uuid: {}
         self.router_external_interfaces = {}  # router external interfaces
         self.floating_ips = {}  # floating_ip_uuid: {}
+        # Router interface states for L3-HA
+        self.router_interface_states = {}  # {idx: state} 1 = UP, 0 = DOWN
+        # VPP Router state variable is updated by the RouterWatcher
+        self.router_state = None  # 1 = Master; 0 = Backup
         # mac_ip acls do not support atomic replacement.
         # Here we create a mapping of sw_if_index to VPP ACL indices
         # so we can easily lookup the ACLs associated with the interface idx
@@ -1623,6 +1627,10 @@ class VPPForwarder(object):
         For external networks, the BVI functions as an SNAT external
         interface. For updating an interface, the service plugin removes
         the old interface and then adds the new router interface.
+
+        When Layer3 HA is enabled, the router interfaces are only enabled on
+        the active VPP router. The standby router keeps the interface in
+        an admin down state.
         """
         # The interface could be either an external_gw or an internal router
         # interface on a subnet
@@ -1660,6 +1668,7 @@ class VPPForwarder(object):
         # Ensure a BVI (i.e. A loopback) for the bridge domain
         loopback_idx = self.vpp.get_bridge_bvi(bridge_idx)
         if not loopback_idx:
+            # Create the interface but don't bring it UP yet
             loopback_idx = self.vpp.create_loopback(
                 router_data['loopback_mac'])
             self.vpp.set_loopback_bridge_bvi(loopback_idx, bridge_idx)
@@ -1671,6 +1680,21 @@ class VPPForwarder(object):
             except SystemExit:
                 # Log error and continue, do not exit here
                 LOG.error("Error setting MTU on router interface")
+        # Update the state of the loopback interface based on the router HA
+        # state and also populate the data structure router_interface_states
+        # so the HA code can activate and deactivate the interface
+        if self.router_state == 1:
+            LOG.debug("Router HA state is ACTIVE")
+            LOG.debug("Bringing UP the router intf idx: %s", loopback_idx)
+            self.vpp.ifup(loopback_idx)
+            self.router_interface_states[loopback_idx] = 1
+        else:
+            LOG.debug("Router HA state is BACKUP")
+            LOG.debug("Bringing DOWN the router intf idx: %s", loopback_idx)
+            self.vpp.ifdown(loopback_idx)
+            self.router_interface_states[loopback_idx] = 0
+        LOG.debug("Current router interface states: %s",
+                  self.router_interface_states)
         # Set SNAT on the interface if SNAT is enabled
         # Get a list of all SNAT interfaces
         int_list = self.vpp.get_snat_interfaces()
@@ -1727,6 +1751,32 @@ class VPPForwarder(object):
             self.export_routes_from_tenant_vrfs(
                 ext_gw_ip=router_dict['external_gateway_ip'])
         return loopback_idx
+
+    def become_master_router(self):
+        """This node will become the master router"""
+        LOG.debug("VPP becoming the master router..")
+        LOG.debug("Current router interface states: %s",
+                  self.router_interface_states)
+        for idx in self.router_interface_states:
+            if not self.router_interface_states[idx]:
+                LOG.debug("Bringing UP the router interface: %s", idx)
+                self.vpp.ifup(idx)
+                self.router_interface_states[idx] = 1
+        LOG.debug("New router interface states: %s",
+                  self.router_interface_states)
+
+    def become_backup_router(self):
+        """This node will become the backup router"""
+        LOG.debug("VPP becoming the standby router..")
+        LOG.debug("Current router interface states: %s",
+                  self.router_interface_states)
+        for idx in self.router_interface_states:
+            if self.router_interface_states[idx]:
+                LOG.debug("Bringing DOWN the router interface: %s", idx)
+                self.vpp.ifdown(idx)
+                self.router_interface_states[idx] = 0
+        LOG.debug("New router interface states: %s",
+                  self.router_interface_states)
 
     def _get_ip_network(self, gateway_ip, prefixlen):
         """Returns the IP network for the gateway in CIDR form."""
@@ -1912,6 +1962,7 @@ class VPPForwarder(object):
             else:
                 # Last subnet assigned, delete the interface
                 self.vpp.delete_loopback(bvi_if_idx)
+                self.router_interface_states.pop(bvi_if_idx, None)
         if router['net_type'] == 'vxlan':
             LOG.debug('Removing local vxlan GPE mappings for router '
                       'interface: %s', port_id)
@@ -3007,8 +3058,10 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
         The returned tuple is denoted by (token1, token2).
         If token1 == "floatingip", then token2 is the ID of the
         floatingip that is added or removed on the server.
-        Else, token1 == router_ID and token2 == port_ID of the router
+        If, token1 == router_ID and token2 == port_ID of the router
         interface that is added or removed.
+        If, token1 == 'ha', then we return that token for router watcher
+        to action.
         """
         m = re.match('([^/]+)' + '/([^/]+)', router_key)
         floating_ip, router_id, port_id = None, None, None
@@ -3041,6 +3094,17 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                 floatingip_dict = jsonutils.loads(value)
                 self.data.vppf.associate_floatingip(floating_ip,
                                                     floatingip_dict)
+        if router_key == 'ha':
+            LOG.debug('Setting VPP-Router HA State..')
+            router_state = int(jsonutils.loads(value))
+            LOG.debug('Router state is: %s', router_state)
+            state = 'MASTER' if router_state == 1 else 'BACKUP'
+            LOG.debug('VPP Router HA state became: %s', state)
+            self.data.vppf.router_state = router_state
+            if router_state:
+                self.data.vppf.become_master_router()
+            else:
+                self.data.vppf.become_backup_router()
 
     def removed(self, router_key):
         token1, token2 = self.parse_key(router_key)

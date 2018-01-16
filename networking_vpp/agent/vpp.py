@@ -589,7 +589,8 @@ class VPPInterface(object):
         # Create a loopback interface to act as a BVI
         mac_address = mac_to_bytes(mac_address)
         loop = self.call_vpp('create_loopback', mac_address=mac_address)
-        self.ifup(loop.sw_if_index)
+        # ifup on an interface is performed by the active VPP router
+        self.ifdown(loop.sw_if_index)
 
         return loop.sw_if_index
 
@@ -806,32 +807,38 @@ class VPPInterface(object):
     def set_interface_mtu(self, sw_if_idx, mtu):
         self.call_vpp('sw_interface_set_mtu', sw_if_index=sw_if_idx, mtu=mtu)
 
+    # Enables or Disables the NAT feature on an interface
     def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
-        self.call_vpp('snat_interface_add_del_feature',
+        self.call_vpp('nat44_interface_add_del_feature',
                       sw_if_index=sw_if_index,
                       is_inside=is_inside,
                       is_add=is_add)
 
-    # Adds an SNAT address to the pool
+    # Adds/Delete external SNAT address range for Dynamic NAT
     def add_del_snat_address(self, ip_addr, vrf_id, is_add=True):
-        self.call_vpp('snat_add_address_range', first_ip_address=ip_addr,
-                      last_ip_address=ip_addr, vrf_id=vrf_id, is_add=is_add,
-                      is_ip4=True)
+        self.call_vpp('nat44_add_del_address_range',
+                      first_ip_address=ip_addr,
+                      last_ip_address=ip_addr,
+                      vrf_id=vrf_id,
+                      is_add=is_add)
 
-    # 1:N overload on the IP address assigned to the interface
+    # Enable or Disable the dynamic NAT feature on the outside interface
     def snat_overload_on_interface_address(self, sw_if_index, is_add=1):
         """Sets/Removes 1:N NAT overload on the outside interface address."""
-        self.call_vpp('snat_add_del_interface_addr',
-                      is_add=is_add, is_inside=0, sw_if_index=sw_if_index)
+        self.call_vpp('nat44_add_del_interface_addr',
+                      is_add=is_add,
+                      sw_if_index=sw_if_index)
 
     def get_outside_snat_interface_indices(self):
-        """Returns the sw_if_indices of interfaces with 1:N NAT enabled"""
-        return [intfs.sw_if_index
-                for intfs in self.call_vpp('snat_interface_addr_dump')]
+        """Returns the sw_if_indices of ext. interfaces with SNAT enabled"""
+        return [intf.sw_if_index
+                for intf in self.call_vpp('nat44_interface_dump')
+                if intf.is_inside == 0]
 
     def get_snat_interfaces(self):
+        """Returns the sw_if_indices of all interfaces with SNAT enabled"""
         snat_interface_list = []
-        snat_interfaces = self.call_vpp('snat_interface_dump')
+        snat_interfaces = self.call_vpp('nat44_interface_dump')
         for intf in snat_interfaces:
             snat_interface_list.append(intf.sw_if_index)
         return snat_interface_list
@@ -839,7 +846,7 @@ class VPPInterface(object):
     def get_snat_local_ipaddresses(self):
         # NB: Only IPv4 SNAT addresses are supported.
         snat_local_ipaddresses = []
-        snat_static_mappings = self.call_vpp('snat_static_mapping_dump')
+        snat_static_mappings = self.call_vpp('nat44_static_mapping_dump')
         for static_mapping in snat_static_mappings:
             snat_local_ipaddresses.append(
                 str(ipaddress.IPv4Address(
@@ -847,12 +854,12 @@ class VPPInterface(object):
         return snat_local_ipaddresses
 
     def get_snat_static_mappings(self):
-        return self.call_vpp('snat_static_mapping_dump')
+        return self.call_vpp('nat44_static_mapping_dump')
 
     def set_snat_static_mapping(self, local_ip, external_ip, is_add=1):
         local_ip = str(ipaddress.IPv4Address(local_ip).packed)
         external_ip = str(ipaddress.IPv4Address(external_ip).packed)
-        self.call_vpp('snat_add_static_mapping',
+        self.call_vpp('nat44_add_del_static_mapping',
                       local_ip_address=local_ip,
                       external_ip_address=external_ip,
                       external_sw_if_index=0xFFFFFFFF,  # -1 = Not used
@@ -860,12 +867,11 @@ class VPPInterface(object):
                       external_port=0,  # 0 = ignore
                       addr_only=1,      # 1 = address only mapping
                       vrf_id=0,         # 0 = global VRF
-                      is_add=is_add,    # 1 = add, 0 = delete
-                      is_ip4=1)         # 1 = address type is IPv4
+                      is_add=is_add)    # 1 = add, 0 = delete
 
     def get_snat_addresses(self):
         ret_addrs = []
-        addresses = self.call_vpp('snat_address_dump')
+        addresses = self.call_vpp('nat44_address_dump')
         for addr in addresses:
             ret_addrs.append(str(ipaddress.ip_address(addr[3][:4]).exploded))
 
