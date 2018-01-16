@@ -341,13 +341,49 @@ And make sure the *Openstack L3 agent is not running*. You will need to nominate
 a host to act as the Layer 3 gateway host in ml2_conf.ini::
 
     [ml2_vpp]
-    l3_host = <my_l3_gateway_host.domain>
+    l3_hosts = <my_l3_gateway_host.domain>
 
 The L3 host will need L2 adjacency and connectivity to the compute hosts to
 terminate tenant VLANs and route traffic properly.
 
 *The vpp-agent acts as a common L2 and L3 agent so it needs to be started on
 the L3 host as well*.
+
+How do I enable Layer3 HA?
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+In the 18.01 release, we support Layer3 HA for VPP.
+First, ensure that the vpp-router plugin is enabled.
+Then provide the list of Layer3 hosts in your deployment, using a comma
+separated notation, shown below in the ml2.ini configuration file.
+
+[ml2_vpp]
+l3_hosts = node1,node2
+
+How does Layer3 HA Work and how do I test it?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We use the keepalived to do the ACTIVE/BACKUP router election using VRRP.
+You can find sample keepalived config files and scripts in the
+/tools directory.
+First, you need to decide which node will become the master.
+Use the keepalived.master.conf file on the master node,
+and the keepalived.backup.conf on all the backup nodes.
+Just copy these files to /etc/keepalived.conf on the respective nodes.
+
+Now, when there is a state transition to MASTER, keepalived will run the
+script named master.sh, to notify the master election, and
+it will run the backup.sh, when the node state transitions
+to BACKUP. These scripts are also in the /tools directory.
+
+The argument required for each of these scripts is the ${hostname}
+of the node. These scripts update a key in etcd and it is used to 
+control the router state.
+ETCD_KEY="/networking-vpp/nodes/${HOSTNAME}/routers/ha
+The value of this key is set to 1 on the MASTER node and 0 otherwise.
+
+The vpp-agent listens for watch events on this key.
+On the master node, the router BVI interfaces are enabled and
+they are disabled on the backup nodes.
 
 How does it talk to VPP?
 ~~~~~~~~~~~~~~~~~~~~~~~~

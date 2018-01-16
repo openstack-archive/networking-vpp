@@ -364,8 +364,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                return_value=False):
             loopback_idx = self.vpp.ensure_router_interface_on_host(
                 port, router)
-            self.vpp.vpp.create_loopback.assert_called_once_with(
-                router['mac_address'])
+            self.vpp.vpp.get_ifidx_mac_address(loopback_idx)
             self.vpp.vpp.set_loopback_bridge_bvi.assert_called_once_with(
                 loopback_idx, 'fake_dom_id')
             self.vpp.vpp.set_interface_vrf.assert_called_once_with(
