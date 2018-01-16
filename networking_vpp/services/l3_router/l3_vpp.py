@@ -68,12 +68,13 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         super(VppL3RouterPlugin, self).__init__()
         self.communicator = EtcdAgentCommunicator(
             notify_bound=lambda *args: None)
-        self.l3_host = cfg.CONF.ml2_vpp.l3_host
+        self.l3_hosts = cfg.CONF.ml2_vpp.l3_hosts.replace(' ', '').split(',')
         self.gpe_physnet = cfg.CONF.ml2_vpp.gpe_locators
         LOG.info('vpp-router: router_service plugin has initialized')
+        LOG.debug('vpp-router l3_hosts: %s', self.l3_hosts)
 
-    def _floatingip_path(self, fip_id):
-        return (server.LEADIN + '/nodes/' + self.l3_host + '/' +
+    def _floatingip_path(self, l3_host, fip_id):
+        return (server.LEADIN + '/nodes/' + l3_host + '/' +
                 server.ROUTER_FIP_DIR + fip_id)
 
     def _process_floatingip(self, context, fip_dict, event_type):
@@ -107,9 +108,10 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             LOG.debug("Router: disassociating floating ip: %s", fip_dict)
             vpp_floatingip_dict = None
 
-        db.journal_write(context.session,
-                         self._floatingip_path(fip_dict['id']),
-                         vpp_floatingip_dict)
+        for l3_host in self.l3_hosts:
+            db.journal_write(context.session,
+                             self._floatingip_path(l3_host, fip_dict['id']),
+                             vpp_floatingip_dict)
 
     def _get_vpp_router(self, context, router_id):
         try:
@@ -169,28 +171,28 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         router_dict['vrf_id'] = vrf_id
         return router_dict
 
-    def _get_router_intf_path(self, router_id, port_id):
+    def _get_router_intf_path(self, l3_host, router_id, port_id):
         return (server.LEADIN + '/nodes/' +
-                self.l3_host + '/' + server.ROUTERS_DIR +
+                l3_host + '/' + server.ROUTERS_DIR +
                 router_id + '/' + port_id)
 
     def _write_interface_journal(self, context, router_id, router_dict):
         LOG.info("router-service: writing router interface journal for "
                  "router_id:%s, router_dict:%s", router_id, router_dict)
-        router_intf_path = self._get_router_intf_path(
-            router_id,
-            router_dict['port_id'])
-        db.journal_write(context.session, router_intf_path, router_dict)
-        self.communicator.kick()
+        for l3_host in self.l3_hosts:
+            router_intf_path = self._get_router_intf_path(
+                l3_host, router_id, router_dict['port_id'])
+            db.journal_write(context.session, router_intf_path, router_dict)
+            self.communicator.kick()
 
     def _remove_interface_journal(self, context, router_id, port_id):
         LOG.info("router-service: removing router interface journal for "
                  "router_id:%s, port_id:%s", router_id, port_id)
-        router_intf_path = self._get_router_intf_path(
-            router_id,
-            port_id)
-        db.journal_write(context.session, router_intf_path, None)
-        self.communicator.kick()
+        for l3_host in self.l3_hosts:
+            router_intf_path = self._get_router_intf_path(
+                l3_host, router_id, port_id)
+            db.journal_write(context.session, router_intf_path, None)
+            self.communicator.kick()
 
     def _write_router_external_gw_journal(self, context, router_id,
                                           router_dict, delete=False):
@@ -235,11 +237,13 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             # This the IP address of the external gateway that functions as
             # the default gateway for the tenant's router
             router_dict['external_gateway_ip'] = subnet['gateway_ip']
-            etcd_key = self._get_router_intf_path(router_id, gateway_port)
-            if delete:
-                router_dict = None
-            db.journal_write(context.session, etcd_key, router_dict)
-            self.communicator.kick()
+            for l3_host in self.l3_hosts:
+                etcd_key = self._get_router_intf_path(l3_host, router_id,
+                                                      gateway_port)
+                if delete:
+                    router_dict = None
+                db.journal_write(context.session, etcd_key, router_dict)
+                self.communicator.kick()
 
     def get_plugin_type(self):
         # TODO(ijw): not really the right place for backward compatibility...
