@@ -36,6 +36,7 @@ from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp import etcdutils
+from networking_vpp.extension import MechDriverExtensionBase
 
 from networking_vpp.compat import events
 from networking_vpp.compat import registry
@@ -89,6 +90,14 @@ class VPPMechanismDriver(api.MechanismDriver):
         compat.register_securitygroups_opts(cfg.CONF)
 
         self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
+        self.etcdJournalHelper = \
+            etcdutils.EtcdJournalHelper(
+                self.communicator,
+                neutron_db_api.get_session())
+        mgr = networking_vpp.ext_manager.ExtensionManager(
+            'networking_vpp.driver.extensions',
+            cfg.CONF.ml2_vpp.driver_extensions,
+            MechDriverExtensionBase)
 
     def get_vif_type(self, port_context):
         """Determine the type of the vif to be bound from port context"""
