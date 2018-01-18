@@ -18,6 +18,7 @@ import mock
 import etcd
 
 from networking_vpp import config_opts
+from networking_vpp import etcd_signed
 from networking_vpp import etcdutils
 from networking_vpp import jwt_agent
 from neutron.tests import base
@@ -164,7 +165,7 @@ class EtcdClientSecuredTestCase(base.BaseTestCase):
         self.client_factory.etcd_args['allow_reconnect'] = False
         self.client_factory.etcd_args['host'] = ''
         etcd_client = self.client_factory.client()
-        self.client = etcdutils.SignedEtcdJSONWriter(etcd_client)
+        self.client = etcd_signed.SignedEtcdJSONWriter(etcd_client)
 
     @mock.patch.object(etcd.client.Client, 'write')
     @mock.patch.object(etcd.client.Client, 'read')
