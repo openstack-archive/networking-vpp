@@ -3045,7 +3045,7 @@ class EtcdListener(object):
                 LOG.debug("Ensured GPE remote mappings for segment %s",
                           seg_id)
 
-    def add_etcd_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
+    def add_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
         """Create a remote GPE overlay to underlay mapping
 
         Overlay = mac_address + ip_address of the VM's port
