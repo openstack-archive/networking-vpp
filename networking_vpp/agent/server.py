@@ -2833,7 +2833,7 @@ class EtcdListener(object):
         LOG.debug("Updating secgroups:%s referencing the remote_group:%s",
                   secgroups, remote_group)
         etcd_client = self.client_factory.client()
-        etcd_writer = etcdutils.SignedEtcdJSONWriter(etcd_client)
+        etcd_writer = etcdutils.json_writer(etcd_client)
 
         for secgroup in secgroups:
             secgroup_key = self.secgroup_key_space + "/%s" % secgroup
@@ -2867,7 +2867,7 @@ class EtcdListener(object):
         """
         key_space = self.gpe_key_space + "/%s" % vni
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
-        rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).read(
+        rv = etcdutils.json_writer(self.client_factory.client()).read(
             key_space, recursive=True)
         for child in rv.children:
             m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
@@ -2892,7 +2892,7 @@ class EtcdListener(object):
             )
         LOG.debug('Writing GPE key to etcd %s with underlay IP address:%s',
                   gpe_key, underlay_ip)
-        etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).write(
+        etcdutils.json_writer(self.client_factory.client()).write(
             gpe_key, underlay_ip)
 
     def delete_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
@@ -2900,7 +2900,7 @@ class EtcdListener(object):
         gpe_dir = self.gpe_key_space + '/%s/%s/%s' % (segmentation_id,
                                                       self.host,
                                                       mac_address)
-        etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).delete(
+        etcdutils.json_writer(self.client_factory.client()).delete(
             gpe_dir + '/' + ip)
         etcdutils.EtcdHelper(self.client_factory.client()).remove_dir(
             gpe_dir)
@@ -3256,7 +3256,7 @@ class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
         self.known_keys = known_keys
         super(SecGroupWatcher, self).__init__(
             etcd_client, name, watch_path,
-            encoder=etcdutils.SignedEtcdJSONWriter, **kwargs)
+            **kwargs)
 
     def init_resync_start(self):
         # TODO(ijw): we should probably do the secgroup work
@@ -3408,7 +3408,7 @@ class BindNotifier(object):
         self.state_key_space = state_key_space
 
         self.etcd_client = client_factory.client()
-        self.etcd_writer = etcdutils.SignedEtcdJSONWriter(self.etcd_client)
+        self.etcd_writer = etcdutils.json_writer(self.etcd_client)
 
     def add_notification(self, id, content):
         """Queue a notification for sending to Nova
