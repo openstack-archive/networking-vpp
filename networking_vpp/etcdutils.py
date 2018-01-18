@@ -28,8 +28,8 @@ from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 import uuid
 
 from networking_vpp._i18n import _
+from networking_vpp.db import db
 from networking_vpp import exceptions as vpp_exceptions
-from networking_vpp import jwt_agent
 
 from oslo_serialization import jsonutils
 
@@ -208,36 +208,23 @@ class EtcdJSONWriter(EtcdWriter):
         return jsonutils.dumps(value)
 
 
-class SignedEtcdJSONWriter(EtcdJSONWriter):
-    """Write Python datastructures to etcd in a consistent form.
 
-    This takes values (typically as Python datastructures) and
-    converts them using JSON serialisation to a form that can be
-    stored in etcd, and vice versa.
+json_writer_class = None
+def json_writer(etcd_client):
+    "Create a JSON writer.
 
+    This gets a JSON writer appropriate to the signing settings.
+    It also avoids loading the crypto code if signing is not required.
     """
 
-    def __init__(self, etcd_client):
-        self.jwt_agent = jwt_agent.JWTUtils(
-            cfg.CONF.ml2_vpp.jwt_node_cert,
-            cfg.CONF.ml2_vpp.jwt_node_private_key,
-            cfg.CONF.ml2_vpp.jwt_ca_cert,
-            cfg.CONF.ml2_vpp.jwt_controller_name_pattern)
-        super(SignedEtcdJSONWriter, self).__init__(etcd_client)
-
-    def _process_read_value(self, key, value):
-        value = jsonutils.loads(value)
-        if (self.jwt_agent.should_path_be_signed(key)):
-            signerNodeName = self.jwt_agent.get_signer_name(key)
-            value = self.jwt_agent.verify(signerNodeName,
-                                          key,
-                                          value)
-        return value
-
-    def _process_written_value(self, key, value):
-        if (self.jwt_agent.should_path_be_signed(key)):
-            value = self.jwt_agent.sign(key, value)
-        return jsonutils.dumps(value)
+    global json_writer_class
+    if json_writer_class is None:
+        if cfg.CONF.ml2_vpp.jwt_signing:
+             import etcd_signed
+             json_writer_class = etcd_signed.SignedEtcdJSONWriter
+        else:
+             json_writer_class = EtcdJSONWriter
+    return json_writer_class(etcd_client)
 
 
 elector_cleanup = []
@@ -902,3 +889,22 @@ class EtcdClientFactory(object):
         etcd_client = etcd.Client(**self.etcd_args)
 
         return etcd_client
+
+
+class EtcdJournalHelper(object):
+    __instance = None
+
+    def __new__(cls, communicator, session):
+        if EtcdJournalHelper.__instance is None:
+            EtcdJournalHelper.__instance = object.__new__(cls)
+            EtcdJournalHelper.__instance._communicator = communicator
+            EtcdJournalHelper.__instance._session = session
+        return EtcdJournalHelper.__instance
+
+    @classmethod
+    def etcd_write(cls, key, value):
+        if cls.__instance is not None:
+            db.journal_write(cls.__instance._session,
+                             key,
+                             value)
+            cls.__instance._communicator.kick()
