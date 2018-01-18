@@ -83,6 +83,8 @@ _vpp_opts = [
     cfg.StrOpt('vpp_base_mac', default="fa:16:3c:00:00:00",
                help=_("The base MAC address used for VPP."
                       "The last 3 octets will be randomly generated.")),
+    cfg.StrOpt('driver_extensions', default='',
+               help=_("Enabled extensions for the VPP control system"))
 ]
 
 

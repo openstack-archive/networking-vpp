@@ -50,6 +50,8 @@ from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
 from networking_vpp import constants as nvpp_const
 from networking_vpp import etcdutils
+from networking_vpp.ext_manager import ExtensionManager
+from networking_vpp.extension import VPPAgentExtensionBase
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
 from networking_vpp.utils import device_monitor
@@ -3503,6 +3505,12 @@ def main():
     # Do the work
 
     ops = EtcdListener(cfg.CONF.host, client_factory, vppf, physnets)
+
+    mgr = ExtensionManager(
+        'networking_vpp.agent.extensions',
+        cfg.CONF.ml2_vpp.agent_extensions,
+        VPPAgentExtensionBase)
+    mgr.call_all('run', cfg.CONF.host, client_factory, vppf)
 
     ops.process_ops()
 
