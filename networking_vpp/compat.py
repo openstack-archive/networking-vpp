@@ -72,6 +72,16 @@ except AttributeError:
                                      HEX_ELEM + '{12}'])
 
 try:
+    from neutron.callbacks import events
+    from neutron.callbacks import registry
+    from neutron.callbacks import resources
+except ImportError:
+    # Queens+
+    from neutron_lib.callbacks import events
+    from neutron_lib.callbacks import registry
+    from neutron_lib.callbacks import resources
+
+try:
     # Newton+
     import neutron_lib.db.model_base
     import neutron_lib.plugins.directory

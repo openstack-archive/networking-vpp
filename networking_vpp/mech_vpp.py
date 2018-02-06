@@ -37,9 +37,10 @@ from networking_vpp import config_opts
 from networking_vpp.db import db
 from networking_vpp import etcdutils
 
-from neutron.callbacks import events
-from neutron.callbacks import registry
-from neutron.callbacks import resources
+from networking_vpp.compat import events
+from networking_vpp.compat import registry
+from networking_vpp.compat import resources
+
 from neutron.db import api as neutron_db_api
 
 try:
