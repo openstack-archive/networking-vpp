@@ -48,6 +48,7 @@ from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
+from networking_vpp import etcd_paths
 from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
@@ -2289,10 +2290,6 @@ class VPPForwarder(object):
 
 ######################################################################
 
-LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
-ROUTERS_DIR = 'routers/'
-ROUTER_FIP_DIR = 'routers/floatingip/'
-
 
 class EtcdListener(object):
     def __init__(self, host, client_factory, vppf, physnets):
@@ -2680,11 +2677,10 @@ class EtcdListener(object):
         etcd_writer = etcdutils.SignedEtcdJSONWriter(etcd_client)
 
         for secgroup in secgroups:
-            secgroup_key = self.secgroup_key_space + "/%s" % secgroup
             # TODO(najoy):Update to the new per thread etcd-client model
 
             # TODO(ijw): all keys really present?
-            data = etcd_writer.read(secgroup_key).value
+            data = etcd_writer.read(etcd_paths.secgroup_key(secgroup)).value
 
             LOG.debug("Updating remote_group rules %s for secgroup %s",
                       data, secgroup)
@@ -2709,7 +2705,7 @@ class EtcdListener(object):
 
         Thread-safe: creates its own client every time
         """
-        key_space = self.gpe_key_space + "/%s" % vni
+        key_space = etcd_paths.gpe_segment_key(vni)
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
         rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).read(
             key_space, recursive=True)
@@ -2731,9 +2727,10 @@ class EtcdListener(object):
         Underlay = IP address of the VPP's underlay interface
         """
         underlay_ip = self.vppf.gpe_underlay_addr
-        gpe_key = self.gpe_key_space + '/%s/%s/%s/%s' % (
-            segmentation_id, self.host, mac_address, ip
-            )
+        gpe_key = etcd_paths.gpe_locator_key(etcd_paths.gpe_if_key(segmentation_id,
+                                                                   self.host,
+                                                                   mac_address),
+                                              ip)
         LOG.debug('Writing GPE key to etcd %s with underlay IP address:%s',
                   gpe_key, underlay_ip)
         etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).write(
@@ -2741,7 +2738,7 @@ class EtcdListener(object):
 
     def delete_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
         """Delete a remote GPE overlay to underlay mapping."""
-        gpe_dir = self.gpe_key_space + '/%s/%s/%s' % (segmentation_id,
+        gpe_dir = etcd_paths.gpe_key_space + '/%s/%s/%s' % (segmentation_id,
                                                       self.host,
                                                       mac_address)
         etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).delete(
@@ -2780,25 +2777,23 @@ class EtcdListener(object):
         # reconfigure from start (which means that VPP needs it
         # storing, so it's lost on reboot of VPP)
 
-        self.port_key_space = LEADIN + "/nodes/%s/ports" % self.host
-        self.router_key_space = LEADIN + "/nodes/%s/routers" % self.host
+        self.port_key_space = etcd_paths.port_key_space + "/%s/ports" % self.host
+        self.router_key_space = etcd_paths.port_key_space + "/%s/routers" % self.host
         self.secgroup_key_space = LEADIN + "/global/secgroups"
-        self.state_key_space = LEADIN + "/state/%s/ports" % self.host
-        self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
-        self.gpe_key_space = LEADIN + "/global/networks/gpe"
-        self.remote_group_key_space = LEADIN + "/global/remote_group"
+        self.state_key_space = etcd_paths.state_key_space"/%s/ports" % self.host
+        self.physnet_key_space = etcd_paths.state_key_space + "/%s/physnets" % self.host
 
         etcd_client = self.client_factory.client()
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
         # We need certain directories to exist so that we can write to
         # and watch them
         etcd_helper.ensure_dir(self.port_key_space)
-        etcd_helper.ensure_dir(self.secgroup_key_space)
+        etcd_helper.ensure_dir(etcd_paths.secgroup_key_space)
         etcd_helper.ensure_dir(self.state_key_space)
         etcd_helper.ensure_dir(self.physnet_key_space)
         etcd_helper.ensure_dir(self.router_key_space)
-        etcd_helper.ensure_dir(self.gpe_key_space)
-        etcd_helper.ensure_dir(self.remote_group_key_space)
+        etcd_helper.ensure_dir(etcd_paths.gpe_key_space)
+        etcd_helper.ensure_dir(etcd_paths.remote_group_key_space)
 
         etcd_helper.clear_state(self.state_key_space)
 
@@ -2843,13 +2838,13 @@ class EtcdListener(object):
             LOG.debug("Spawning secgroup_watcher..")
             self.pool.spawn(SecGroupWatcher(self.client_factory.client(),
                                             'secgroup_watcher',
-                                            self.secgroup_key_space,
+                                            etcd_utils.secgroup_key_space,
                                             known_secgroup_ids,
                                             heartbeat=self.AGENT_HEARTBEAT,
                                             data=self).watch_forever)
             self.pool.spawn(RemoteGroupWatcher(self.client_factory.client(),
                                                'remote_group_watcher',
-                                               self.remote_group_key_space,
+                                               etcd_paths.remote_group_key_space,
                                                heartbeat=self.AGENT_HEARTBEAT,
                                                data=self).watch_forever)
 
@@ -2868,7 +2863,7 @@ class EtcdListener(object):
             LOG.debug("Spawning gpe_watcher")
             self.pool.spawn(GpeWatcher(self.client_factory.client(),
                                        'gpe_watcher',
-                                       self.gpe_key_space,
+                                       etcd_paths.gpe_key_space,
                                        heartbeat=self.AGENT_HEARTBEAT,
                                        data=self).watch_forever)
         self.pool.waitall()
@@ -2928,7 +2923,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
                 % port)
             if is_vxlan:
                 # Each IP address of the bound port is a GPE child key
-                gpe_dir = self.data.gpe_key_space + \
+                gpe_dir = etcd_paths.gpe_key_space + \
                     '/%s/%s/%s' % (seg_id, self.data.host, mac)
                 gpe_child_keys = self.etcd_client.get(gpe_dir)
                 for result in gpe_child_keys.children:
@@ -2980,7 +2975,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         if data['network_type'] == 'vxlan':
             host_ip = self.data.vppf.gpe_underlay_addr
             for ip in [ip['ip_address'] for ip in data.get('fixed_ips')]:
-                gpe_key = self.data.gpe_key_space + '/%s/%s/%s/%s' % (
+                gpe_key = etcd_paths.gpe_key_space + '/%s/%s/%s/%s' % (
                     data['segmentation_id'],
                     self.data.host,
                     data['mac_address'],

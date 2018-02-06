@@ -35,6 +35,7 @@ from networking_vpp.compat import plugin_constants
 from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
 from networking_vpp.db import db
+from networking_vpp import etcd_paths
 from networking_vpp import etcdutils
 
 from neutron.callbacks import events
@@ -387,8 +388,6 @@ class AgentCommunicator(object):
         pass
 
 
-# Our prefix for etcd keys, in case others are using etcd.
-LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
 # Model for representing a security group
 SecurityGroup = namedtuple(
     'SecurityGroup', ['id', 'ingress_rules', 'egress_rules']
@@ -465,21 +464,16 @@ class EtcdAgentCommunicator(AgentCommunicator):
         self.deleted_rule_secgroup_id = {}
 
         # We need certain directories to exist
-        self.state_key_space = LEADIN + '/state'
-        self.port_key_space = LEADIN + '/nodes'
-        self.secgroup_key_space = LEADIN + '/global/secgroups'
-        self.remote_group_key_space = LEADIN + '/global/remote_group'
-        self.gpe_key_space = LEADIN + '/global/networks/gpe'
-        self.election_key_space = LEADIN + '/election'
-        self.journal_kick_key = self.election_key_space + '/kick-journal'
+        self.journal_kick_key = etcd_paths.election_key_space + \
+            '/kick-journal'
 
         etcd_client = self.client_factory.client()
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
-        etcd_helper.ensure_dir(self.state_key_space)
-        etcd_helper.ensure_dir(self.port_key_space)
-        etcd_helper.ensure_dir(self.secgroup_key_space)
-        etcd_helper.ensure_dir(self.election_key_space)
-        etcd_helper.ensure_dir(self.remote_group_key_space)
+        etcd_helper.ensure_dir(etcd_paths.state_key_space)
+        etcd_helper.ensure_dir(etcd_paths.node_key_space)
+        etcd_helper.ensure_dir(etcd_paths.secgroup_key_space)
+        etcd_helper.ensure_dir(etcd_paths.election_key_space)
+        etcd_helper.ensure_dir(etcd_paths.remote_group_key_space)
 
         self.secgroup_enabled = cfg.CONF.SECURITYGROUP.enable_security_group
         if self.secgroup_enabled:
@@ -520,9 +514,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         try:
             etcd_client = self.client_factory.client()
 
-            etcd_client.read('%s/state/%s/alive' % (LEADIN, host))
-            etcd_client.read('%s/state/%s/physnets/%s' %
-                             (LEADIN, host, physnet))
+            etcd_client.read('%s/%s/alive' %
+                             (etcd_paths.state_key_space, host))
+            etcd_client.read('%s/%s/physnets/%s' %
+                             (etcd_paths.state_key_space, host, physnet))
         except etcd.EtcdKeyNotFound:
             return False
         return True
@@ -862,7 +857,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         session  -- the DB session with an open transaction
         secgroup -- Named tuple representing a SecurityGroup
         """
-        secgroup_path = self._secgroup_path(secgroup.id)
         # sg is a dict of of ingress and egress rule lists
         sg = {}
         ingress_rules = []
@@ -873,7 +867,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
             egress_rules.append(egress_rule._asdict())
         sg['ingress_rules'] = ingress_rules
         sg['egress_rules'] = egress_rules
-        db.journal_write(session, secgroup_path, sg)
+        db.journal_write(session,
+                         etcd_paths.secgroup_key(secgroup.id),
+                         sg)
 
     def delete_secgroup_from_etcd(self, session, secgroup_id):
         """Deletes the secgroup key from etcd
@@ -881,27 +877,16 @@ class EtcdAgentCommunicator(AgentCommunicator):
         Arguments:
         secgroup_id -- The id of the security group that we want to delete
         """
-        secgroup_path = self._secgroup_path(secgroup_id)
-        db.journal_write(session, secgroup_path, None)
+        db.journal_write(session,
+                         etcd_paths.secgroup_key(secgroup.id),
+                         None)
 
-    def _secgroup_path(self, secgroup_id):
-        return self.secgroup_key_space + "/" + secgroup_id
-
-    def _port_path(self, host, port):
-        return self.port_key_space + "/" + host + "/ports/" + port['id']
-
-    # TODO(najoy): Move all security groups related code to a dedicated
-    # module
-    def _remote_group_path(self, secgroup_id, port_id):
-        return self.remote_group_key_space + "/" + secgroup_id + "/" + port_id
-
-    def _gpe_remote_path(self, host, port, segmentation_id):
+    def _gpe_remote_paths(self, host, port, segmentation_id):
         ip_addrs = port.get('fixed_ips', [])
-        gpe_dir = self.gpe_key_space + "/" + str(segmentation_id) + "/" + \
-            host + "/" + port['mac_address']
+        gpe_port_dir = \
+            etcd_paths.gpe_if_key(str(segmentation_id), host, port['mac_address'])
         if ip_addrs and segmentation_id:
-            # Delete all GPE keys and the empty GPE directory itself in etcd
-            return [gpe_dir + "/" + ip_address['ip_address']
+            return [etcd_paths.gpe_locator_key(gpe_port_dir, ip_address['ip_address'])
                     for ip_address in ip_addrs] + [gpe_dir]
         else:
             return []
@@ -918,7 +903,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
     # and the remaining attributes of the rule.
     def _remote_group_paths(self, port):
         security_groups = port.get('security_groups', [])
-        return [self._remote_group_path(secgroup_id, port['id'])
+        return [etcd_paths.remote_secgroup_port_key(secgroup_id, port['id'])
                 for secgroup_id in security_groups]
 
     ######################################################################
@@ -960,7 +945,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                   port, data['segmentation_id'],
                   host, data['binding_type'])
 
-        db.journal_write(session, self._port_path(host, port), data)
+        db.journal_write(session, etcd_utils.port_key(host, port), data)
         # For tracking ports in a remote_group, create a journal entry in
         # the remote-group key-space.
         # This will result in the creation of an etcd key with the port ID
@@ -995,10 +980,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # this alternate impl. won't be better what we have now i.e. O(n).
         for remote_group_path in self._remote_group_paths(port):
             db.journal_write(session, remote_group_path, None)
-        db.journal_write(session, self._port_path(host, port), None)
+        db.journal_write(session, etcd_utils.port_key(host, port), None)
         # Remove all GPE remote keys from etcd, for this port
-        for gpe_remote_path in self._gpe_remote_path(host, port,
-                                                     segmentation_id):
+        for gpe_remote_path in self._gpe_remote_paths(host, port,
+                                                      segmentation_id):
             db.journal_write(session,
                              gpe_remote_path,
                              None)
@@ -1011,8 +996,8 @@ class EtcdAgentCommunicator(AgentCommunicator):
             current_port['security_groups'])
         for secgroup_id in removed_sec_groups:
             db.journal_write(session,
-                             self._remote_group_path(secgroup_id,
-                                                     current_port['id']),
+                             etcd_paths.remote_secgroup_port_key(secgroup_id,
+                                                                 current_port['id']),
                              None)
         self.kick()
 
@@ -1039,7 +1024,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         recovery_time = cfg.CONF.ml2_vpp.forward_worker_recovery_time
 
         etcd_election = etcdutils.EtcdElection(etcd_client, 'forward_worker',
-                                               self.election_key_space,
+                                               etcd_paths.election_key_space,
                                                work_time=lease_time,
                                                recovery_time=recovery_time)
         while True:
@@ -1132,7 +1117,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                     self.data.notify_bound(port, host)
                 else:
                     # Matches an agent, gets a liveness notification
-                    m = re.match(self.data.state_key_space + '^([^/]+)/alive$',
+                    m = re.match(etcd_paths.state_key_space + '^([^/]+)/alive$',
                                  key)
 
                     if m:
@@ -1146,7 +1131,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # Nova doesn't much care when ports go away.
 
                 # Matches an agent, gets a liveness notification
-                m = re.match(self.data.state_key_space + '^([^/]+)/alive$',
+                m = re.match(etcd_paths.state_key_space + '^([^/]+)/alive$',
                              key)
 
                 if m:
@@ -1159,5 +1144,6 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # Assign a UUID to each worker thread to enable thread election
         return eventlet.spawn(
             ReturnWatcher(self.client_factory.client(), 'return_worker',
-                          self.state_key_space, self.election_key_space,
+                          etcd_paths.state_key_space,
+                          etcd_paths.election_key_space,
                           data=self).watch_forever)
