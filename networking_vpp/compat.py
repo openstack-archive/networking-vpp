@@ -47,7 +47,7 @@ try:
     import neutron_lib.exceptions
 
     n_const = neutron_lib.constants
-    n_exec = neutron_lib.exceptions
+    n_exc = neutron_lib.exceptions
 
 except ImportError:
     import neutron.common.constants  # noqa: N530
