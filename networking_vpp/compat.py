@@ -42,6 +42,12 @@ except ImportError:
     context = neutron.context
 
 try:
+   from neutron_lib.api.definitions import provider_net as n_provider
+except ImportError:
+   # Newton, at least, has this:
+   from neutron.extensions import providernet as n_provider
+
+try:
     # Mitaka+
     import neutron_lib.constants
     import neutron_lib.exceptions
