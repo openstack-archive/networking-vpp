@@ -21,10 +21,10 @@ from oslo_log import log as logging
 from neutron.db import api as db_api
 from neutron.db import common_db_mixin
 from neutron.db import l3_gwmode_db
-from neutron_lib.api.definitions import provider_net as provider
-from neutron_lib import constants
 
-from neutron_lib import exceptions as n_exc
+from networking_vpp.compat import n_const as constants
+from networking_vpp.compat import n_exc
+from networking_vpp.compat import n_provider as provider
 
 # TODO(ijw): backward compatibility doesn't really belong here
 try:
