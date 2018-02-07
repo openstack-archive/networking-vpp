@@ -96,6 +96,12 @@ except ImportError:
     directory = neutron.manager.NeutronManager
     model_base = neutron.db.model_base
 
+try:
+    # Newton
+    n_const.L3
+except AttributeError:
+    n_const.L3 = plugin_constants.L3_ROUTER_NAT
+
 # Register security group option
 def register_securitygroups_opts(cfg):
     # Mitaka compatibility
