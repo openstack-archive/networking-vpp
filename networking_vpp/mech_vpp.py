@@ -37,6 +37,8 @@ from networking_vpp import config_opts
 from networking_vpp import constants as nvpp_const
 from networking_vpp.db import db
 from networking_vpp import etcdutils
+from networking_vpp.ext_manager import ExtensionManager
+from networking_vpp.extension import MechDriverExtensionBase
 
 from networking_vpp.compat import events
 from networking_vpp.compat import registry
@@ -87,6 +89,11 @@ class VPPMechanismDriver(api.MechanismDriver):
     def initialize(self):
         config_opts.register_vpp_opts(cfg.CONF)
         compat.register_securitygroups_opts(cfg.CONF)
+
+        self.mgr = ExtensionManager(
+            'networking_vpp.driver.extensions',
+            cfg.CONF.ml2_vpp.driver_extensions,
+            MechDriverExtensionBase)
 
         self.communicator = EtcdAgentCommunicator(self.port_bind_complete)
 
