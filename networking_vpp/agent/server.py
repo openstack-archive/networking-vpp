@@ -418,18 +418,12 @@ class VPPForwarder(object):
                         '%(idx)d (%(physnet_name)s)',
                         {'idx': configured_physnet_interfaces[uplink_physnet],
                          'physnet_name': physnets[uplink_physnet]})
+                # This will remove ports from bridges, which means
+                # that they may be rebound back into networks later
+                # or may be deleted if no longer used.
                 self.delete_network_bridge_on_host(net_type,
                                                    sw_if_idx,
                                                    sw_if_idx)
-            if net_type == 'vlan':
-                # We only support VLAN networks here.  GPE networks
-                # can't be reconfigured like this right now. TODO(ijw)
-                self.delete_network_bridge_on_host(net_type,
-                                                   sw_if_idx,
-                                                   sw_if_idx)
-            # This will remove ports from bridges, which means
-            # that they may be rebound back into networks later
-            # or may be deleted if no longer used.
 
         for name, if_idx in physnet_ports_found.items():
             if configured_physnet_interfaces.get(name, None) != if_idx:
@@ -685,6 +679,9 @@ class VPPForwarder(object):
             self.vpp.ifdown(*if_idxes_without_uplink)
             self.vpp.delete_from_bridge(*if_idxes)
             self.vpp.delete_bridge_domain(bridge_domain_id)
+
+        # The physnet is gone so no point in keeping the vlan sub-interface
+        # TODO(onong): VxLAN
         if net_type == 'vlan':
             if uplink_if_idx is not None:
                 self.vpp.delete_vlan_subif(uplink_if_idx)
@@ -2820,19 +2817,6 @@ class EtcdListener(object):
         self.binder = BindNotifier(self.client_factory, self.state_key_space)
         self.pool.spawn(self.binder.run)
 
-        # Check if the vpp router service plugin is enabled
-        enable_router_watcher = False
-        for service_plugin in cfg.CONF.service_plugins:
-            if 'vpp' in service_plugin:
-                enable_router_watcher = True
-        if enable_router_watcher:
-            LOG.debug("Spawning router_watcher")
-            self.pool.spawn(RouterWatcher(self.client_factory.client(),
-                                          'router_watcher',
-                                          self.router_key_space,
-                                          heartbeat=self.AGENT_HEARTBEAT,
-                                          data=self).watch_forever)
-
         if self.secgroup_enabled:
             LOG.debug("loading VppAcl map from acl tags for "
                       "performing secgroup_watcher lookups")
@@ -2863,6 +2847,7 @@ class EtcdListener(object):
                                     self.port_key_space,
                                     heartbeat=self.AGENT_HEARTBEAT,
                                     data=self).watch_forever)
+
         # Spawn GPE watcher for vxlan tenant networks
         if 'vxlan' in cfg.CONF.ml2.type_drivers:
             LOG.debug("Spawning gpe_watcher")
@@ -2871,6 +2856,21 @@ class EtcdListener(object):
                                        self.gpe_key_space,
                                        heartbeat=self.AGENT_HEARTBEAT,
                                        data=self).watch_forever)
+
+        # Check if the vpp router service plugin is enabled
+        enable_router_watcher = False
+        for service_plugin in cfg.CONF.service_plugins:
+            if 'vpp' in service_plugin:
+                enable_router_watcher = True
+        # Spawning after the vlan/vxlan bindings are done so that
+        # the RouterWatcher doesn't do unnecessary work
+        if enable_router_watcher:
+            LOG.debug("Spawning router_watcher")
+            self.pool.spawn(RouterWatcher(self.client_factory.client(),
+                                          'router_watcher',
+                                          self.router_key_space,
+                                          heartbeat=self.AGENT_HEARTBEAT,
+                                          data=self).watch_forever)
         self.pool.waitall()
 
 
