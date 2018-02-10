@@ -1400,8 +1400,9 @@ class VPPForwarder(object):
 
         Arguments -
         vpp_acls - a list of VppAcl(in_idx, out_idx) namedtuples to be set
-                   on the interface. An empty list '[]' deletes all acls
-                   from the interface
+                   on the interface. An empty list '[]' deletes all user
+                   defined acls from the interface and retains only the spoof
+                   ACL
         """
         # Initialize lists with anti-spoofing vpp acl indices
         spoof_acl = self.spoof_filter_on_host()
@@ -2599,10 +2600,12 @@ class EtcdListener(object):
         is_secured_port = props['bind_type'] == 'vhostuser'
 
         # If security-groups are enabled and it's a port needing
-        # security proceed to set L3/L2 ACLs, else skip security
+        # security proceed to set L3/L2 ACLs, else skip security.
+        # If security-groups are empty, apply the default spoof-acls.
+        # This is the correct behavior when security-groups are enabled but
+        # not set on a port.
         if (self.secgroup_enabled and
-                is_secured_port and
-                secgroup_ids != []):
+                is_secured_port):
             if not self.vppf.maybe_set_acls_on_port(
                     secgroup_ids,
                     iface_idx):
