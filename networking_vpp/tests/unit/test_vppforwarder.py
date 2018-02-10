@@ -344,14 +344,19 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
 
     def _get_mock_floatingip(self):
-        return {'internal_segmentation_id': INTERNAL_SEGMENATION_ID,
+        return {'UUID': 'mock-uuid123',
+                'internal_segmentation_id': INTERNAL_SEGMENATION_ID,
                 'internal_net_type': INTERNAL_SEGMENATION_TYPE,
                 'internal_physnet': INTERNAL_PHYSNET,
                 'external_segmentation_id': 172,
                 'external_net_type': 'vlan',
                 'external_physnet': 'testnet',
                 'fixed_ip_address': FIXED_IP_ADDRESS,
-                'floating_ip_address': '100.38.15.131'}
+                'floating_ip_address': '100.38.15.131',
+                'tenant_vrf': 1,
+                'loopback_idx': 1,
+                'external_idx': 2,
+                'state': False}
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
@@ -364,8 +369,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                return_value=False):
             loopback_idx = self.vpp.ensure_router_interface_on_host(
                 port, router)
-            self.vpp.vpp.create_loopback.assert_called_once_with(
-                router['mac_address'])
+            self.vpp.vpp.get_ifidx_mac_address(loopback_idx)
             self.vpp.vpp.set_loopback_bridge_bvi.assert_called_once_with(
                 loopback_idx, 'fake_dom_id')
             self.vpp.vpp.set_interface_vrf.assert_called_once_with(
@@ -386,12 +390,14 @@ class VPPForwarderTestCase(base.BaseTestCase):
             with mock.patch.object(
                 self.vpp.vpp, 'get_interface_ip_addresses',
                 return_value=[(router['gateway_ip'], router['prefixlen'])]):
-                self.vpp.ensure_router_interface_on_host(port, router)
-
-                self.vpp.vpp.create_loopback.assert_not_called()
-                self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
-                self.vpp.vpp.set_interface_vrf.assert_not_called()
-                self.vpp.vpp.set_interface_ip.assert_not_called()
+                with mock.patch.object(self.vpp.vpp, 'get_interface_vrf',
+                                       return_value=[]):
+                    self.vpp.ensure_router_interface_on_host(port, router)
+                    self.vpp.vpp.create_loopback.assert_not_called()
+                    self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
+                    self.vpp.vpp.set_interface_vrf.assert_called_once_with(
+                        5, router['vrf_id'], router['is_ipv6'])
+                    self.vpp.vpp.set_interface_ip.assert_not_called()
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
@@ -403,16 +409,16 @@ class VPPForwarderTestCase(base.BaseTestCase):
         with mock.patch.object(self.vpp.vpp, 'get_bridge_bvi',
                                return_value=5):
             with mock.patch.object(
-                self.vpp.vpp, 'get_interface_ip_addresses',
-                return_value=[]):
-                self.vpp.ensure_router_interface_on_host(port, router)
-
-                self.vpp.vpp.create_loopback.assert_not_called()
-                self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
-                self.vpp.vpp.set_interface_vrf.assert_not_called()
-                self.vpp.vpp.set_interface_ip.assert_called_once_with(
-                    5, self.vpp._pack_address(router['gateway_ip']),
-                    router['prefixlen'], router['is_ipv6'])
+                self.vpp.vpp, 'get_interface_ip_addresses', return_value=[]):
+                with mock.patch.object(self.vpp.vpp, 'get_interface_vrf',
+                                       return_value=5):
+                    self.vpp.ensure_router_interface_on_host(port, router)
+                    self.vpp.vpp.create_loopback.assert_not_called()
+                    self.vpp.vpp.set_loopback_bridge_bvi.assert_not_called()
+                    self.vpp.vpp.set_interface_vrf.assert_not_called()
+                    self.vpp.vpp.set_interface_ip.assert_called_once_with(
+                        5, self.vpp._pack_address(router['gateway_ip']),
+                        router['prefixlen'], router['is_ipv6'])
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.ensure_network_on_host')
@@ -678,16 +684,27 @@ class VPPForwarderTestCase(base.BaseTestCase):
         Verify that the SNAT create APIs are called.
         """
         floatingip_dict = self._get_mock_floatingip()
-        self.vpp.vpp.get_snat_interfaces.return_value = []
+        self.vpp.vpp.get_interface_vrf.return_value = floatingip_dict[
+            'tenant_vrf']
+        floatingip_uuid = floatingip_dict['UUID']
         mock.patch.object(self.vpp, '_get_snat_indexes',
-                          return_value=(2, 3)).start()
-        self.vpp.associate_floatingip(floatingip_dict['floating_ip_address'],
-                                      floatingip_dict)
-
-        self.assertEqual(self.vpp.vpp.set_snat_on_interface.call_count, 2)
+                          return_value=(
+                                    floatingip_dict['loopback_idx'],
+                                    floatingip_dict['external_idx'])).start()
+        self.vpp.associate_floatingip(floatingip_uuid, floatingip_dict)
+        self.vpp.vpp.get_snat_interfaces.return_value = []
+        self.vpp.vpp.set_snat_on_interface.assert_any_call(
+            floatingip_dict['loopback_idx'])
+        self.vpp.vpp.set_snat_on_interface.assert_any_call(
+            floatingip_dict['external_idx'], is_inside=0)
+        self.vpp.vpp.get_interface_vrf.assert_called_with(1)
+        self.assertEqual(self.vpp.vpp.set_snat_static_mapping.call_count, 1)
         self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
             floatingip_dict['fixed_ip_address'],
-            floatingip_dict['floating_ip_address'])
+            floatingip_dict['floating_ip_address'],
+            floatingip_dict['tenant_vrf'])
+        self.vpp.vpp.clear_snat_sessions.assert_called_once_with(
+            floatingip_dict['fixed_ip_address'])
 
     def test_create_floatingip_on_vpp_existing_entry(self):
         """Test create floatingip processing with existing indexes.
@@ -737,6 +754,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.set_snat_static_mapping.assert_called_once_with(
             floatingip_dict['fixed_ip_address'],
             floatingip_dict['floating_ip_address'],
+            floatingip_dict['tenant_vrf'],
             is_add=0)
         self.assertIsNone(self.vpp.floating_ips.get(floating_ip))
 
