@@ -32,7 +32,7 @@ There's a devstack plugin. You can add this plugin to your ``local.conf``
 and see it working. The devstack plugin now takes care of
 
 - installing the networking-vpp code
-- installing VPP itself (version 17.04)
+- installing VPP itself (version 18.01)
 - installing etcd
 - using a QEMU version that supports vhostuser well
 
@@ -330,20 +330,20 @@ anything. In some cases it may not be responsible for the port at all.
 How do I enable the vpp-router plugin?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-NOTE: As of release 17.04 The native L3 service plugin (``vpp-router``) is
-      experimental. Use it for *evaluation and development purposes only*.
+NOTE: As of release 18.01, the native L3 service plugin (``vpp-router``) is
+      fully supported in L3 HA configuration.
 
 To enable the vpp-router plugin add the following in neutron.conf::
 
     service_plugins = vpp-router
 
 And make sure the *Openstack L3 agent is not running*. You will need to nominate
-a host to act as the Layer 3 gateway host in ml2_conf.ini::
+one or more hosts to act as the Layer 3 gateway host(s) in ml2_conf.ini::
 
     [ml2_vpp]
     l3_hosts = <my_l3_gateway_host.domain>
 
-The L3 host will need L2 adjacency and connectivity to the compute hosts to
+The L3 host(s) will need L2 adjacency and connectivity to the compute hosts to
 terminate tenant VLANs and route traffic properly.
 
 *The vpp-agent acts as a common L2 and L3 agent so it needs to be started on
@@ -363,8 +363,8 @@ Yes, you can use the Layer3 HA with the 17.10 release. The only issue we have
 seen is with floating ip addresses. VPP requires us to clear all existing
 dynamic NAT sessions associated with an IP address before installing a 1:1
 NAT for that IP address. However, the NAT API to clear dynamic NAT sessions
-is present in the 1801 release. So you have two options as a workaround.
-1. Restart the VPP and vpp-agent after adding a floatingip address,
+is present in the 18.01 release. So you have two options as a workaround.
+1. Restart the VPP and vpp-agent after adding a floating ip address,
    This will set the 1:1 NAT before any dynamic NAT sessions.
 2. Patch your VPP using the below two patches.These patches will add the code
    to clear dynamic NAT sessions.
@@ -518,8 +518,6 @@ In general, check the bugs at
    to the pause you see because the virtual switch went down.  It's still
    better than OVS or LinuxBridge - if your switch went down (or you
    needed to upgrade it) the kernel resets and the box reboots.
--  The L3 tests need rework due to compatibility issues introduced with
-   Neutron Pike, and are currently disabled when running unit tests.
 
 What are you doing next?
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -529,8 +527,6 @@ anything starting 'RFE' is a 'request for enhancement'.
 
 We'll be dealing with a few of the minor details of a good Neutron
 network driver, like sorting out MTU configuration of Neutron routers.
-
-We will be adding HA support for the L3 plugin.
 
 What can I do to help?
 ~~~~~~~~~~~~~~~~~~~~~~
