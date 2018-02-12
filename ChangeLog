@@ -1,6 +1,24 @@
 CHANGES
 =======
 
+18.01
+-----
+* A VM with no SG should not permit any traffic.
+* Fix issue in resync
+* Bump VPP version for devstack
+* Layer3 HA.
+* Fix exceptions module name (n_exc not n_exec)
+* Compat changes for L3 plugin
+* ADD CONTRIBUTING for networking-vpp
+* Fix problems with etcdutils
+* Updating callback imports from neutron to neutron_lib
+* Support all Neutron protocol names in a security group rule
+* Enable live migration support
+* Remove empty common directory
+* Resolve a bug in the security group rule with integer IP Protocol values
+* Update requirements.txt, rename oslo_serialization
+* Update tox_install.sh to align for sphinx jobs
+
 17.10
 -----
 
