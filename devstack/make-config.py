@@ -43,7 +43,7 @@ def overlay_struct(base, add):
 
 for f in sys.argv[1:]:
     with open(f) as inf:
-        overlay = yaml.load(inf)
+        overlay = yaml.safe_load(inf)
         data = overlay_struct(data, overlay)
 
 # This had better generate a dict...
