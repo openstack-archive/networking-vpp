@@ -45,7 +45,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
     @mock.patch('networking_vpp.agent.server.vpp.VPPInterface.'
                 'get_ifidx_by_name')
     @mock.patch('networking_vpp.agent.server.vpp')
-    def setUp(self, m_vpp, m_vppif, m_vppif2):
+    @mock.patch('networking_vpp.utils.file_monitor.FileMonitor')
+    def setUp(self, m_vpp, m_vppif, m_vppif2, m_filemon):
         super(VPPForwarderTestCase, self).setUp()
         # Set mac timeout to 180s
         # TAP wait timeout does not need to be 60s, set it to 6s, as this may
