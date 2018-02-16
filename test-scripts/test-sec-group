@@ -1,0 +1,90 @@
+#!/bin/bash
+# set -o xtrace
+
+##############################################################
+# Creates a certain number of secgroups, controlled by
+# the num_sec_groups variable.
+# Then it tests if all of them are correctly pushed to etcd &&
+# if they are correctly programmmed in VPP
+##############################################################
+
+###########################################################################################################
+DELETE_SEC_GROUPS=1      # When set to 0, do not clean up the secgroups created with prefix sec_group_prefix
+CREATE_SEC_GROUPS=1      # When set to 1, create new secgroups
+(( num_sec_groups=2 ))   # Number of secgroups to create
+(( num_rules=20 ))       # Number of rules in a security group
+sec_group_prefix=${1:-"sec-group-test"}
+source /home/localadmin/devstack/openrc admin admin
+# An array for the rules
+declare -a RULES
+###########################################################################################################
+
+########################################################
+# Environment variables required for the etcd client
+export ETCDCTL_ENDPOINTS="http://${ETCD_HOST}:${ETCD_PORT}"
+export ETCDCTL_PEERS="http://${ETCD_HOST}:${ETCD_PORT}"
+ETCDCTL=etcdctl
+#########################################################
+
+## Run the clean-up code if we are asked to do so and we have acls to clean up
+if (( DELETE_SEC_GROUPS )) && openstack security group list | grep -i ${sec_group_prefix} >& /dev/null ; then
+ for i in $( seq 1 $num_sec_groups ); do
+  for sg in $(openstack security group list | awk '{print $4}');do
+    if [ ${sg} = ${sec_group_prefix}${i} ]; then
+        echo "Deleting secgroup ${sg}"
+        openstack security group delete ${sg}
+     fi
+   done
+ done
+sudo vppctl show acl acl > vpp_acls.delete
+fi
+
+## Make some rules
+make_rules() {
+echo "Making rules..."
+for i in $( seq 1 $num_rules ); do
+    # Allow dst_ports from 200 to 200 + $num_rules
+    dst_port=$(( i + 199 ))
+    # rule format is: (direction dst_port src_port protocol remote_ip)
+    RULES[i]="ingress $dst_port"
+    echo "RULES[$i]=${RULES[i]}"
+done
+}
+
+
+## Add rules to security group
+add_rules() {
+ sg_name=$1
+ local direction
+ local dst_port
+ local RULE
+ for i in $( seq 1 $num_rules ); do
+    # split the rule string and place it into an array named RULE
+    echo "RULES[$i]=${RULES[i]}"
+    read -ra RULE <<< ${RULES[i]}
+    direction=${RULE[0]}
+    dst_port=${RULE[1]}
+    echo "Adding rule for direction:${direction} and dst_port:${dst_port}"
+    openstack security group rule create --${direction} --dst-port ${dst_port} ${sg_name}
+ done
+}
+
+# Test if the secgroup is present in etcd and whether the rules are correct
+#test_etcd() {
+
+#}
+
+if (( CREATE_SEC_GROUPS )); then
+   make_rules
+   for j in $( seq 1 $num_sec_groups ); do
+       echo "Creating security group ${sec_group_prefix}${j}"
+       openstack security group create ${sec_group_prefix}${j}
+       # create rules
+       add_rules ${sec_group_prefix}${j}
+       # TODO test etcd
+       # TODO test vpp
+   done
+   # Sleep 5secs to ensure that all ACLs have propagated to the agent
+   # sleep 5
+   sudo vppctl show acl acl > vpp_acls.create
+fi
