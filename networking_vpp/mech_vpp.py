@@ -34,6 +34,7 @@ from networking_vpp.compat import n_const
 from networking_vpp.compat import plugin_constants
 from networking_vpp.compat import portbindings
 from networking_vpp import config_opts
+from networking_vpp import constants as nvpp_const
 from networking_vpp.db import db
 from networking_vpp import etcdutils
 
@@ -389,7 +390,7 @@ class AgentCommunicator(object):
 
 
 # Our prefix for etcd keys, in case others are using etcd.
-LEADIN = '/networking-vpp'      # TODO(ijw): make configurable?
+LEADIN = nvpp_const.LEADIN   # TODO(ijw): make configurable?
 # Model for representing a security group
 SecurityGroup = namedtuple(
     'SecurityGroup', ['id', 'ingress_rules', 'egress_rules']

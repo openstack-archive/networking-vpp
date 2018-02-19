@@ -15,6 +15,7 @@
 #
 
 from ipaddress import ip_network
+from networking_vpp import constants as nvpp_const
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -38,7 +39,6 @@ try:
 except ImportError:
     from neutron.db.models.l3 import Router
 
-from networking_vpp.agent import server
 from networking_vpp.db import db
 from networking_vpp.mech_vpp import EtcdAgentCommunicator
 
@@ -74,8 +74,8 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         LOG.debug('vpp-router l3_hosts: %s', self.l3_hosts)
 
     def _floatingip_path(self, l3_host, fip_id):
-        return (server.LEADIN + '/nodes/' + l3_host + '/' +
-                server.ROUTER_FIP_DIR + fip_id)
+        return (nvpp_const.LEADIN + '/nodes/' + l3_host + '/' +
+                nvpp_const.ROUTER_FIP_DIR + fip_id)
 
     def _process_floatingip(self, context, fip_dict, event_type):
         port = self._core_plugin.get_port(context, fip_dict['port_id'])
@@ -172,8 +172,8 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         return router_dict
 
     def _get_router_intf_path(self, l3_host, router_id, port_id):
-        return (server.LEADIN + '/nodes/' +
-                l3_host + '/' + server.ROUTERS_DIR +
+        return (nvpp_const.LEADIN + '/nodes/' +
+                l3_host + '/' + nvpp_const.ROUTERS_DIR +
                 router_id + '/' + port_id)
 
     def _write_interface_journal(self, context, router_id, router_dict):

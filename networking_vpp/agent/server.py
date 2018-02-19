@@ -48,6 +48,7 @@ from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
+from networking_vpp import constants as nvpp_const
 from networking_vpp import etcdutils
 from networking_vpp.mech_vpp import SecurityGroup
 from networking_vpp.mech_vpp import SecurityGroupRule
@@ -256,7 +257,7 @@ def decode_secgroup_tag(tag):
 ######################################################################
 # GPE constants
 # A name for a GPE locator-set, which is a set of underlay interface indexes
-gpe_lset_name = 'net-vpp-gpe-lset-1'
+gpe_lset_name = nvpp_const.GPE_LSET_NAME
 
 #######################################################################
 
@@ -2410,9 +2411,7 @@ class VPPForwarder(object):
 
 ######################################################################
 
-LEADIN = '/networking-vpp'  # TODO(ijw): make configurable?
-ROUTERS_DIR = 'routers/'
-ROUTER_FIP_DIR = 'routers/floatingip/'
+LEADIN = nvpp_const.LEADIN  # TODO(ijw): make configurable?
 
 
 class EtcdListener(object):
