@@ -42,7 +42,6 @@ from networking_vpp.compat import events
 from networking_vpp.compat import registry
 from networking_vpp.compat import resources
 
-from neutron.db import api as neutron_db_api
 
 try:
     # Newton and on
@@ -1064,7 +1063,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 while True:
                     etcd_election.extend_election(
                         cfg.CONF.ml2_vpp.db_query_time)
-                    session = neutron_db_api.get_session()
+                    session = n_context.get_admin_context().session
                     maybe_more = db.journal_read(session, work)
                     if not maybe_more:
                         LOG.debug('forward worker has emptied journal')
@@ -1092,6 +1091,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                 # TODO(ijw): log exception properly
                 LOG.warning("problems in forward worker - Error name is %s. "
                             "proceeding without quiting", type(e).__name__)
+                LOG.warning("Exception in forward_worker: %s", e)
                 # something went bad; breathe, in case we end
                 # up in a tight loop
                 time.sleep(1)
