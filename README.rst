@@ -352,9 +352,14 @@ the L3 host as well*.
 How do I enable Layer3 HA?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 In the 18.01 release, we support Layer3 HA for VPP.
+
 First, ensure that the vpp-router plugin is enabled.
-Then provide the list of Layer3 hosts in your deployment, using a comma
-separated notation, shown below in the ml2.ini configuration file.
+
+Next, enable Layer3 HA by adding ``enable_l3_ha=True`` in the ml2.ini
+configuration file (as shown below).
+
+Lastly, you need to  provide the list of Layer3 hosts in your deployment,
+using a comma separated notation (as shown below) in the ml2.ini configuration file.
 
 Can I use Layer3 HA with the 17.10 release?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -377,6 +382,7 @@ Sample L3 host settings in ml2_conf.ini
 
 [ml2_vpp]
 l3_hosts = node1,node2
+enable_l3_ha = True
 
 How does Layer3 HA Work and how do I test it?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
