@@ -71,6 +71,8 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         self.l3_hosts = cfg.CONF.ml2_vpp.l3_hosts.replace(' ', '').split(',')
         self.gpe_physnet = cfg.CONF.ml2_vpp.gpe_locators
         LOG.info('vpp-router: router_service plugin has initialized')
+        if cfg.CONF.ml2_vpp.enable_l3_ha:
+            LOG.info('vpp-router: L3 HA is enabled')
         LOG.debug('vpp-router l3_hosts: %s', self.l3_hosts)
 
     def _floatingip_path(self, l3_host, fip_id):
