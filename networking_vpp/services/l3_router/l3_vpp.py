@@ -19,10 +19,10 @@ from networking_vpp import constants as nvpp_const
 from oslo_config import cfg
 from oslo_log import log as logging
 
-from neutron.db import api as db_api
 from neutron.db import common_db_mixin
 from neutron.db import l3_gwmode_db
 
+from networking_vpp.compat import context as n_context
 from networking_vpp.compat import n_const as constants
 from networking_vpp.compat import n_exc
 from networking_vpp.compat import n_provider as provider
@@ -259,7 +259,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
                 "using VPP.")
 
     def create_router(self, context, router):
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             router_dict = super(VppL3RouterPlugin, self).create_router(
                 context, router)
@@ -294,7 +294,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         return new_router
 
     def delete_router(self, context, router_id):
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             router = self.get_router(context, router_id)
             super(VppL3RouterPlugin, self).delete_router(context, router_id)
@@ -305,7 +305,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             db.delete_router_vrf(context.session, router_id)
 
     def create_floatingip(self, context, floatingip):
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             fip_dict = super(VppL3RouterPlugin, self).create_floatingip(
                 context, floatingip,
@@ -321,7 +321,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
     @kick_communicator_on_end
     def update_floatingip(self, context, floatingip_id, floatingip):
         org_fip_dict = self.get_floatingip(context, floatingip_id)
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             fip_dict = super(VppL3RouterPlugin, self).update_floatingip(
                 context, floatingip_id, floatingip)
@@ -337,7 +337,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
 
     def delete_floatingip(self, context, floatingip_id):
         org_fip_dict = self.get_floatingip(context, floatingip_id)
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             super(VppL3RouterPlugin, self).delete_floatingip(
                 context, floatingip_id)
@@ -351,7 +351,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
     def disassociate_floatingips(self, context, port_id, do_notify=True):
         fips = self.get_floatingips(context.elevated(),
                                     filters={'port_id': [port_id]})
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             router_ids = super(
                 VppL3RouterPlugin, self).disassociate_floatingips(
@@ -387,7 +387,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         'port_id' key.
         """
         LOG.info("router_service: interface_info: %s", interface_info)
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             new_router = super(VppL3RouterPlugin, self).add_router_interface(
                 context, router_id, interface_info)
@@ -420,7 +420,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
 
     @kick_communicator_on_end
     def remove_router_interface(self, context, router_id, interface_info):
-        session = db_api.get_session()
+        session = n_context.get_admin_context().session
         with session.begin(subtransactions=True):
             new_router = super(
                 VppL3RouterPlugin, self).remove_router_interface(
