@@ -59,6 +59,8 @@ _vpp_opts = [
     cfg.StrOpt('l3_hosts', default="127.0.0.1",
                help=_("A comma separated list of Hostnames "
                       "to render L3 services on.")),
+    cfg.BoolOpt('enable_l3_ha', default=False,
+                help=_("Enable L3 HA feature. Disabled by default.")),
     cfg.BoolOpt('jwt_signing', default=False,
                 help=_("Activate JWT token in etcd messages")),
 
