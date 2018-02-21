@@ -337,8 +337,9 @@ To enable the vpp-router plugin add the following in neutron.conf::
 
     service_plugins = vpp-router
 
-And make sure the *Openstack L3 agent is not running*. You will need to nominate
-one or more hosts to act as the Layer 3 gateway host(s) in ml2_conf.ini::
+And make sure the *Openstack L3 agent is not running*. You will need to
+nominate one or more hosts to act as the Layer 3 gateway host(s) in
+ml2_conf.ini::
 
     [ml2_vpp]
     l3_hosts = <my_l3_gateway_host.domain>
@@ -352,9 +353,15 @@ the L3 host as well*.
 How do I enable Layer3 HA?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 In the 18.01 release, we support Layer3 HA for VPP.
+
 First, ensure that the vpp-router plugin is enabled.
-Then provide the list of Layer3 hosts in your deployment, using a comma
-separated notation, shown below in the ml2.ini configuration file.
+
+Next, enable Layer3 HA by adding ``enable_l3_ha=True`` in the ml2.ini
+configuration file (as shown below).
+
+Lastly, you need to  provide the list of Layer3 hosts in your deployment,
+using a comma separated notation (as shown below) in the ml2.ini configuration
+file.
 
 Can I use Layer3 HA with the 17.10 release?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -377,6 +384,7 @@ Sample L3 host settings in ml2_conf.ini
 
 [ml2_vpp]
 l3_hosts = node1,node2
+enable_l3_ha = True
 
 How does Layer3 HA Work and how do I test it?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -384,6 +392,7 @@ How does Layer3 HA Work and how do I test it?
 We use the keepalived to do the ACTIVE/BACKUP router election using VRRP.
 You can find these sample keepalived config files and scripts in the
 /tools directory.
+
 First, you need to decide which node will become the master.
 Use the keepalived.master.conf file on the master node,
 and the keepalived.backup.conf on all the backup nodes.
@@ -402,8 +411,11 @@ the router state.
 The etcd key is: "/networking-vpp/nodes/${HOSTNAME}/routers/ha"
 The value of this key is set to 1 on the MASTER node and 0 on the BACKUP.
 If the key is not present or it's value unset, the router will become
-a BACKUP. So, note that you must set this key even in a non-HA router
-configuration for the VPP router to work.
+a BACKUP.
+
+NOTE: If you are on a non-HA environment, i.e., there's a single network
+node, but you have enabled Layer3 HA (maybe you just want to try it out) then
+you MUST also set the network node's etcd key to 1 for the VPP router to work.
 
 The vpp-agent listens for watch events on this key.
 On the master node, the router BVI interfaces are enabled and

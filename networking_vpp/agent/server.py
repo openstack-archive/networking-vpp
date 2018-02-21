@@ -313,13 +313,14 @@ class VPPForwarder(object):
         self.router_interfaces = {}  # router_port_uuid: {}
         self.router_external_interfaces = {}  # router external interfaces
         self.floating_ips = {}  # floating_ip_uuid: {}
-        # Router BVI (loopback) interface states for L3-HA
-        self.router_interface_states = {}  # {idx: state} 1 = UP, 0 = DOWN
-        # VPP Router state variable is updated by the RouterWatcher
-        # The default router state is the BACKUP.
-        # If this node should be the master it will be told soon enough,
-        # and this will prevent us from having two masters on any restart.
-        self.router_state = False  # 1 or True = Master; 0 or False = Backup
+        if cfg.CONF.ml2_vpp.enable_l3_ha:
+            # Router BVI (loopback) interface states for L3-HA
+            self.router_interface_states = {}  # {idx: state} 1 = UP, 0 = DOWN
+            # VPP Router state variable is updated by the RouterWatcher
+            # The default router state is the BACKUP.
+            # If this node should be the master it will be told soon enough,
+            # and this will prevent us from having two masters on any restart.
+            self.router_state = False  # True = Master; False = Backup
         # mac_ip acls do not support atomic replacement.
         # Here we create a mapping of sw_if_index to VPP ACL indices
         # so we can easily lookup the ACLs associated with the interface idx
@@ -1699,21 +1700,26 @@ class VPPForwarder(object):
             LOG.error("Error setting MTU on router interface")
         # Get the mac address for the route BVI loopback interface
         loopback_mac = self._get_loopback_mac(loopback_idx)
-        # Now bring up the loopback interface, if this router is the ACTIVE
-        # router and also populate the data structure router_interface_states
-        # so the HA code can activate and deactivate the interface
-        if self.router_state:
-            LOG.debug("Router HA state is ACTIVE")
-            LOG.debug("Bringing UP the router intf idx: %s", loopback_idx)
-            self.vpp.ifup(loopback_idx)
-            self.router_interface_states[loopback_idx] = 1
+        if cfg.CONF.ml2_vpp.enable_l3_ha:
+            # Now bring up the loopback interface, if this router is the
+            # ACTIVE router. Also populate the data structure
+            # router_interface_states so the HA code can activate and
+            # deactivate the interface
+            if self.router_state:
+                LOG.debug("Router HA state is ACTIVE")
+                LOG.debug("Bringing UP the router intf idx: %s", loopback_idx)
+                self.vpp.ifup(loopback_idx)
+                self.router_interface_states[loopback_idx] = 1
+            else:
+                LOG.debug("Router HA state is BACKUP")
+                LOG.debug("Bringing DOWN the router intf idx: %s",
+                          loopback_idx)
+                self.vpp.ifdown(loopback_idx)
+                self.router_interface_states[loopback_idx] = 0
+            LOG.debug("Current router interface states: %s",
+                      self.router_interface_states)
         else:
-            LOG.debug("Router HA state is BACKUP")
-            LOG.debug("Bringing DOWN the router intf idx: %s", loopback_idx)
-            self.vpp.ifdown(loopback_idx)
-            self.router_interface_states[loopback_idx] = 0
-        LOG.debug("Current router interface states: %s",
-                  self.router_interface_states)
+            self.vpp.ifup(loopback_idx)
         # Set SNAT on the interface if SNAT is enabled
         # Get a list of all SNAT interfaces
         int_list = self.vpp.get_snat_interfaces()
@@ -1981,7 +1987,8 @@ class VPPForwarder(object):
             else:
                 # Last subnet assigned, delete the interface
                 self.vpp.delete_loopback(bvi_if_idx)
-                self.router_interface_states.pop(bvi_if_idx, None)
+                if cfg.CONF.ml2_vpp.enable_l3_ha:
+                    self.router_interface_states.pop(bvi_if_idx, None)
         if router['net_type'] == 'vxlan':
             LOG.debug('Removing local vxlan GPE mappings for router '
                       'interface: %s', port_id)
@@ -2990,6 +2997,8 @@ class EtcdListener(object):
         # Spawning after the vlan/vxlan bindings are done so that
         # the RouterWatcher doesn't do unnecessary work
         if enable_router_watcher:
+            if cfg.CONF.ml2_vpp.enable_l3_ha:
+                LOG.info("L3 HA is enabled")
             LOG.debug("Spawning router_watcher")
             self.pool.spawn(RouterWatcher(self.client_factory.client(),
                                           'router_watcher',
@@ -3184,7 +3193,7 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                 floatingip_dict = jsonutils.loads(value)
                 self.data.vppf.associate_floatingip(floating_ip,
                                                     floatingip_dict)
-        if router_key == 'ha':
+        if cfg.CONF.ml2_vpp.enable_l3_ha and router_key == 'ha':
             LOG.debug('Setting VPP-Router HA State..')
             router_state = bool(jsonutils.loads(value))
             LOG.debug('Router state is: %s', router_state)
