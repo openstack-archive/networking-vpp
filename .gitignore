@@ -12,3 +12,4 @@ build
 .project
 .pydevproject
 .DS_Store
+.stestr
