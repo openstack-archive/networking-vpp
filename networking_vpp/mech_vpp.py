@@ -883,7 +883,10 @@ class EtcdAgentCommunicator(AgentCommunicator):
         secgroup_id -- The id of the security group that we want to delete
         """
         secgroup_path = self._secgroup_path(secgroup_id)
+        # Delete the security-group from remote-groups
+        remote_group_path = self._remote_group_path(secgroup_id, '')
         db.journal_write(session, secgroup_path, None)
+        db.journal_write(session, remote_group_path, None)
 
     def _secgroup_path(self, secgroup_id):
         return self.secgroup_key_space + "/" + secgroup_id
