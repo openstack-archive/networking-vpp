@@ -43,6 +43,11 @@ import sys
 import time
 import vpp
 
+# We use eventlet for everything but threads.  Here, we need an
+# eventlet-based locking mechanism, so we call out eventlet
+# specifically rather than using threading.Semaphore
+from eventlet.semaphore import Semaphore
+
 from networking_vpp._i18n import _
 from networking_vpp import compat
 from networking_vpp.compat import n_const
@@ -67,7 +72,6 @@ except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
 from neutron.common import utils as c_utils
-from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -88,6 +92,17 @@ reflexive_acls = True
 
 # Apply monkey patch if necessary
 compat.monkey_patch()
+
+# Our own, strictly eventlet, locking:
+_semaphores=defaultdict(eventlet.semaphore.Semaphore)
+def eventlet_lock(name):
+    sema = _semaphores[name]
+    
+    def wrap(f, *args, **kwargs):
+        with sema:
+            return f(*args, **kwargs)
+
+    return wrap(func)
 
 ######################################################################
 
@@ -801,7 +816,12 @@ class VPPForwarder(object):
         # later in time.
         self.ensure_tap_in_bridge(tap_name, bridge_name)
 
-    @lockutils.synchronized('vpp-lock')
+    # This is called by the (eventlet) inotify functions and the
+    # (eventlet) etcd functionality, and thus needs an eventlet-based
+    # lock.  We've found oslo_concurrency thinks that, because
+    # threading is unpatched, a threading lock is required, but this
+    # ends badly.
+    @eventlet_lock('ensure-interface-lock')
     def ensure_interface_on_host(self, if_type, uuid, mac=None):
         """Create or update vpp interface on host based on if_type.
 
@@ -815,6 +835,7 @@ class VPPForwarder(object):
 
         :return: dict indexed on uuid
         """
+
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
             pass
