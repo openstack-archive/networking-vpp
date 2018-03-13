@@ -1939,8 +1939,11 @@ class VPPForwarder(object):
             LOG.error("Router port:%s deletion error...port not found",
                       port_id)
             return False
-        # Get all SNAT interfaces and delete SNAT if set on this interface
+        # Get all SNAT interfaces
         snat_interfaces = self.vpp.get_snat_interfaces()
+        # Get SNAT out interfaces whose IP addrs are overloaded
+        snat_out_interfaces = self.vpp.get_outside_snat_interface_indices()
+        # delete SNAT if set on this interface
         if router['bvi_if_idx'] in snat_interfaces:
             LOG.debug('Router: Deleting SNAT on interface '
                       'index: %s', router['bvi_if_idx'])
@@ -1952,11 +1955,8 @@ class VPPForwarder(object):
         if not router['is_inside']:
             LOG.debug('Router: Deleting external gateway port %s for '
                       'router: %s', port_id, router)
-            # Remove SNAT configuration
-            intf_indxs = self.vpp.get_outside_snat_interface_indices()
-
             # Delete external snat addresses for the router
-            if router['bvi_if_idx'] in intf_indxs:
+            if router['bvi_if_idx'] in snat_out_interfaces:
                 LOG.debug('Router: Removing 1:N SNAT on external interface '
                           'index: %s', router['bvi_if_idx'])
                 self.vpp.snat_overload_on_interface_address(
