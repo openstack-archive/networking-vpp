@@ -19,3 +19,4 @@ PyJWT
 cryptography>=2.0,<3
 pyOpenSSL
 pyinotify
+neutron>=12.0.0  # Apache-2.0
