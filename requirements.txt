@@ -19,3 +19,7 @@ PyJWT
 cryptography>=2.0,<3
 pyOpenSSL
 pyinotify
+
+# OpenStack CI will install the following projects from git
+# if they are in the required-projects list for a job:
+neutron  # Apache-2.0
