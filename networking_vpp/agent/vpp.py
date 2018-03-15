@@ -227,7 +227,21 @@ class VPPInterface(object):
         # Disabling to prevent message debug flooding
         # self.LOG.debug('VPP: %s(%s, %s): ',
         # func, ', '.join(args), str(kwargs))
-        func_call = getattr(self._vpp, func)
+
+        # VPP version 18.04 onwards, the VPP APIs are attributes of the "api"
+        # object within the VPPInterface object whereas before 18.04, VPP APIs
+        # are attributes of the VPPInterface object itself. The following
+        # ensures that we work with VPP version 18.04 and onwards while still
+        # being backwards compatible.
+        try:
+            func_call = getattr(self._vpp.api, func)
+        except AttributeError as e:
+            func_call = getattr(self._vpp, func)
+            # There should not be a need for the debug logs but just in case
+            # there is just uncomment them below:
+            # self.LOG.debug("Switching to old way of invoking VPP APIs")
+            # self.LOG.debug(e)
+
         try:
             t = func_call(*args, **kwargs)
         except IOError as e:
@@ -865,7 +879,7 @@ class VPPInterface(object):
         snat_users = self.call_vpp('nat44_user_dump')
         for user in snat_users:
             if ipaddress.IPv4Address(ip_addr) == ipaddress.IPv4Address(
-                user.ip_address):
+                    user.ip_address):
                 user_vrf = user.vrf_id
                 break
         # A NAT session exists if the user_vrf is set
