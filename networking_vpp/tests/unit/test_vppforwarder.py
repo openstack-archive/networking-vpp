@@ -227,7 +227,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     @mock.patch('networking_vpp.agent.server.'
                 'VPPForwarder.ensure_kernel_bridge')
-    def test_ensure_interface_on_host_tap(self, m_en_br):
+    @mock.patch('networking_vpp.agent.server.'
+                'VPPForwarder.ensure_tap_in_bridge')
+    def test_ensure_interface_on_host_tap(self, m_en_br, m_en_tap):
         if_type = 'tap'
         uuid = 'fakeuuid'
         mac = 'fakemac'
@@ -237,6 +239,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                         mac,
                                                         expected_tag)
         self.vpp.ensure_kernel_bridge.assert_called_once_with('br-fakeuuid')
+        self.vpp.ensure_tap_in_bridge.assert_called_with(
+            'tapfakeuuid', 'br-fakeuuid')
         self.assertEqual(retval, self.vpp.interfaces[uuid])
 
     def test_ensure_interface_on_host_vhostuser(self):
