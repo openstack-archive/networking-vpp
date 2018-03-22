@@ -2526,7 +2526,8 @@ class EtcdListener(object):
             self.iface_awaiting_secgroups[iface_idx] = \
                 security_data.get('security_groups', [])
         else:
-            self.iface_awaiting_secgroups[iface_idx] = []
+            # 'None' is a special value indicating no port security
+            self.iface_awaiting_secgroups[iface_idx] = None
 
         self.iface_state[iface_idx] = (id, bound_callback, props)
 
@@ -2635,6 +2636,7 @@ class EtcdListener(object):
         # This is the correct behavior when security-groups are enabled but
         # not set on a port.
         if (self.secgroup_enabled and
+                secgroup_ids is not None and  # port security off
                 is_secured_port):
             if not self.vppf.maybe_set_acls_on_port(
                     secgroup_ids,
