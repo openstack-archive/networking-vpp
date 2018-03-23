@@ -85,8 +85,17 @@ _vpp_opts = [
                       "The last 3 octets will be randomly generated.")),
 ]
 
+cfg_group = cfg.OptGroup(name='ml2_vpp',
+                         title='VPP mechanism driver options',
+                         help='Configures the VPP ML2 driver and its agents.')
+
 
 def register_vpp_opts(cfg=cfg.CONF):
     global _vpp_opts
-    cfg.register_opts(_vpp_opts, "ml2_vpp")
-    etcdutils.register_etcd_conn_opts(cfg, "ml2_vpp")
+    cfg.register_opts(_vpp_opts, cfg_group)
+    etcdutils.register_etcd_conn_opts(cfg, cfg_group)
+
+
+def list_opts():
+    """Oslo config generator entry point"""
+    return [(cfg_group, _vpp_opts + etcdutils.list_opts())]
