@@ -301,9 +301,9 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         return new_router
 
     def delete_router(self, context, router_id):
+        router = self.get_router(context, router_id)
+        super(VppL3RouterPlugin, self).delete_router(context, router_id)
         with neutron_db_api.context_manager.writer.using(context):
-            router = self.get_router(context, router_id)
-            super(VppL3RouterPlugin, self).delete_router(context, router_id)
             # Delete the external gateway key from etcd
             if router.get('external_gateway_info', False):
                 self._write_router_external_gw_journal(context, router_id,
