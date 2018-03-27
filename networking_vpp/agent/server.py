@@ -1691,7 +1691,8 @@ class VPPForwarder(object):
             is_inside = 0
             enable_snat = router_data['external_gateway_info']['enable_snat']
             external_gateway_ip = router_data['external_gateway_ip']
-            # TODO(najoy): Support multiple IP addresses on router port
+            # To support multiple IP addresses on a router port, add
+            # the router to each of the subnets.
             gateway_ip = router_data['gateways'][0][0]
             prefixlen = router_data['gateways'][0][1]
             is_ipv6 = router_data['gateways'][0][2]
@@ -1702,7 +1703,6 @@ class VPPForwarder(object):
             vrf = router_data['vrf_id']
             is_inside = 1
             external_gateway_ip = None
-            # TODO(najoy): Support multiple IP addresses on router port
             gateway_ip = router_data['gateway_ip']
             prefixlen = router_data['prefixlen']
             is_ipv6 = router_data['is_ipv6']
