@@ -989,6 +989,9 @@ class VPPForwarder(object):
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
         # Ensure local mac to VNI mapping for GPE
         if net_type == 'vxlan':
+            LOG.debug('Adding local GPE mapping for seg_id:%s and mac:%s',
+                      seg_id, mac)
+            mac = props['mac']
             self.add_local_gpe_mapping(seg_id, mac)
 
         props['net_data'] = net_data
@@ -2912,18 +2915,30 @@ class EtcdListener(object):
         """
         key_space = self.gpe_key_space + "/%s" % vni
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
-        rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).read(
-            key_space, recursive=True)
-        for child in rv.children:
-            m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
-                         child.key)
-            if m:
-                hostname = m.group(1)
-                mac = m.group(2)
-                ip = m.group(3)
-                if self.is_valid_remote_map(vni, hostname):
-                    self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
-                                                        child.value)
+        try:
+            rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()
+                                                ).read(key_space,
+                                                       recursive=True)
+            for child in rv.children:
+                m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
+                             child.key)
+                if m:
+                    hostname = m.group(1)
+                    mac = m.group(2)
+                    ip = m.group(3)
+                    if self.is_valid_remote_map(vni, hostname):
+                        self.vppf.ensure_remote_gpe_mapping(vni, mac, ip,
+                                                            child.value)
+        except etcd.EtcdKeyNotFound:
+            # The remote gpe key is not found. The agent may not have
+            # added it to etcd yet. We will be told to read it later.
+            # Continue and don't exit.
+            pass
+        except etcd.EtcdException as e:
+            # Error log any other etcd exception
+            LOG.error("Etcd exception %s while fetching GPE mappings", e)
+            LOG.exception("etcd exception in fetch-gpe-mappings")
+            # TODO(najoy): Handle other etcd GPE exceptions
 
     def add_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
         """Create a remote GPE overlay to underlay mapping
@@ -3185,11 +3200,13 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # agents that bind this segment using GPE
         if data['network_type'] == 'vxlan':
             host_ip = self.data.vppf.gpe_underlay_addr
+            props = self.data.vppf.interfaces[port]
+            mac = props['mac']
             for ip in [ip['ip_address'] for ip in data.get('fixed_ips')]:
                 gpe_key = self.data.gpe_key_space + '/%s/%s/%s/%s' % (
                     data['segmentation_id'],
                     self.data.host,
-                    data['mac_address'],
+                    mac,
                     ip)
                 LOG.debug('Writing gpe key %s with vxlan mapping '
                           'to underlay IP address %s',
