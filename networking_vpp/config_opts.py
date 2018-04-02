@@ -61,6 +61,8 @@ _vpp_opts = [
                       "to render L3 services on.")),
     cfg.BoolOpt('enable_l3_ha', default=False,
                 help=_("Enable L3 HA feature. Disabled by default.")),
+    cfg.StrOpt('l3_external_bridge', default="br-ex",
+               help=_("bridge to the external network")),
     cfg.BoolOpt('jwt_signing', default=False,
                 help=_("Activate JWT token in etcd messages")),
 

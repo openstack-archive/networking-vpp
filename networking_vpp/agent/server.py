@@ -284,6 +284,14 @@ gpe_lset_name = nvpp_const.GPE_LSET_NAME
 #######################################################################
 
 
+#######################################################################
+# L3 constants
+VPP_HOSTINT_PREFIX="host-"
+EXT_VETH_VPP = 'ext'        # the end which VPP connects to
+EXT_VETH_HOST = 'vppext'    # the end which goes to the external bridge
+#######################################################################
+
+
 class UnsupportedInterfaceException(Exception):
     """Used when ML2 has tried to ask for a weird binding type."""
     pass
@@ -754,6 +762,97 @@ class VPPForwarder(object):
 
     # end theft
     ########################################
+
+    def ensure_external_bridge(self, external_bridge_name):
+        """
+        Create the plumbings necessary to connect VPP to the external
+        bridge on the host
+        """
+        # ensure bridge exists
+        # TODO(onong): make sure it is linux bridge
+        bridge = bridge_lib.BridgeDevice(external_bridge_name)
+        if not bridge.exists():
+            LOG.error("External bridge %s does not exist",
+                       external_bridge_name)
+            return False
+        LOG.debug("external bridge %s exists" % external_bridge_name)
+
+        # Create veth pair if it doesn't exist already.
+        # Making sure to create the interfaces only if both endpoints do not
+        # exist. It is possible that a non-veth interface with the same name
+        # exists in which case we can't do much.
+        # TODO(onong): differentiate between veth existing and some interface
+        # with same name using -d of "ip link" command
+        veth0 = ip_lib.IPDevice(EXT_VETH_VPP)
+        veth1 = ip_lib.IPDevice(EXT_VETH_HOST)
+        if not veth0.exists() and not veth1.exists():
+            try:
+                ip_lib.IPWrapper().add_veth(EXT_VETH_VPP,EXT_VETH_HOST)
+            except RuntimeError:
+                LOG.error("Failed to create veth interface")
+                return False
+            LOG.debug("Created veth interfaces %s and %s", EXT_VETH_VPP,
+                    EXT_VETH_HOST)
+        else:
+            LOG.debug("Not creating veth interface as it already exists")
+
+        # Try to set veth links up.
+        # Ideally, we would have created the veth except for...
+        # BAD #1: If a single interface exists with the same name as one of
+        #         the veth endpoint's name, then we catch it here.
+        # BAD #2: If two interfaces exist with names matching both the veth
+        #         endpoints' names, then we are in a soup unless those are
+        #         veth endpoints which we created but simply forgot to
+        #         cleanup(maybe we crashed?).
+        try:
+            veth0.link.set_up()
+            veth1.link.set_up()
+        except RuntimeError:
+            LOG.error("Failed to set veth interfaces up")
+            return False
+
+        # TODO(onong): handle BAD #2
+        # Set veth1 under the external bridge
+        bridge_ports = bridge.get_interfaces()
+        LOG.debug("Ports in external bridge = %s", bridge_ports)
+        if veth1.name not in bridge_ports:
+            try:
+                bridge.addif(veth1.name)
+            except RuntimeError:
+                LOG.error("Failed to add veth interface %s to"
+                          " external bridge", EXT_VETH_HOST)
+                return False
+            LOG.debug("Added veth interface %s to external bridge",
+                    EXT_VETH_HOST)
+        else:
+            LOG.debug("veth interface %s already part of external bridge",
+                    EXT_VETH_HOST)
+        bridge_ports = bridge.get_interfaces()
+        LOG.debug("Ports in external bridge = %s", bridge_ports)
+        return True
+
+    def delete_external_bridge(self):
+        """Delete the veth pair connected to the external bridge"""
+        veth0 = ip_lib.IPDevice(EXT_VETH_VPP)
+        veth1 = ip_lib.IPDevice(EXT_VETH_HOST)
+        # Delete veth links only if both exist
+        # Deletion automatically removes from the bridge too
+        if veth0.exists() and veth1.exists():
+            LOG.debug("Deleting veth interfaces %s and %s", EXT_VETH_VPP,
+                    EXT_VETH_HOST)
+            try:
+                ip_lib.IPWrapper().del_veth(EXT_VETH_HOST)
+            except RuntimeError:
+                LOG.error("Failed to delete veth interfaces %s and %s",
+                        EXT_VETH_VPP, EXT_VETH_HOST)
+                return
+            LOG.debug("Deleted veth interfaces %s and %s", EXT_VETH_VPP,
+                    EXT_VETH_HOST)
+        else:
+            LOG.debug("Not deleting veth interfaces as they seem not to have"
+                      " been created by us")
+        return
+
     def _consider_external_device(self, dev_name):
         """See if we need to take action when a net device is created
 
@@ -1607,18 +1706,24 @@ class VPPForwarder(object):
         if internal_network_data:
             net_br_idx = internal_network_data['bridge_domain_id']
 
-            # if needed the external subinterface will be created.
-            external_if_name, external_if_idx = self.get_if_for_physnet(
-                floatingip_dict['external_physnet'])
-            # Get the external vlan sub_intf for VLAN network_type
-            if floatingip_dict[
-                'external_net_type'] == plugin_constants.TYPE_VLAN:
-                external_if_idx = self._ensure_external_vlan_subif(
-                    external_if_name, external_if_idx,
-                    floatingip_dict['external_segmentation_id'])
-
-            # Return the internal and external interface indexes.
-            return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
+            # If router_external flag is set just return the BVI index
+            # otherwise the VPP physnet interface gets added as SNAT
+            # out interface.
+            if floatingip_dict['router_external']:
+                # Return the internal interface index.
+                return (self.ensure_bridge_bvi(net_br_idx), None)
+            else:
+                # if needed the external subinterface will be created.
+                external_if_name, external_if_idx = self.get_if_for_physnet(
+                    floatingip_dict['external_physnet'])
+                # Get the external vlan sub_intf for VLAN network_type
+                if floatingip_dict[
+                    'external_net_type'] == plugin_constants.TYPE_VLAN:
+                    external_if_idx = self._ensure_external_vlan_subif(
+                        external_if_name, external_if_idx,
+                        floatingip_dict['external_segmentation_id'])
+                # Return the internal and external interface indexes.
+                return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
         else:
             LOG.error('Failed to get internal network data.')
             return None, None
@@ -1706,67 +1811,97 @@ class VPPForwarder(object):
             gateway_ip = router_data['gateway_ip']
             prefixlen = router_data['prefixlen']
             is_ipv6 = router_data['is_ipv6']
-        # Ensure the network exists on host and get the network data
-        net_data = self.ensure_network_on_host(physnet, net_type, seg_id)
-        # Get the bridge domain id and ensure a BVI interface for it
-        bridge_idx = net_data['bridge_domain_id']
-        # Ensure a BVI (i.e. A loopback) for the bridge domain
-        loopback_idx = self.vpp.get_bridge_bvi(bridge_idx)
-        # Create a loopback BVI interface
-        if not loopback_idx:
-            # Create the loopback interface, but don't bring it UP yet
-            loopback_idx = self.ensure_bridge_bvi(bridge_idx)
-        # Set the VRF for tenant BVI interfaces, if not already set
-        if vrf and not self.vpp.get_interface_vrf(loopback_idx) == vrf:
-            self.vpp.set_interface_vrf(loopback_idx, vrf, is_ipv6)
-        # Make a best effort to set the MTU on the interface
-        try:
-            self.vpp.set_interface_mtu(loopback_idx, router_data['mtu'])
-        except SystemExit:
-            # Log error and continue, do not exit here
-            LOG.error("Error setting MTU on router interface")
-        # Get the mac address for the route BVI loopback interface
-        loopback_mac = self._get_loopback_mac(loopback_idx)
+
+        # Setup router external interface
+        if not is_inside:
+            # Setup the external bridge
+            l3_external_bridge = cfg.CONF.ml2_vpp.l3_external_bridge
+            LOG.debug("l3_external_bridge = %s veth0 = %s veth1 = %s",
+                       l3_external_bridge, EXT_VETH_VPP, EXT_VETH_HOST)
+            if not self.ensure_external_bridge(l3_external_bridge):
+                return -1
+            # Create a host-interface in VPP (if it doesn't exist already).
+            # This host-interface connects VPP to the external bridge through
+            # the veth pair.
+            router_if_idx = self.vpp.get_ifidx_by_name(VPP_HOSTINT_PREFIX
+                                                       + EXT_VETH_VPP)
+            if not router_if_idx:
+                router_if_idx = self.vpp.create_host_interface(EXT_VETH_VPP)
+                LOG.debug("Created host interface %s with idx %s",
+                           VPP_HOSTINT_PREFIX + EXT_VETH_VPP, router_if_idx)
+            loopback_mac = self.vpp.get_ifidx_mac_address(router_if_idx)
+            LOG.debug("mac address %s of the router's external interface",
+                  loopback_mac)
+            # fill up dummy vars for router_dict
+            bridge_idx = -1
+            net_data = {}
+        # Setup router internal/tenant interface
+        else:
+            # Ensure the network exists on host and get the network data
+            net_data = self.ensure_network_on_host(physnet, net_type, seg_id)
+            # Get the bridge domain id and ensure a BVI interface for it
+            bridge_idx = net_data['bridge_domain_id']
+            # Ensure a BVI (i.e. A loopback) for the bridge domain
+            router_if_idx = self.vpp.get_bridge_bvi(bridge_idx)
+            # Create a loopback BVI interface
+            if not router_if_idx:
+                # Create the loopback interface, but don't bring it UP yet
+                router_if_idx = self.ensure_bridge_bvi(bridge_idx)
+            # Set the VRF for tenant BVI interfaces, if not already set
+            if vrf and not self.vpp.get_interface_vrf(router_if_idx) == vrf:
+                self.vpp.set_interface_vrf(router_if_idx, vrf, is_ipv6)
+            # Make a best effort to set the MTU on the interface
+            try:
+                self.vpp.set_interface_mtu(router_if_idx, router_data['mtu'])
+            except SystemExit:
+                # Log error and continue, do not exit here
+                LOG.error("Error setting MTU on router interface")
+            # Get the mac address for the router BVI interface
+            loopback_mac = self._get_loopback_mac(router_if_idx)
+
+        # make sure L3 HA is enabled before executing the HA logic
         if cfg.CONF.ml2_vpp.enable_l3_ha:
             # Now bring up the loopback interface, if this router is the
-            # ACTIVE router. Also populate the data structure
+            # ACTIVE router and also populate the data structure
             # router_interface_states so the HA code can activate and
             # deactivate the interface
             if self.router_state:
                 LOG.debug("Router HA state is ACTIVE")
-                LOG.debug("Bringing UP the router intf idx: %s", loopback_idx)
-                self.vpp.ifup(loopback_idx)
-                self.router_interface_states[loopback_idx] = 1
+                LOG.debug("Bringing UP the router intf idx: %s",
+                           router_if_idx)
+                self.vpp.ifup(router_if_idx)
+                self.router_interface_states[router_if_idx] = 1
             else:
                 LOG.debug("Router HA state is BACKUP")
                 LOG.debug("Bringing DOWN the router intf idx: %s",
-                          loopback_idx)
-                self.vpp.ifdown(loopback_idx)
-                self.router_interface_states[loopback_idx] = 0
+                           router_if_idx)
+                self.vpp.ifdown(router_if_idx)
+                self.router_interface_states[router_if_idx] = 0
             LOG.debug("Current router interface states: %s",
                       self.router_interface_states)
         else:
-            self.vpp.ifup(loopback_idx)
+            self.vpp.ifup(router_if_idx)
+
         # Set SNAT on the interface if SNAT is enabled
         # Get a list of all SNAT interfaces
         int_list = self.vpp.get_snat_interfaces()
-        if loopback_idx not in int_list and enable_snat:
-            self.vpp.set_snat_on_interface(loopback_idx, is_inside)
+        if router_if_idx not in int_list and enable_snat:
+            self.vpp.set_snat_on_interface(router_if_idx, is_inside)
             # Set the SNAT 1:N overload on the external loopback interface
             if not is_inside:
-                self.vpp.snat_overload_on_interface_address(loopback_idx)
+                self.vpp.snat_overload_on_interface_address(router_if_idx)
 
         # Add VXLAN GPE mappings for vxlan type networks
         if net_type == plugin_constants.TYPE_VXLAN:
             self.add_local_gpe_mapping(seg_id, loopback_mac)
         # Set the gateway IP address on the BVI interface, if not already set
-        addresses = self.vpp.get_interface_ip_addresses(loopback_idx)
+        addresses = self.vpp.get_interface_ip_addresses(router_if_idx)
         for address in addresses:
             if address[0] == str(gateway_ip):
                 break
         else:
             self.vpp.set_interface_ip(
-                loopback_idx, self._pack_address(gateway_ip), prefixlen,
+                router_if_idx, self._pack_address(gateway_ip), prefixlen,
                 is_ipv6)
 
         router_dict = {
@@ -1774,7 +1909,7 @@ class VPPForwarder(object):
             'physnet': physnet,
             'net_type': net_type,
             'bridge_domain_id': bridge_idx,
-            'bvi_if_idx': loopback_idx,
+            'bvi_if_idx': router_if_idx,
             'gateway_ip': gateway_ip,
             'prefixlen': prefixlen,
             'is_ipv6': is_ipv6,
@@ -1797,11 +1932,12 @@ class VPPForwarder(object):
             LOG.debug("Router: Created outside router port: %s",
                       router_dict)
             self.router_external_interfaces[port_id] = router_dict
+            self.default_route_in_default_vrf(router_dict)
             # Ensure that the gateway network is exported into all tenant
             # VRFs, with the correct default routes
             self.export_routes_from_tenant_vrfs(
                 ext_gw_ip=router_dict['external_gateway_ip'])
-        return loopback_idx
+        return router_if_idx
 
     def become_master_router(self):
         """This node will become the master router"""
@@ -1834,6 +1970,27 @@ class VPPForwarder(object):
         """Returns the IP network for the gateway in CIDR form."""
         return str(ipaddress.ip_interface(unicode(gateway_ip + "/"
                                           + str(prefixlen))).network)
+
+    def default_route_in_default_vrf(self, router_dict, is_add=True):
+        # ensure that default route in default VRF is present
+        if is_add:
+            self.vpp.add_ip_route(
+                vrf=router_dict['vrf_id'],
+                ip_address=self._pack_address('0.0.0.0'),
+                prefixlen=0,
+                next_hop_address=self._pack_address(
+                                      router_dict['external_gateway_ip']),
+                next_hop_sw_if_index=router_dict['bvi_if_idx'],
+                is_ipv6=router_dict['is_ipv6'])
+        else:
+            self.vpp.delete_ip_route(
+                vrf=router_dict['vrf_id'],
+                ip_address=self._pack_address('0.0.0.0'),
+                prefixlen=0,
+                next_hop_address=self._pack_address(
+                                      router_dict['external_gateway_ip']),
+                next_hop_sw_if_index=router_dict['bvi_if_idx'],
+                is_ipv6=router_dict['is_ipv6'])
 
     def export_routes_from_tenant_vrfs(self, source_vrf=0, is_add=True,
                                        ext_gw_ip=None):
@@ -1993,15 +2150,20 @@ class VPPForwarder(object):
             # external gateway
             self.export_routes_from_tenant_vrfs(
                 ext_gw_ip=router['external_gateway_ip'], is_add=False)
+            # delete the default route in the default VRF
+            self.default_route_in_default_vrf(router,is_add=False)
         else:
             # Delete all exported routes from this VRF
             self.export_routes_from_tenant_vrfs(source_vrf=router['vrf_id'],
                                                 is_add=False)
 
-        # Delete the gateway IP address and the BVI interface if this is the
-        # last IP address assigned on the BVI
-        net_br_idx = router['bridge_domain_id']
-        bvi_if_idx = self.vpp.get_bridge_bvi(net_br_idx)
+        if router['is_inside']:
+            # Delete the gateway IP address and the BVI interface if this is the
+            # last IP address assigned on the BVI
+            net_br_idx = router['bridge_domain_id']
+            bvi_if_idx = self.vpp.get_bridge_bvi(net_br_idx)
+        else:
+            bvi_if_idx = router['bvi_if_idx']
         # Get bvi interface from bridge details
         if bvi_if_idx:
             # Get all IP's assigned to the BVI interface
@@ -2013,7 +2175,11 @@ class VPPForwarder(object):
                     router['prefixlen'], router['is_ipv6'])
             else:
                 # Last subnet assigned, delete the interface
-                self.vpp.delete_loopback(bvi_if_idx)
+                if router['is_inside']:
+                    self.vpp.delete_loopback(bvi_if_idx)
+                else:
+                    self.vpp.delete_host_interface(EXT_VETH_VPP)
+                    self.delete_external_bridge()
                 if cfg.CONF.ml2_vpp.enable_l3_ha:
                     self.router_interface_states.pop(bvi_if_idx, None)
         if router['net_type'] == 'vxlan':

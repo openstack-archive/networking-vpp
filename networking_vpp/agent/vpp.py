@@ -617,6 +617,17 @@ class VPPInterface(object):
 
         return loop.sw_if_index
 
+    def create_host_interface(self, host_interface_name):
+        # Create a host-interface
+        host_interface = self.call_vpp('af_packet_create',
+                 host_if_name=host_interface_name, use_random_hw_addr=1)
+        return host_interface.sw_if_index
+
+    def delete_host_interface(self, host_interface_name):
+        # Delete a host-interface
+        host_interface = self.call_vpp('af_packet_delete',
+                                        host_if_name=host_interface_name)
+
     def set_loopback_bridge_bvi(self, loopback, bridge_id):
         # Sets the specified loopback interface to act as  the BVI
         # for the bridge. This interface will act as a gateway and

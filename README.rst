@@ -248,9 +248,9 @@ to your kernel before VPP starts.  It depends on the Linux deployment
 you're using.  Refer to the VPP documentation if you need more help.
 
 If running on VirtualBox you will need to use an experimental option
-to allow SSE4.2 passthrough from the host CPU to the VM. Refer to
-the `VirtualBox Manual <https://www.virtualbox.org/manual/ch09.html#sse412passthrough>`_
- for details.
+to allow SSE4.2 passthrough from the host CPU to the VM. For details
+refer to the `VirtualBox Manual
+<https://www.virtualbox.org/manual/ch09.html#sse412passthrough>`_.
 
 What overlays does it support?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -288,7 +288,9 @@ Can you walk me through port binding?
 
 This mechanism driver doesn't do anything at all until Neutron needs to
 drop traffic on a compute host, so the only thing it's really interested
-in is ports. Making a network or a subnet doesn't do anything at all.
+in is ports. Making a network or a subnet doesn't do anything at all (except
+when DHCP is enabled in which case subnet creation would lead to creation of
+a DHCP port).
 
 And it mainly interests itself in the process of binding: the bind calls
 called by ML2 determine if it has work to do, and the port postcommit
@@ -350,6 +352,23 @@ terminate tenant VLANs and route traffic properly.
 *The vpp-agent acts as a common L2 and L3 agent so it needs to be started on
 the L3 host as well*.
 
+How do I connect vpp-router to external network?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Currently, we support connecting to the external network through a linux
+bridge on the network/controller node(s).
+
+In order to connect vpp-router to the external network:
+
+- create a linux bridge on the network/controller node(s)
+- add the interface with external connectivity to this bridge
+- add ``l3_external_bridge=<linux bridge name>`` in the ml2.ini configuration file
+
+The ``vpp-agent`` connects VPP to this bridge using a veth pair.
+
+NOTE: By default, ``vpp-agent`` will look for a linux bridge named ``br-ex`` if
+nothing is specified in the configuration file.
+
 How do I enable Layer3 HA?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 In the 18.01 release, we support Layer3 HA for VPP.
@@ -371,20 +390,23 @@ seen is with floating ip addresses. VPP requires us to clear all existing
 dynamic NAT sessions associated with an IP address before installing a 1:1
 NAT for that IP address. However, the NAT API to clear dynamic NAT sessions
 is present in the 18.01 release. So you have two options as a workaround.
+
 1. Restart the VPP and vpp-agent after adding a floating ip address,
    This will set the 1:1 NAT before any dynamic NAT sessions.
 2. Patch your VPP using the below two patches.These patches will add the code
    to clear dynamic NAT sessions.
+
    - https://gerrit.fd.io/r/#/c/10358/
    - https://gerrit.fd.io/r/#/c/9050/
 
 
 Sample L3 host settings in ml2_conf.ini
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+::
 
-[ml2_vpp]
-l3_hosts = node1,node2
-enable_l3_ha = True
+  [ml2_vpp]
+  l3_hosts = node1,node2
+  enable_l3_ha = True
 
 How does Layer3 HA Work and how do I test it?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
