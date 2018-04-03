@@ -156,6 +156,13 @@ class ParsedEtcdResult(etcd.EtcdResult):
     raft_index = _unchanged('raft_index')
     action = _unchanged('action')
 
+    # support iteration over result's children
+    children = _unchanged('children')
+    # TODO(ijw): for some reason, using .children returns an EtcdResult
+    # and not a ParsedEtcdResult (which is obviously wrong).  This only
+    # occurs in the GPE code, but it needs addressing properly in
+    # etcdutils.
+
     # used internally by etcd.client.Client
     _prev_node = _unchanged('_prev_node')
 
