@@ -820,9 +820,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
                      'segmentation_id': 5000,
                      'physnet': "uplink"}
         mock_gpe_local_map_data = {'vnis': set([5000])}
-        mock_gpe_remote_map_data = {('fake-mac1', 5000): 'fake-remote-ip1',
-                                    ('fake-mac2', 5000): 'fake-remote-ip1',
-                                    ('fake-mac3', 5001): 'fake-remote-ip2'
+        mock_gpe_remote_map_data = {('1:1:1:1:1:1', 5000): '1.1.1.1',
+                                    ('2:2:2:2:2:2', 5000): '2.2.2.2',
+                                    ('3:3:3:3:3:3', 5001): '3.3.3.3'
                                     }
         self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = [(5000,
                                                                   70000)]
@@ -834,11 +834,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
             vni=5000, bridge_domain=70000)
         self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['vnis'], set([]))
         self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
-            'fake-mac1', 5000)
+            '1:1:1:1:1:1', 5000)
         self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
-            'fake-mac2', 5000)
+            '2:2:2:2:2:2', 5000)
         self.assertEqual(self.vpp.gpe_map['remote_map'], {
-            ('fake-mac3', 5001): 'fake-remote-ip2'})
+            ('3:3:3:3:3:3', 5001): '3.3.3.3'})
         self.assertEqual(self.vpp.networks, {})
 
     @mock.patch(
