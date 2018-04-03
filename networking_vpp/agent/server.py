@@ -989,6 +989,7 @@ class VPPForwarder(object):
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
         # Ensure local mac to VNI mapping for GPE
         if net_type == 'vxlan':
+            mac = props['mac']
             self.add_local_gpe_mapping(seg_id, mac)
 
         props['net_data'] = net_data
@@ -2360,7 +2361,8 @@ class VPPForwarder(object):
                   segmentation_id)
         for mac_vni_tpl in self.gpe_map['remote_map'].keys():
             mac, vni = mac_vni_tpl
-            if segmentation_id == vni:
+            # We also have (IP, VNI) tuples in remote_map. So, check if mac.
+            if len(mac.split(':')) == 6 and segmentation_id == vni:
                 self.delete_remote_gpe_mapping(vni, mac, None)
         # Clear any static GPE ARP entries in the bridge-domain for this VNI
         bridge_domain = self.bridge_idx_for_lisp_segment(segmentation_id)
@@ -2932,23 +2934,38 @@ class EtcdListener(object):
         Underlay = IP address of the VPP's underlay interface
         """
         underlay_ip = self.vppf.gpe_underlay_addr
-        gpe_key = self.gpe_key_space + '/%s/%s/%s/%s' % (
-            segmentation_id, self.host, mac_address, ip
-            )
-        LOG.debug('Writing GPE key to etcd %s with underlay IP address:%s',
-                  gpe_key, underlay_ip)
+        gpe_key = self.gpe_key_space + '/%s/%s/%s' % (
+            segmentation_id, self.host, ip)
+        gpe_data = {'mac': mac_address, 'host': underlay_ip}
+        LOG.debug('Writing GPE key to etcd %s with gpe_data %s',
+                  gpe_key, gpe_data)
         etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).write(
-            gpe_key, underlay_ip)
+            gpe_key, gpe_data)
 
-    def delete_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
+    def delete_gpe_remote_mapping(self, segmentation_id, mac_address):
         """Delete a remote GPE overlay to underlay mapping."""
-        gpe_dir = self.gpe_key_space + '/%s/%s/%s' % (segmentation_id,
-                                                      self.host,
-                                                      mac_address)
-        etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).delete(
-            gpe_dir + '/' + ip)
-        etcdutils.EtcdHelper(self.client_factory.client()).remove_dir(
-            gpe_dir)
+        gpe_dir = self.gpe_key_space + '/%s/%s' % (segmentation_id,
+                                                   self.host)
+
+        def get_child_keys():
+            child_keys = etcdutils.SignedEtcdJSONWriter(
+                self.client_factory.client()).read(gpe_dir, recursive=True)
+            return child_keys
+
+        for result in get_child_keys().children:
+            # TODO(najoy): Fix the type of result. It must be a
+            # ParsedEtcdResult that works with signed keys instead
+            # of the EtcdResult, and json.loads is not required.
+            data = jsonutils.loads(result.value)
+            if data['mac'] == mac_address:
+                etcdutils.SignedEtcdJSONWriter(self.client_factory.client()
+                                               ).delete(result.key)
+        # Delete the etcd directory if it's empty
+        if len(list(get_child_keys().children)) == 1:
+            for result in get_child_keys().children:
+                if result.dir:
+                    etcdutils.SignedEtcdJSONWriter(
+                        self.client_factory.client()).delete(result.key)
 
     def ensure_gpe_remote_mappings(self, segmentation_id):
         """Ensure all the remote GPE mappings are present in VPP
@@ -3133,14 +3150,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
                 self.data.state_key_space + '/%s'
                 % port)
             if is_vxlan:
-                # Each IP address of the bound port is a GPE child key
-                gpe_dir = self.data.gpe_key_space + \
-                    '/%s/%s/%s' % (seg_id, self.data.host, mac)
-                gpe_child_keys = self.etcd_client.get(gpe_dir)
-                for result in gpe_child_keys.children:
-                    self.etcd_client.delete(result.key)
-                # Delete the GPE directory as we no longer need it
-                etcdutils.EtcdHelper(self.etcd_client).remove_dir(gpe_dir)
+                self.data.delete_gpe_remote_mapping(seg_id, mac)
         except etcd.EtcdKeyNotFound:
             # Gone is fine; if we didn't delete it
             # it's no problem
@@ -3184,17 +3194,11 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # mac to instance's IP (for ARP) mapping to all
         # agents that bind this segment using GPE
         if data['network_type'] == 'vxlan':
-            host_ip = self.data.vppf.gpe_underlay_addr
+            props = self.data.vppf.interfaces[port]
+            mac = props['mac']
             for ip in [ip['ip_address'] for ip in data.get('fixed_ips')]:
-                gpe_key = self.data.gpe_key_space + '/%s/%s/%s/%s' % (
-                    data['segmentation_id'],
-                    self.data.host,
-                    data['mac_address'],
-                    ip)
-                LOG.debug('Writing gpe key %s with vxlan mapping '
-                          'to underlay IP address %s',
-                          gpe_key, host_ip)
-                self.etcd_client.write(gpe_key, host_ip)
+                self.data.add_gpe_remote_mapping(data['segmentation_id'],
+                                                 mac, ip)
 
 
 class RouterWatcher(etcdutils.EtcdChangeWatcher):
@@ -3245,8 +3249,7 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                                              router_data['gateway_ip'])
         else:
             self.data.delete_gpe_remote_mapping(router_data['segmentation_id'],
-                                                loopback_mac,
-                                                router_data['gateway_ip'])
+                                                loopback_mac)
 
     def added(self, router_key, value):
         token1, token2 = self.parse_key(router_key)
@@ -3284,10 +3287,12 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
             if token1 != 'floatingip':
                 port_id = token2
                 router_data = self.data.vppf.router_interfaces.get(port_id)
-                self.data.vppf.delete_router_interface_on_host(port_id)
+                # Delete the GPE mapping first as we need to lookup the
+                # router interface mac-address from vppf
                 if router_data and router_data.get('net_type') == 'vxlan':
                     self.add_remove_gpe_mappings(port_id, router_data,
                                                  is_add=0)
+                self.data.vppf.delete_router_interface_on_host(port_id)
             else:
                 floating_ip = token2
                 self.data.vppf.disassociate_floatingip(floating_ip)
@@ -3405,35 +3410,39 @@ class GpeWatcher(etcdutils.EtcdChangeWatcher):
         pass
 
     def parse_key(self, gpe_key):
-        m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
+        m = re.match('([^/]+)' + '/([^/]+)' + '/([^/]+)',
                      gpe_key)
-        vni, hostname, mac, ip = None, None, None, None
+        vni, hostname, ip = None, None, None
         if m:
             vni = int(m.group(1))
             hostname = m.group(2)
-            mac = m.group(3)
-            ip = m.group(4)
-        return (vni, hostname, mac, ip)
+            ip = m.group(3)
+        return (vni, hostname, ip)
 
     def added(self, gpe_key, value):
-        # gpe_key format is "vni/hostname/mac/ip"
-        vni, hostname, mac, ip = self.parse_key(gpe_key)
-        if (vni and hostname and mac and ip and
+        # gpe_key format is "vni/hostname/ip"
+        # gpe_value format is {'mac':<mac>, 'host':<underlay_ip>}
+        vni, hostname, ip = self.parse_key(gpe_key)
+        if (vni and hostname and ip and
                 self.data.is_valid_remote_map(vni, hostname)):
+            data = jsonutils.loads(value)
             self.data.vppf.ensure_remote_gpe_mapping(
                 vni=vni,
-                mac=mac,
+                mac=data['mac'],
                 ip=ip,
-                remote_ip=value)
+                remote_ip=data['host'])
+            self.data.vppf.gpe_map['remote_map'][(ip, vni)] = data['mac']
 
     def removed(self, gpe_key):
-        vni, hostname, mac, ip = self.parse_key(gpe_key)
-        if (vni and hostname and mac and ip and
+        vni, hostname, ip = self.parse_key(gpe_key)
+        if (vni and hostname and ip and
                 self.data.is_valid_remote_map(vni, hostname)):
+            mac = self.data.vppf.gpe_map['remote_map'][(ip, vni)]
             self.data.vppf.delete_remote_gpe_mapping(
                 vni=vni,
                 mac=mac,
                 ip=ip)
+            del self.data.vppf.gpe_map['remote_map'][(ip, vni)]
 
 
 class BindNotifier(object):
