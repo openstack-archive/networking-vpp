@@ -156,6 +156,9 @@ class ParsedEtcdResult(etcd.EtcdResult):
     raft_index = _unchanged('raft_index')
     action = _unchanged('action')
 
+    # support iteration over result's children
+    children = _unchanged('children')
+
     # used internally by etcd.client.Client
     _prev_node = _unchanged('_prev_node')
 
