@@ -87,6 +87,18 @@ class EtcdWriter(object):
         return ParsedEtcdResult(self,
                                 self.etcd_client.read(*args, **kwargs))
 
+    def get(self, *args, **kwargs):
+        """Get the contents of the etcd directory and parse it's contents.
+
+        The value is stored in a conventional format (serialised
+        somehow) and we parse it to Python.  This may throw an
+        exception if the data cannot be read when .value is called on
+        any part of the result.
+
+        """
+        return ParsedEtcdResult(self,
+                                self.etcd_client.get(*args, **kwargs))
+
     def watch(self, *args, **kwargs):
         """Watch and parse a data key in etcd.
 
@@ -155,6 +167,9 @@ class ParsedEtcdResult(etcd.EtcdResult):
     etcd_index = _unchanged('etcd_index')
     raft_index = _unchanged('raft_index')
     action = _unchanged('action')
+
+    # support iteration over result's children
+    children = _unchanged('children')
 
     # used internally by etcd.client.Client
     _prev_node = _unchanged('_prev_node')
