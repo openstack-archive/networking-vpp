@@ -1038,7 +1038,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
     def _forward_worker(self):
         LOG.debug('forward worker begun')
         etcd_client = self.client_factory.client()
-        etcd_writer = etcdutils.SignedEtcdJSONWriter(etcd_client)
+        etcd_writer = etcdutils.json_writer(etcd_client)
         lease_time = cfg.CONF.ml2_vpp.forward_worker_master_lease_time
         recovery_time = cfg.CONF.ml2_vpp.forward_worker_recovery_time
 

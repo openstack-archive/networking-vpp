@@ -2904,7 +2904,7 @@ class EtcdListener(object):
         LOG.debug("Updating secgroups:%s referencing the remote_group:%s",
                   secgroups, remote_group)
         etcd_client = self.client_factory.client()
-        etcd_writer = etcdutils.SignedEtcdJSONWriter(etcd_client)
+        etcd_writer = etcdutils.json_writer(etcd_client)
 
         for secgroup in secgroups:
             secgroup_key = self.secgroup_key_space + "/%s" % secgroup
@@ -2939,9 +2939,9 @@ class EtcdListener(object):
         key_space = self.gpe_key_space + "/%s" % vni
         LOG.debug("Fetching remote gpe mappings for vni:%s", vni)
         try:
-            rv = etcdutils.SignedEtcdJSONWriter(self.client_factory.client()
-                                                ).read(key_space,
-                                                       recursive=True)
+            rv = etcdutils.json_writer(self.client_factory.client()).read(
+                key_space, recursive=True)
+
             for child in rv.children:
                 m = re.match(key_space + '/([^/]+)' + '/([^/]+)' + '/([^/]+)',
                              child.key)
@@ -3025,7 +3025,7 @@ class EtcdListener(object):
         gpe_data = {'mac': mac_address, 'host': underlay_ip}
         LOG.debug('Writing GPE key to etcd %s with gpe_data %s',
                   gpe_key, gpe_data)
-        etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).write(
+        etcdutils.json_writer(self.client_factory.client()).write(
             gpe_key, gpe_data)
 
     def delete_etcd_gpe_remote_mapping(self, segmentation_id, mac_address):
@@ -3034,7 +3034,7 @@ class EtcdListener(object):
                                                    self.host)
 
         def get_child_keys():
-            child_keys = etcdutils.SignedEtcdJSONWriter(
+            child_keys = etcdutils.json_writer(
                 self.client_factory.client()).read(gpe_dir, recursive=True)
             return child_keys
 
@@ -3044,13 +3044,13 @@ class EtcdListener(object):
             # of the EtcdResult, and json.loads is not required.
             data = jsonutils.loads(result.value)
             if data['mac'] == mac_address:
-                etcdutils.SignedEtcdJSONWriter(self.client_factory.client()
-                                               ).delete(result.key)
+                etcdutils.json_writer(self.client_factory.client()
+                                      ).delete(result.key)
         # Delete the etcd directory if it's empty
         if len(list(get_child_keys().children)) == 1:
             for result in get_child_keys().children:
                 if result.dir:
-                    etcdutils.SignedEtcdJSONWriter(
+                    etcdutils.json_writer(
                         self.client_factory.client()).delete(result.key)
 
     def ensure_gpe_remote_mappings(self, segmentation_id):
@@ -3399,8 +3399,7 @@ class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
                  **kwargs):
         self.known_keys = known_keys
         super(SecGroupWatcher, self).__init__(
-            etcd_client, name, watch_path,
-            encoder=etcdutils.SignedEtcdJSONWriter, **kwargs)
+            etcd_client, name, watch_path, **kwargs)
 
     def init_resync_start(self):
         # TODO(ijw): we should probably do the secgroup work
@@ -3563,7 +3562,7 @@ class BindNotifier(object):
         self.state_key_space = state_key_space
 
         self.etcd_client = client_factory.client()
-        self.etcd_writer = etcdutils.SignedEtcdJSONWriter(self.etcd_client)
+        self.etcd_writer = etcdutils.json_writer(self.etcd_client)
 
     def add_notification(self, id, content):
         """Queue a notification for sending to Nova
