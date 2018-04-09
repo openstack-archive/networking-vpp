@@ -989,10 +989,10 @@ class VPPForwarder(object):
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
         # Ensure local mac to VNI mapping for GPE
         if net_type == 'vxlan':
-            LOG.debug('Adding local GPE mapping for seg_id:%s and mac:%s',
-                      seg_id, mac)
             if mac is None:
                 mac = props['mac']
+            LOG.debug('Adding local GPE mapping for seg_id:%s and mac:%s',
+                      seg_id, mac)
             self.add_local_gpe_mapping(seg_id, mac)
 
         props['net_data'] = net_data
@@ -1731,7 +1731,8 @@ class VPPForwarder(object):
             LOG.error("Error setting MTU on router interface")
         # Get the mac address for the route BVI loopback interface
         loopback_mac = self._get_loopback_mac(loopback_idx)
-        if cfg.CONF.ml2_vpp.enable_l3_ha:
+        ha_enabled = cfg.CONF.ml2_vpp.enable_l3_ha
+        if ha_enabled:
             # Now bring up the loopback interface, if this router is the
             # ACTIVE router. Also populate the data structure
             # router_interface_states so the HA code can activate and
@@ -1760,9 +1761,11 @@ class VPPForwarder(object):
             if not is_inside:
                 self.vpp.snat_overload_on_interface_address(loopback_idx)
 
-        # Add VXLAN GPE mappings for vxlan type networks
+        # Add VXLAN GPE mappings for vxlan type networks only on the master
+        # node, if ha_enabled
         if net_type == plugin_constants.TYPE_VXLAN:
-            self.add_local_gpe_mapping(seg_id, loopback_mac)
+            if (ha_enabled and self.router_state) or not ha_enabled:
+                self.add_local_gpe_mapping(seg_id, loopback_mac)
         # Set the gateway IP address on the BVI interface, if not already set
         addresses = self.vpp.get_interface_ip_addresses(loopback_idx)
         for address in addresses:
@@ -2253,7 +2256,11 @@ class VPPForwarder(object):
         A remote GPE mapping also adds an ARP entry to the GPE control plane
         using the mac and ip address arguments.
         """
-        if (mac, vni) not in self.gpe_map['remote_map']:
+        # Add a remote-map only if a corresponding local map is not present
+        # GPE complains if a remote and a local mapping is present for a mac
+        lset_mapping = self.gpe_map[gpe_lset_name]
+        if (mac, vni) not in self.gpe_map['remote_map'] and mac not in \
+                lset_mapping['local_map']:
             is_ip4 = 1 if ip_network(unicode(remote_ip)).version == 4 else 0
             remote_locator = {"is_ip4": is_ip4,
                               "priority": 1,
@@ -2298,8 +2305,15 @@ class VPPForwarder(object):
     def add_local_gpe_mapping(self, vni, mac):
         """Add a local GPE mapping between a mac and vni."""
         lset_mapping = self.gpe_map[gpe_lset_name]
+        # If a remote map exists, clear it as local map takes precedence
+        # GPE complains, if a local and remote EID maps
+        # are simultaneously present for the same MAC address.
         LOG.debug('Adding vni %s to gpe_map', vni)
         lset_mapping['vnis'].add(vni)
+        if (mac, vni) in self.gpe_map['remote_map']:
+            LOG.debug('Clearing mac, vni (%s, %s) from the remote-gpe-map '
+                      'before adding a local mapping', mac, vni)
+            self.delete_remote_gpe_mapping(vni, mac)
         if mac not in lset_mapping['local_map']:
             self.vpp.add_lisp_local_mac(mac, vni, gpe_lset_name)
             lset_mapping['local_map'][mac] = vni
@@ -2894,7 +2908,56 @@ class EtcdListener(object):
             # Continue and don't exit.
             pass
 
-    def add_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
+    def update_router_gpe_mappings(self):
+        """Update GPE for VXLAN bound router ports upon HA state transitions.
+
+        During a router HA state transitions, it is required to update it's
+        local and remote GPE mappings. When a master router becomes backup,
+        remove it's local and remote GPE mappings and when a backup router
+        becomes master, add a remote and local GPE mapping.
+        """
+        router_ports = dict(self.vppf.router_interfaces)
+        # Merge all known internal and external router ports
+        router_ports.update(self.vppf.router_external_interfaces)
+        for port in router_ports:
+            data = router_ports[port]
+            vxlan_bound = data['net_type'] == plugin_constants.TYPE_VXLAN
+            seg_id = data['segmentation_id']
+            mac_addr = data['mac_address']
+            ip_addr = data['gateway_ip']
+            # Master --> Backup state transiiton
+            # Delete local GPE mapping as we no longer own this mac-address
+            # Delete etcd GPE GPE mapping to let other router's know
+            if vxlan_bound and not self.vppf.router_state:
+                LOG.debug("GPE bound router port becoming BACKUP")
+                self.vppf.delete_local_gpe_mapping(seg_id, mac_addr)
+                LOG.debug('Deleted local GPE mapping for segment %s '
+                          'and mac-address %s', seg_id, mac_addr)
+                self.delete_etcd_gpe_remote_mapping(seg_id, mac_addr)
+                LOG.debug('Deleted etcd GPE mapping for segment %s '
+                          'and mac-address %s', seg_id, mac_addr)
+            # Backup --> Master state transition
+            # Delete any GPE remote-mappings in our CP because we own the mac
+            # Add a local mapping and establish a remote mapping in etcd to
+            # communicate the state transition to all routers
+            elif vxlan_bound and self.vppf.router_state:
+                LOG.debug("GPE bound router port becoming MASTER")
+                self.vppf.delete_remote_gpe_mapping(seg_id, mac_addr, ip_addr)
+                LOG.debug('Deleted remote GPE mapping for segment %s '
+                          'mac-address %s and ip_addr %s',
+                          seg_id, mac_addr, ip_addr)
+                self.vppf.add_local_gpe_mapping(seg_id, mac_addr)
+                LOG.debug('Added local GPE mapping for segment %s '
+                          'and mac-address %s', seg_id, mac_addr)
+                self.add_etcd_gpe_remote_mapping(seg_id, mac_addr, ip_addr)
+                LOG.debug('Added etcd GPE remote mapping for segment %s '
+                          'mac-address %s and ip_addr %s',
+                          seg_id, mac_addr, ip_addr)
+                self.ensure_gpe_remote_mappings(seg_id)
+                LOG.debug("Ensured GPE remote mappings for segment %s",
+                          seg_id)
+
+    def add_etcd_gpe_remote_mapping(self, segmentation_id, mac_address, ip):
         """Create a remote GPE overlay to underlay mapping
 
         Overlay = mac_address + ip_address of the VM's port
@@ -2909,7 +2972,7 @@ class EtcdListener(object):
         etcdutils.SignedEtcdJSONWriter(self.client_factory.client()).write(
             gpe_key, gpe_data)
 
-    def delete_gpe_remote_mapping(self, segmentation_id, mac_address):
+    def delete_etcd_gpe_remote_mapping(self, segmentation_id, mac_address):
         """Delete a remote GPE overlay to underlay mapping."""
         gpe_dir = self.gpe_key_space + '/%s/%s' % (segmentation_id,
                                                    self.host)
@@ -3114,7 +3177,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
                 self.data.state_key_space + '/%s'
                 % port)
             if is_vxlan:
-                self.data.delete_gpe_remote_mapping(seg_id, mac)
+                self.data.delete_etcd_gpe_remote_mapping(seg_id, mac)
         except etcd.EtcdKeyNotFound:
             # Gone is fine; if we didn't delete it
             # it's no problem
@@ -3161,8 +3224,8 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
             props = self.data.vppf.interfaces[port]
             mac = props['mac']
             for ip in [ip['ip_address'] for ip in data.get('fixed_ips')]:
-                self.data.add_gpe_remote_mapping(data['segmentation_id'],
-                                                 mac, ip)
+                self.data.add_etcd_gpe_remote_mapping(
+                    data['segmentation_id'], mac, ip)
 
 
 class RouterWatcher(etcdutils.EtcdChangeWatcher):
@@ -3207,13 +3270,19 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
         else:
             loopback_mac = self.data.vppf.router_interfaces[
                 port_id]['mac_address']
+        # GPE remote mappings are added for only the master L3 router,
+        # if ha_enabled
+        ha_enabled = cfg.CONF.ml2_vpp.enable_l3_ha
         if is_add:
-            self.data.add_gpe_remote_mapping(router_data['segmentation_id'],
-                                             loopback_mac,
-                                             router_data['gateway_ip'])
+            if (ha_enabled and self.data.vppf.router_state) or not ha_enabled:
+                self.data.add_etcd_gpe_remote_mapping(
+                    router_data['segmentation_id'],
+                    loopback_mac,
+                    router_data['gateway_ip'])
         else:
-            self.data.delete_gpe_remote_mapping(router_data['segmentation_id'],
-                                                loopback_mac)
+            self.data.delete_etcd_gpe_remote_mapping(
+                router_data['segmentation_id'],
+                loopback_mac)
 
     def added(self, router_key, value):
         token1, token2 = self.parse_key(router_key)
@@ -3244,6 +3313,8 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                 self.data.vppf.become_master_router()
             else:
                 self.data.vppf.become_backup_router()
+            # Update remote mappings for VXLAN bound router ports
+            self.data.update_router_gpe_mappings()
 
     def removed(self, router_key):
         token1, token2 = self.parse_key(router_key)
@@ -3390,23 +3461,30 @@ class GpeWatcher(etcdutils.EtcdChangeWatcher):
         if (vni and hostname and ip and
                 self.data.is_valid_remote_map(vni, hostname)):
             data = jsonutils.loads(value)
-            self.data.vppf.ensure_remote_gpe_mapping(
-                vni=vni,
-                mac=data['mac'],
-                ip=ip,
-                remote_ip=data['host'])
-            self.data.vppf.gpe_map['remote_map'][(ip, vni)] = data['mac']
+            remote_ip = data['host']
+            # Add only if remote_ip != my_underlay_ip
+            if remote_ip != self.data.vppf.gpe_underlay_addr:
+                LOG.debug("gpeWatcher adding remote-map for vni:%s, mac:%s, "
+                          "ip:%s to the underlay %s",
+                          vni, data['mac'], ip, remote_ip)
+                self.data.vppf.ensure_remote_gpe_mapping(
+                    vni=vni,
+                    mac=data['mac'],
+                    ip=ip,
+                    remote_ip=remote_ip)
+                self.data.vppf.gpe_map['remote_map'][(ip, vni)] = data['mac']
 
     def removed(self, gpe_key):
         vni, hostname, ip = self.parse_key(gpe_key)
         if (vni and hostname and ip and
                 self.data.is_valid_remote_map(vni, hostname)):
-            mac = self.data.vppf.gpe_map['remote_map'][(ip, vni)]
-            self.data.vppf.delete_remote_gpe_mapping(
-                vni=vni,
-                mac=mac,
-                ip=ip)
-            del self.data.vppf.gpe_map['remote_map'][(ip, vni)]
+            mac = self.data.vppf.gpe_map['remote_map'].get((ip, vni))
+            if mac:
+                self.data.vppf.delete_remote_gpe_mapping(
+                    vni=vni,
+                    mac=mac,
+                    ip=ip)
+                del self.data.vppf.gpe_map['remote_map'][(ip, vni)]
 
 
 class BindNotifier(object):
