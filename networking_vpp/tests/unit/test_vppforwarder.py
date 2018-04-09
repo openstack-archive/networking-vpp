@@ -948,7 +948,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
             mock_etcd_client = mock.MagicMock()
             mock_etcd_listener.is_valid_remote_map.return_value = True
             mock_etcd_listener.vppf = self.vpp
-            self.vpp.gpe_map = {'remote_map': {}}
+            gpe_lset_name = 'net-vpp-gpe-lset-1'
+            self.vpp.gpe_map = {gpe_lset_name: {'local_map': {},
+                                                'vnis': set(),
+                                                'sw_if_idxs': set()},
+                                'remote_map': {}}
             self.vpp.vpp.exists_lisp_arp_entry.return_value = False
             remote_locator = {"is_ip4": 1,
                               "priority": 1,
@@ -1023,7 +1027,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
         Test if the ARP entry is replaced
         """
         mock_bridge_domain = 66077
-        self.vpp.gpe_map = {'remote_map': {}}
+        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        self.vpp.gpe_map = {gpe_lset_name: {'local_map': {},
+                                            'vnis': set(),
+                                            'sw_if_idxs': set()},
+                            'remote_map': {}}
         self.vpp.vpp.exists_lisp_arp_entry.return_value = True
         remote_locator = {"is_ip4": 1,
                           "priority": 1,
