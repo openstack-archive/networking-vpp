@@ -668,7 +668,7 @@ class EtcdChangeWatcher(EtcdWatcher):
 
     def __init__(self, etcd_client, name, watch_path, election_path=None,
                  wait_until_elected=False, recovery_time=5,
-                 data=None, heartbeat=60, encoder=EtcdJSONWriter):
+                 data=None, heartbeat=60):
         self.implemented_state = {}
         self.watch_path = watch_path
 

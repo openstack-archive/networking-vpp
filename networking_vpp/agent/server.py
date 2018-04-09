@@ -3258,7 +3258,7 @@ class SecGroupWatcher(etcdutils.EtcdChangeWatcher):
         self.known_keys = known_keys
         super(SecGroupWatcher, self).__init__(
             etcd_client, name, watch_path,
-            encoder=etcdutils.SignedEtcdJSONWriter, **kwargs)
+            **kwargs)
 
     def init_resync_start(self):
         # TODO(ijw): we should probably do the secgroup work
