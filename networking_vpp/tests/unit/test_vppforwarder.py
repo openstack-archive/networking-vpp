@@ -24,6 +24,7 @@ from ipaddress import ip_address
 from networking_vpp.agent import server
 from networking_vpp import compat
 from networking_vpp import config_opts
+from networking_vpp import constants
 from networking_vpp.mech_vpp import SecurityGroupRule
 from neutron.tests import base
 from oslo_config import cfg
@@ -809,7 +810,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def test_delete_gpe_network_on_host(self):
         self.vpp.networks = {}
         self.vpp.gpe_map = {}
-        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        gpe_lset_name = constants.GPE_LSET_NAME
         self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
         physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
@@ -852,7 +853,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                         mock_ensure_net_on_host,
                                         mock_ensure_int_on_host,
                                         mock_ensure_int_in_bridge):
-        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        gpe_lset_name = constants.GPE_LSET_NAME
         self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
         mock_net_data = {'bridge_domain_id': 70000,
@@ -885,7 +886,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             5000)
 
     def test_unbind_gpe_interface_on_host(self):
-        gpe_lset_name = 'net-vpp-gpe-lset-1'
+        gpe_lset_name = constants.GPE_LSET_NAME
         self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
         port_uuid = 'fake-port-uuid'
@@ -948,7 +949,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
             mock_etcd_client = mock.MagicMock()
             mock_etcd_listener.is_valid_remote_map.return_value = True
             mock_etcd_listener.vppf = self.vpp
-            self.vpp.gpe_map = {'remote_map': {}}
+            gpe_lset_name = constants.GPE_LSET_NAME
+            self.vpp.gpe_map = {gpe_lset_name: {'local_map': {},
+                                                'vnis': set(),
+                                                'sw_if_idxs': set()},
+                                'remote_map': {}}
             self.vpp.vpp.exists_lisp_arp_entry.return_value = False
             remote_locator = {"is_ip4": 1,
                               "priority": 1,
@@ -1023,7 +1028,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
         Test if the ARP entry is replaced
         """
         mock_bridge_domain = 66077
-        self.vpp.gpe_map = {'remote_map': {}}
+        gpe_lset_name = constants.GPE_LSET_NAME
+        self.vpp.gpe_map = {gpe_lset_name: {'local_map': {},
+                                            'vnis': set(),
+                                            'sw_if_idxs': set()},
+                            'remote_map': {}}
         self.vpp.vpp.exists_lisp_arp_entry.return_value = True
         remote_locator = {"is_ip4": 1,
                           "priority": 1,
