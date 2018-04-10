@@ -25,6 +25,13 @@ conn = vpp_papi.VPP()
 conn.connect('debug-acl-client')
 
 
+def vpp_call(func, *args, **kwargs):
+    global conn
+    if hasattr(conn, 'api'):
+        return getattr(conn.api, func)(*args, **kwargs)
+    return getattr(conn, func)(*args, **kwargs)
+
+
 def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
 
@@ -87,7 +94,7 @@ def get_interfaces():
 
     global conn
 
-    t = conn.sw_interface_dump()
+    t = vpp_call('swinterface_dump')
 
     for iface in t:
         mac = bytearray(iface.l2_address[:iface.l2_address_length])
