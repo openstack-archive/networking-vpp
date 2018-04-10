@@ -25,6 +25,13 @@ conn = vpp_papi.VPP()
 conn.connect('debug-acl-client')
 
 
+def vpp_call(func, *args, **kwargs):
+    global conn
+    if hasattr(conn, 'api'):
+        return getattr(conn.api, func)(*args, **kwargs)
+    return getattr(conn, func)(*args, **kwargs)
+
+
 def fix_string(s):
     return s.rstrip("\0").decode(encoding='ascii')
 
@@ -87,7 +94,7 @@ def get_interfaces():
 
     global conn
 
-    t = conn.sw_interface_dump()
+    t = vpp_call('sw_interface_dump')
 
     for iface in t:
         mac = bytearray(iface.l2_address[:iface.l2_address_length])
@@ -102,7 +109,7 @@ def get_acls(self):
     # get all ACLs
     global conn
 
-    t = conn.acl_dump(acl_index=0xffffffff)
+    t = vpp_call('acl_dump', acl_index=0xffffffff)
     for acl in t:
         if hasattr(acl, 'acl_index'):
             yield {
@@ -119,7 +126,7 @@ def get_if_macip_acls(sw_if_index):
             yield decode_macip_acl_rule(f)
 
     # This gets all MACIP ACLs, index by interface
-    if_acls = conn.macip_acl_interface_get()
+    if_acls = vpp_call('macip_acl_interface_get')
     # Ours is indexed...
     # This is a spot of weirdness in the API
     f = if_acls.acls[sw_if_index]
@@ -127,7 +134,7 @@ def get_if_macip_acls(sw_if_index):
     if f == 0xffffffff:
         return  # no ACL, no rules
 
-    t = conn.macip_acl_dump(acl_index=f)
+    t = vpp_call('macip_acl_dump', acl_index=f)
     t = t[0]
 
     yield {
@@ -140,9 +147,8 @@ def get_if_macip_acls(sw_if_index):
 def get_if_acls(sw_if_index):
     global conn
 
-    t = conn.acl_interface_list_dump(
-        sw_if_index=sw_if_index
-    )
+    t = vpp_call('acl_interface_list_dump',
+                 sw_if_index=sw_if_index)
     # We're dumping one interface
     t = t[0]
 
@@ -154,7 +160,7 @@ def get_if_acls(sw_if_index):
     for det in t.acls:
         is_input = (count < t.n_input)
 
-        dump = conn.acl_dump(acl_index=det)
+        dump = vpp_call('acl_dump', acl_index=det)
         dump = dump[0]  # one acl
         yield {
             'is_input': is_input,
