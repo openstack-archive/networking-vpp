@@ -125,7 +125,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
                                    router_id)
         return router
 
-    @neutron_db_api.context_manager.reader
+    @neutron_db_api.context_manager.writer
     def _get_router_interface(self, context, router_id, router_dict):
 
         """Populate the param: "router_dict" with values and return.
