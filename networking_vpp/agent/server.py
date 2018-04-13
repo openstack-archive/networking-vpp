@@ -1606,19 +1606,21 @@ class VPPForwarder(object):
             floatingip_dict['internal_segmentation_id'])
         if internal_network_data:
             net_br_idx = internal_network_data['bridge_domain_id']
-
-            # if needed the external subinterface will be created.
-            external_if_name, external_if_idx = self.get_if_for_physnet(
-                floatingip_dict['external_physnet'])
-            # Get the external vlan sub_intf for VLAN network_type
-            if floatingip_dict[
-                'external_net_type'] == plugin_constants.TYPE_VLAN:
-                external_if_idx = self._ensure_external_vlan_subif(
-                    external_if_name, external_if_idx,
-                    floatingip_dict['external_segmentation_id'])
-
-            # Return the internal and external interface indexes.
-            return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
+            if floatingip_dict['router_external']:
+                # Return the internal interface index.
+                return (self.ensure_bridge_bvi(net_br_idx), None)
+            else:
+                # if needed the external subinterface will be created.
+                external_if_name, external_if_idx = self.get_if_for_physnet(
+                    floatingip_dict['external_physnet'])
+                # Get the external vlan sub_intf for VLAN network_type
+                if (floatingip_dict['external_net_type']
+                        == plugin_constants.TYPE_VLAN):
+                    external_if_idx = self._ensure_external_vlan_subif(
+                        external_if_name, external_if_idx,
+                        floatingip_dict['external_segmentation_id'])
+                # Return the internal and external interface indexes.
+                return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
         else:
             LOG.error('Failed to get internal network data.')
             return None, None
@@ -1734,13 +1736,14 @@ class VPPForwarder(object):
             # deactivate the interface
             if self.router_state:
                 LOG.debug("Router HA state is ACTIVE")
-                LOG.debug("Bringing UP the router intf idx: %s", loopback_idx)
+                LOG.debug("Bringing UP the router intf idx: %s",
+                           loopback_idx)
                 self.vpp.ifup(loopback_idx)
                 self.router_interface_states[loopback_idx] = 1
             else:
                 LOG.debug("Router HA state is BACKUP")
                 LOG.debug("Bringing DOWN the router intf idx: %s",
-                          loopback_idx)
+                           loopback_idx)
                 self.vpp.ifdown(loopback_idx)
                 self.router_interface_states[loopback_idx] = 0
             LOG.debug("Current router interface states: %s",
@@ -1797,6 +1800,7 @@ class VPPForwarder(object):
             LOG.debug("Router: Created outside router port: %s",
                       router_dict)
             self.router_external_interfaces[port_id] = router_dict
+            self.default_route_in_default_vrf(router_dict)
             # Ensure that the gateway network is exported into all tenant
             # VRFs, with the correct default routes
             self.export_routes_from_tenant_vrfs(
@@ -1834,6 +1838,27 @@ class VPPForwarder(object):
         """Returns the IP network for the gateway in CIDR form."""
         return str(ipaddress.ip_interface(unicode(gateway_ip + "/"
                                           + str(prefixlen))).network)
+
+    def default_route_in_default_vrf(self, router_dict, is_add=True):
+        # ensure that default route in default VRF is present
+        if is_add:
+            self.vpp.add_ip_route(
+                vrf=router_dict['vrf_id'],
+                ip_address=self._pack_address('0.0.0.0'),
+                prefixlen=0,
+                next_hop_address=self._pack_address(
+                                      router_dict['external_gateway_ip']),
+                next_hop_sw_if_index=router_dict['bvi_if_idx'],
+                is_ipv6=router_dict['is_ipv6'])
+        else:
+            self.vpp.delete_ip_route(
+                vrf=router_dict['vrf_id'],
+                ip_address=self._pack_address('0.0.0.0'),
+                prefixlen=0,
+                next_hop_address=self._pack_address(
+                                      router_dict['external_gateway_ip']),
+                next_hop_sw_if_index=router_dict['bvi_if_idx'],
+                is_ipv6=router_dict['is_ipv6'])
 
     def export_routes_from_tenant_vrfs(self, source_vrf=0, is_add=True,
                                        ext_gw_ip=None):
@@ -1993,6 +2018,8 @@ class VPPForwarder(object):
             # external gateway
             self.export_routes_from_tenant_vrfs(
                 ext_gw_ip=router['external_gateway_ip'], is_add=False)
+            # delete the default route in the default VRF
+            self.default_route_in_default_vrf(router,is_add=False)
         else:
             # Delete all exported routes from this VRF
             self.export_routes_from_tenant_vrfs(source_vrf=router['vrf_id'],
