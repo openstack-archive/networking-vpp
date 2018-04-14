@@ -55,13 +55,19 @@ class DeviceMonitor(object):
         while True:
             # monitor.poll() is synchronized call, which will block eventlet
             # for certain time. So use select to avoid the stall.
-            ready, _, _ = select.select([monitor.fileno()], [], [], timeout=10)
+            ready, _, _ = select.select([monitor.fileno()], [], [], 10)
             if ready:
-                device = monitor.poll(timeout=1)
-                if device.action == 'add':
+                try:
+                    # This will work with pyudev >= v0.16
+                    device = monitor.poll(timeout=1)
+                    action = device.action
+                except AttributeError as ex:
+                    # This will work with pyudev <= v0.15
+                    action,device = monitor.receive_device()
+                if action == 'add':
                     self._dev_add(device.sys_name)
                     self.devices.add(device.sys_name)
-                elif device.action == 'remove':
+                elif action == 'remove':
                     self._dev_del(device.sys_name)
                     self.devices.remove(device.sys_name)
             else:
