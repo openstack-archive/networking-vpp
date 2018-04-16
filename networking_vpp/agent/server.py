@@ -844,77 +844,77 @@ class VPPForwarder(object):
 
         if uuid in self.interfaces:
             # It's definitely there, we made it ourselves
-            pass
+            return self.interfaces[uuid]
+
+        # TODO(ijw): it may exist, but we may need to create it
+        # - and what exists may be wrong so we may have to
+        # recreate it
+        # TODO(ijw): idempotency
+
+        # Unfortunately call_vpp() expects a mac and we need to pass one.
+        # We will create a random mac if none is passed. We are setting
+        # base_mac from neutron, assuming neutron is the sole consumer of
+        # code at the moment. This is an assumption which might need a todo
+
+        if mac is None:
+            mac = c_utils.get_random_mac(
+                cfg.CONF.ml2_vpp.vpp_base_mac.split(':'))
+
+        LOG.debug('Creating port %s as type %s with mac %s',
+                  uuid, if_type, mac)
+
+        # Deal with the naming conventions of interfaces
+
+        # TODO(ijw): naming not obviously consistent with
+        # Neutron's naming
+        tap_name = get_tap_name(uuid)
+
+        if if_type == 'tap':
+            bridge_name = get_bridge_name(uuid)
+            int_tap_name = get_vpptap_name(uuid)
+
+            props = {'bridge_name': bridge_name,
+                     'ext_tap_name': tap_name,
+                     'int_tap_name': int_tap_name}
+        elif if_type == 'vhostuser':
+            path = get_vhostuser_name(uuid)
+            props = {'path': path}
         else:
-            # TODO(ijw): it may exist, but we may need to create it
-            # - and what exists may be wrong so we may have to
-            # recreate it
-            # TODO(ijw): idempotency
+            raise UnsupportedInterfaceException()
 
-            # Unfortunately call_vpp() expects a mac and we need to pass one.
-            # We will create a random mac if none is passed. We are setting
-            # base_mac from neutron, assuming neutron is the sole consumer of
-            # code at the moment. This is an assumption which might need a todo
+        tag = port_tag(uuid)
 
-            if mac is None:
-                mac = c_utils.get_random_mac(
-                    cfg.CONF.ml2_vpp.vpp_base_mac.split(':'))
+        props['bind_type'] = if_type
+        props['mac'] = mac
 
-            LOG.debug('Creating port %s as type %s with mac %s',
-                      uuid, if_type, mac)
+        iface_idx = self.vpp.get_ifidx_by_tag(tag)
+        if iface_idx is not None:
+            # The agent has at some point reset, but before the reset
+            # this interface was at least created.  A previous sweep
+            # will have ensured it's the right sort of interface.
 
-            # Deal with the naming conventions of interfaces
+            LOG.debug('port %s recovering existing port in VPP',
+                      uuid)
 
-            # TODO(ijw): naming not obviously consistent with
-            # Neutron's naming
-            tap_name = get_tap_name(uuid)
+        else:
+            # Make an interface, and tag it for refinding.
+            LOG.debug('binding port %s as type %s' %
+                      (uuid, if_type))
 
             if if_type == 'tap':
-                bridge_name = get_bridge_name(uuid)
-                int_tap_name = get_vpptap_name(uuid)
-
-                props = {'bridge_name': bridge_name,
-                         'ext_tap_name': tap_name,
-                         'int_tap_name': int_tap_name}
+                iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
             elif if_type == 'vhostuser':
-                path = get_vhostuser_name(uuid)
-                props = {'path': path}
-            else:
-                raise UnsupportedInterfaceException()
+                iface_idx = self.vpp.create_vhostuser(path, mac, tag)
 
-            tag = port_tag(uuid)
+        if if_type == 'tap':
+            # Plugtap interfaces belong in a kernel bridge, and we need
+            # to monitor for the other side attaching.
+            self._ensure_kernelside_tap(bridge_name,
+                                        tap_name,
+                                        int_tap_name)
 
-            props['bind_type'] = if_type
-            props['mac'] = mac
-
-            iface_idx = self.vpp.get_ifidx_by_tag(tag)
-            if iface_idx is not None:
-                # The agent has at some point reset, but before the reset
-                # this interface was at least created.  A previous sweep
-                # will have ensured it's the right sort of interface.
-
-                LOG.debug('port %s recovering existing port in VPP',
-                          uuid)
-
-            else:
-                # Make an interface, and tag it for refinding.
-                LOG.debug('binding port %s as type %s' %
-                          (uuid, if_type))
-
-                if if_type == 'tap':
-                    iface_idx = self.vpp.create_tap(int_tap_name, mac, tag)
-                elif if_type == 'vhostuser':
-                    iface_idx = self.vpp.create_vhostuser(path, mac, tag)
-
-            if if_type == 'tap':
-                # Plugtap interfaces belong in a kernel bridge, and we need
-                # to monitor for the other side attaching.
-                self._ensure_kernelside_tap(bridge_name,
-                                            tap_name,
-                                            int_tap_name)
-
-            props['iface_idx'] = iface_idx
-            self.interfaces[uuid] = props
+        props['iface_idx'] = iface_idx
+        self.interfaces[uuid] = props
         return self.interfaces[uuid]
 
     def ensure_interface_for_vhost_socket_binding(self, name):
