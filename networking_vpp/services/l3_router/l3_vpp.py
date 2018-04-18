@@ -23,6 +23,7 @@ from neutron.db import api as neutron_db_api
 from neutron.db import common_db_mixin
 from neutron.db import l3_gwmode_db
 
+from networking_vpp.compat import external_net
 from networking_vpp.compat import n_const as constants
 from networking_vpp.compat import n_exc
 from networking_vpp.compat import n_provider as provider
@@ -99,6 +100,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
                 'external_net_type': external_network[provider.NETWORK_TYPE],
                 'external_segmentation_id':
                     external_network[provider.SEGMENTATION_ID],
+                'router_external': external_network[external_net.EXTERNAL],
                 'internal_physnet': internal_physnet,
                 'internal_net_type': internal_network[provider.NETWORK_TYPE],
                 'internal_segmentation_id':

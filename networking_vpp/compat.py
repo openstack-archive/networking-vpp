@@ -150,6 +150,14 @@ except:
     # Between Pike and Queens
     from neutron_lib.plugins.ml2 import api as driver_api
 
+# EXTERNAL = 'router:external'
+try:
+    # till Pike
+    from neutron.extensions import external_net
+except:
+    # Queens onwards
+    from neutron_lib.api.definitions import external_net
+
 import os
 import re
 

@@ -1606,19 +1606,21 @@ class VPPForwarder(object):
             floatingip_dict['internal_segmentation_id'])
         if internal_network_data:
             net_br_idx = internal_network_data['bridge_domain_id']
-
-            # if needed the external subinterface will be created.
-            external_if_name, external_if_idx = self.get_if_for_physnet(
-                floatingip_dict['external_physnet'])
-            # Get the external vlan sub_intf for VLAN network_type
-            if floatingip_dict[
-                'external_net_type'] == plugin_constants.TYPE_VLAN:
-                external_if_idx = self._ensure_external_vlan_subif(
-                    external_if_name, external_if_idx,
-                    floatingip_dict['external_segmentation_id'])
-
-            # Return the internal and external interface indexes.
-            return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
+            if floatingip_dict['router_external']:
+                # Return the internal interface index.
+                return (self.ensure_bridge_bvi(net_br_idx), None)
+            else:
+                # if needed the external subinterface will be created.
+                external_if_name, external_if_idx = self.get_if_for_physnet(
+                    floatingip_dict['external_physnet'])
+                # Get the external vlan sub_intf for VLAN network_type
+                if (floatingip_dict['external_net_type']
+                        == plugin_constants.TYPE_VLAN):
+                    external_if_idx = self._ensure_external_vlan_subif(
+                        external_if_name, external_if_idx,
+                        floatingip_dict['external_segmentation_id'])
+                # Return the internal and external interface indexes.
+                return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
         else:
             LOG.error('Failed to get internal network data.')
             return None, None
