@@ -1797,6 +1797,11 @@ class VPPForwarder(object):
             LOG.debug("Router: Created outside router port: %s",
                       router_dict)
             self.router_external_interfaces[port_id] = router_dict
+            # TODO(onong):
+            # The current VPP NAT implementation supports only one outside
+            # FIB table and by default it uses table 0, ie, the default vrf.
+            # So, this is a temporary workaround to tide over the limitation.
+            self.default_route_in_default_vrf(router_dict)
             # Ensure that the gateway network is exported into all tenant
             # VRFs, with the correct default routes
             self.export_routes_from_tenant_vrfs(
@@ -1834,6 +1839,27 @@ class VPPForwarder(object):
         """Returns the IP network for the gateway in CIDR form."""
         return str(ipaddress.ip_interface(unicode(gateway_ip + "/"
                                           + str(prefixlen))).network)
+
+    def default_route_in_default_vrf(self, router_dict, is_add=True):
+        # ensure that default route in default VRF is present
+        if is_add:
+            self.vpp.add_ip_route(
+                vrf=router_dict['vrf_id'],
+                ip_address=self._pack_address('0.0.0.0'),
+                prefixlen=0,
+                next_hop_address=self._pack_address(
+                    router_dict['external_gateway_ip']),
+                next_hop_sw_if_index=router_dict['bvi_if_idx'],
+                is_ipv6=router_dict['is_ipv6'])
+        else:
+            self.vpp.delete_ip_route(
+                vrf=router_dict['vrf_id'],
+                ip_address=self._pack_address('0.0.0.0'),
+                prefixlen=0,
+                next_hop_address=self._pack_address(
+                    router_dict['external_gateway_ip']),
+                next_hop_sw_if_index=router_dict['bvi_if_idx'],
+                is_ipv6=router_dict['is_ipv6'])
 
     def export_routes_from_tenant_vrfs(self, source_vrf=0, is_add=True,
                                        ext_gw_ip=None):
@@ -1993,6 +2019,8 @@ class VPPForwarder(object):
             # external gateway
             self.export_routes_from_tenant_vrfs(
                 ext_gw_ip=router['external_gateway_ip'], is_add=False)
+            # delete the default route in the default VRF
+            self.default_route_in_default_vrf(router, is_add=False)
         else:
             # Delete all exported routes from this VRF
             self.export_routes_from_tenant_vrfs(source_vrf=router['vrf_id'],
