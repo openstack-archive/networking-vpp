@@ -67,7 +67,7 @@ try:
 except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
-from neutron.common import utils as c_utils
+from neutron_lib.utils import net as c_utils
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
