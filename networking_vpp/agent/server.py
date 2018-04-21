@@ -47,6 +47,7 @@ import vpp
 from networking_vpp._i18n import _
 from networking_vpp import compat
 from networking_vpp.compat import n_const
+from networking_vpp.compat import net_utils
 from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
 from networking_vpp import constants as nvpp_const
@@ -67,7 +68,6 @@ try:
 except ImportError:
     from neutron.conf.plugins.ml2 import config
     config.register_ml2_plugin_opts()
-from neutron.common import utils as c_utils
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -857,7 +857,7 @@ class VPPForwarder(object):
             # code at the moment. This is an assumption which might need a todo
 
             if mac is None:
-                mac = c_utils.get_random_mac(
+                mac = net_utils.get_random_mac(
                     cfg.CONF.ml2_vpp.vpp_base_mac.split(':'))
 
             LOG.debug('Creating port %s as type %s with mac %s',
