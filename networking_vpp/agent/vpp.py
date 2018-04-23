@@ -1084,6 +1084,18 @@ class VPPInterface(object):
                       ip4=ipv4_address
                       )
 
+    def add_lisp_ndp_entry(self, mac, bridge_domain, ipv6_address):
+        """Adds a static IPv6 NDP entry to LISP.
+
+        ipv6_address is the packed representation of a IPv6 address.
+        """
+        self.call_vpp('one_add_del_ndp_entry',
+                      is_add=1,
+                      mac=mac_to_bytes(mac),
+                      bd=bridge_domain,
+                      ip6=ipv6_address
+                      )
+
     def del_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
         """Removes a static ARP entry from LISP.
 
@@ -1094,6 +1106,18 @@ class VPPInterface(object):
                       mac=mac_to_bytes(mac),
                       bd=bridge_domain,
                       ip4=ipv4_address
+                      )
+
+    def del_lisp_ndp_entry(self, mac, bridge_domain, ipv6_address):
+        """Removes a static IPv6 NDP entry from LISP.
+
+        ipv6_address is the packed representation of a v6 address.
+        """
+        self.call_vpp('one_add_del_ndp_entry',
+                      is_add=0,
+                      mac=mac_to_bytes(mac),
+                      bd=bridge_domain,
+                      ip6=ipv6_address
                       )
 
     def replace_lisp_arp_entry(self, mac, bridge_domain, ipv4_address):
@@ -1111,6 +1135,21 @@ class VPPInterface(object):
         # Add the new ARP entry
         self.add_lisp_arp_entry(mac, bridge_domain, ipv4_address)
 
+    def replace_lisp_ndp_entry(self, mac, bridge_domain, ipv6_address):
+        """Replaces the LISP NDP entry in a bridge domain for the v6 address.
+
+        ipv6_adddress is a packed representation of the IPv6 address.
+        """
+        # Delete the current NDP entry for the ipv6_address in the BD
+        for mac_addr, ip6 in [(ndp_entry.mac, ndp_entry.ip6) for ndp_entry in
+                              self.call_vpp('one_ndp_entries_get',
+                                            bd=bridge_domain).entries
+                              if ndp_entry.ip6 == ipv6_address]:
+            self.call_vpp('one_add_del_ndp_entry',
+                          is_add=0, mac=mac_addr, bd=bridge_domain, ip6=ip6)
+        # Add the new v6 NDP entry
+        self.add_lisp_ndp_entry(mac, bridge_domain, ipv6_address)
+
     def exists_lisp_arp_entry(self, bridge_domain, ipv4_address):
         """Return True if a LISP ARP entry exists in the bridge_domain.
 
@@ -1120,6 +1159,15 @@ class VPPInterface(object):
                                 self.call_vpp('one_l2_arp_entries_get',
                                               bd=bridge_domain).entries]
 
+    def exists_lisp_ndp_entry(self, bridge_domain, ipv6_address):
+        """Return True if a LISP NDP entry exists in the bridge_domain.
+
+        ipv6_address is the packed representation of the IPv6 address.
+        """
+        return ipv6_address in [ndp_entry.ip6 for ndp_entry in
+                                self.call_vpp('one_ndp_entries_get',
+                                              bd=bridge_domain).entries]
+
     def clear_lisp_arp_entries(self, bridge_domain):
         """Clear LISP ARP entries in the bridge_domain."""
         for mac, ip4 in [(arp.mac, arp.ip4) for arp in
@@ -1127,6 +1175,14 @@ class VPPInterface(object):
                                        bd=bridge_domain).entries]:
             self.call_vpp('one_add_del_l2_arp_entry',
                           is_add=0, mac=mac, bd=bridge_domain, ip4=ip4)
+
+    def clear_lisp_ndp_entries(self, bridge_domain):
+        """Clear LISP NDP entries in the bridge_domain."""
+        for mac, ip6 in [(ndp_entry.mac, ndp_entry.ip6) for ndp_entry in
+                         self.call_vpp('one_ndp_entries_get',
+                                       bd=bridge_domain).entries]:
+            self.call_vpp('one_add_del_ndp_entry',
+                          is_add=0, mac=mac, bd=bridge_domain, ip6=ip6)
 
     def get_lisp_local_locators(self, name):
         """Get lisp local locator sets and their corresponding locators.
