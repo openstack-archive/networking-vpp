@@ -2275,7 +2275,8 @@ class VPPForwarder(object):
         A remote GPE mapping contains a remote mac-address of the instance,
         vni and the underlay ip address of the remote node (i.e. remote_ip)
         A remote GPE mapping also adds an ARP entry to the GPE control plane
-        using the mac and ip address arguments.
+        using the mac and ip address arguments. For Ipv6, an NDP entry is
+        added.
         """
         if (mac, vni) not in self.gpe_map['remote_map']:
             is_ip4 = 1 if ip_network(unicode(remote_ip)).version == 4 else 0
@@ -2286,14 +2287,10 @@ class VPPForwarder(object):
                               }
             self.vpp.add_lisp_remote_mac(mac, vni, remote_locator)
             self.gpe_map['remote_map'][(mac, vni)] = remote_ip
-            # Add a LISP ARP entry for remote instance's IPv4 address
-            # if it does not exist. If an ARP entry exists, replace it.
-            # A stale entry may exist and must be replaced during re-sync.
-            # One possible reason for a stale ARP entry could
-            # due to a VM being unbound when the agent was not
-            # running on the node.
+            # Add a LISP ARP/NDP entry for the remote VM's IPv4/v6 address.
+            # If an ARP or NDP entry exists in the BD, replace it.
+            bridge_domain = self.bridge_idx_for_lisp_segment(vni)
             if ip_network(unicode(ip)).version == 4:
-                bridge_domain = self.bridge_idx_for_lisp_segment(vni)
                 int_ip = int(ip_address(unicode(ip)))
                 if not self.vpp.exists_lisp_arp_entry(bridge_domain, int_ip):
                     self.vpp.add_lisp_arp_entry(mac,
@@ -2303,6 +2300,16 @@ class VPPForwarder(object):
                     self.vpp.replace_lisp_arp_entry(mac,
                                                     bridge_domain,
                                                     int_ip)
+            elif ip is not None:   # handle unaddressed port
+                ip6 = self._pack_address(ip)
+                if not self.vpp.exists_lisp_ndp_entry(bridge_domain, ip6):
+                    self.vpp.add_lisp_ndp_entry(mac,
+                                                bridge_domain,
+                                                ip6)
+                else:
+                    self.vpp.replace_lisp_ndp_entry(mac,
+                                                    bridge_domain,
+                                                    ip6)
 
     def delete_remote_gpe_mapping(self, vni, mac, ip=None):
         """Delete a remote GPE vni to mac mapping."""
@@ -2311,13 +2318,19 @@ class VPPForwarder(object):
             del self.gpe_map['remote_map'][(mac, vni)]
             # Delete the LISP ARP entry for remote instance's IPv4 address
             # if it's present and the IP address is present
+            bridge_domain = self.bridge_idx_for_lisp_segment(vni)
             if ip and ip_network(unicode(ip)).version == 4:
-                bridge_domain = self.bridge_idx_for_lisp_segment(vni)
                 int_ip = int(ip_address(unicode(ip)))
                 if self.vpp.exists_lisp_arp_entry(bridge_domain, int_ip):
                     self.vpp.del_lisp_arp_entry(mac,
                                                 bridge_domain,
                                                 int_ip)
+            elif ip:
+                ip6 = self._pack_address(ip)
+                if self.vpp.exists_lisp_ndp_entry(bridge_domain, ip6):
+                    self.vpp.del_lisp_ndp_entry(mac,
+                                                bridge_domain,
+                                                ip6)
 
     def add_local_gpe_mapping(self, vni, mac):
         """Add a local GPE mapping between a mac and vni."""
@@ -2352,6 +2365,8 @@ class VPPForwarder(object):
         # Clear any static GPE ARP entries in the bridge-domain for this VNI
         bridge_domain = self.bridge_idx_for_lisp_segment(segmentation_id)
         self.vpp.clear_lisp_arp_entries(bridge_domain)
+        # Clear IPv6 NDP Entries
+        self.vpp.clear_lisp_ndp_entries(bridge_domain)
 
     def ensure_gpe_link(self):
         """Ensures that the GPE uplink interface is present and configured.
