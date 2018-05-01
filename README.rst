@@ -32,7 +32,7 @@ There's a devstack plugin. You can add this plugin to your ``local.conf``
 and see it working. The devstack plugin now takes care of
 
 - installing the networking-vpp code
-- installing VPP itself (version 18.01)
+- installing VPP itself (version 18.04)
 - installing etcd
 - using a QEMU version that supports vhostuser well
 
@@ -330,8 +330,9 @@ anything. In some cases it may not be responsible for the port at all.
 How do I enable the vpp-router plugin?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-NOTE: As of release 18.01, the native L3 service plugin (``vpp-router``) is
-      fully supported in L3 HA configuration.
+NOTE: As of release 18.04, the native L3 service plugin (``vpp-router``) is
+      fully supported in L3 HA configuration for VLAN, Flat and VXLAN-GPE
+      type networks.
 
 To enable the vpp-router plugin add the following in neutron.conf::
 
@@ -352,7 +353,7 @@ the L3 host as well*.
 
 How do I enable Layer3 HA?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-In the 18.01 release, we support Layer3 HA for VPP.
+In the 18.04 release, we fully support Layer3 HA for VPP.
 
 First, ensure that the vpp-router plugin is enabled.
 
@@ -362,22 +363,6 @@ configuration file (as shown below).
 Lastly, you need to  provide the list of Layer3 hosts in your deployment,
 using a comma separated notation (as shown below) in the ml2.ini configuration
 file.
-
-Can I use Layer3 HA with the 17.10 release?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Yes, you can use the Layer3 HA with the 17.10 release. The only issue we have
-seen is with floating ip addresses. VPP requires us to clear all existing
-dynamic NAT sessions associated with an IP address before installing a 1:1
-NAT for that IP address. However, the NAT API to clear dynamic NAT sessions
-is present in the 18.01 release. So you have two options as a workaround.
-1. Restart the VPP and vpp-agent after adding a floating ip address,
-   This will set the 1:1 NAT before any dynamic NAT sessions.
-2. Patch your VPP using the below two patches.These patches will add the code
-   to clear dynamic NAT sessions.
-   - https://gerrit.fd.io/r/#/c/10358/
-   - https://gerrit.fd.io/r/#/c/9050/
-
 
 Sample L3 host settings in ml2_conf.ini
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -414,8 +399,7 @@ If the key is not present or it's value unset, the router will become
 a BACKUP.
 
 NOTE: If you are on a non-HA environment, i.e., there's a single network
-node, but you have enabled Layer3 HA (maybe you just want to try it out) then
-you MUST also set the network node's etcd key to 1 for the VPP router to work.
+node, set enable_l3_ha=False in ml2_conf.ini
 
 The vpp-agent listens for watch events on this key.
 On the master node, the router BVI interfaces are enabled and
@@ -518,11 +502,9 @@ Any known issues?
 In general, check the bugs at
 <https://bugs.launchpad.net/networking-vpp> - but worth noting:
 
--  Security groups don't yet support ethernet type filtering.
-   If you use this they will ignore it and accept traffic
-   from any source.  This is a relatively unusual setting so unless you're
-   doing something particularly special relating to VMs transmitting MPLS,
-   IS-IS, or similar, you'll probably not notice any difference.
+-  SNAT setting may use the uplink interface on certain occasions besides
+   the BVI interfaces. As a result, floatingIP addresses may require
+   additional work within VPP to work. 
 -  Some failure cases (VPP reset) leave the agent
    wondering what state VPP is currently in. For now, in these cases,
    we take the coward's way out and reset the agent at the same time.
@@ -537,8 +519,8 @@ What are you doing next?
 We also keep our job list in <https://bugs.launchpad.net/networking-vpp>
 anything starting 'RFE' is a 'request for enhancement'.
 
-We'll be dealing with a few of the minor details of a good Neutron
-network driver, like sorting out MTU configuration of Neutron routers.
+We'll be dealing with TaaS and a plugin code manager in the upcoming 18.4.1
+release.
 
 What can I do to help?
 ~~~~~~~~~~~~~~~~~~~~~~

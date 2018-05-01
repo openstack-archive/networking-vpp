@@ -1,5 +1,31 @@
 CHANGES
 =======
+18.04
+-----
+* Router HA support for GPE
+* Update the GPE etcd key format to handle vpp-agent restarts correctly
+* Fix agent crash during GPE port binding.
+* VXLAN GPE IPv6 support
+* Bug Fix :  agent server.py import error
+* Fix dump-acl- and -tag-info to undertstand new 18.04 PAPI
+* Fix issue in device_monitor eventlet
+* Add default route in default vrf in VPP
+* fix issue in _get_router_interface
+* Fix comments regarding multiple IP addresses on router ports.
+* Fix delete_router issue
+* VPP Python API invocation mechanism has changed in 18.04
+* Remove stale remote-groups from etcd.
+* Fix SNAT interface IP address cleanup bug.
+* Fix port security disabling
+* Fix VPP forwarder test
+* Convert lock to eventlet to prevent deadlocks
+* Make L3 HA configurable
+* Get session from context instead of neutron_db_api
+* Add stestr to .gitignore file
+* Create a common constants module to avoid unwanted dependencies
+* Mock filemonitor during unit tests
+* Replaces yaml.load() with yaml.safe_load()
+* Enable Oslo config generator by adding entry point
 
 18.01
 -----
