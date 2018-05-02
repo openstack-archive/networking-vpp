@@ -19,7 +19,22 @@ import errno
 import logging
 import os
 
-import eventlet.green.select as select
+# From 0.20.0 above eventlet has removed the select.poll method, but pyinotify
+# has a dependency on it. We don't actually use the poll object anyway, post
+# the Notifier's initializer. So we set select.poll to a dummy poll object
+# to let the init method of pyinotify.Notifier complete.
+
+
+class DummyPoll(object):
+    def register(self, *args, **kwargs):
+        pass
+
+    def unregister(self, *args, **kwargs):
+        pass
+
+import select
+select.poll = DummyPoll  # Monkey_patch select.poll
+
 import pyinotify
 import six
 
