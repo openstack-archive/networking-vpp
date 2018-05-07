@@ -140,9 +140,12 @@ try:
     # (for, specifically, get_random_mac)
     # Newer:
     from neutron_lib.utils import net as net_utils
-except ImportError:
+    if not hasattr(net_utils,'get_random_mac'):  # Check for Newton
+        raise AttributeError
+except (ImportError, AttributeError):
     # Older:
     from neutron.common import utils as net_utils
+assert hasattr(net_utils,'get_random_mac') == True
 
 try:
     from neutron.plugins.ml2 import driver_api
