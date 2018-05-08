@@ -1597,9 +1597,11 @@ class VPPForwarder(object):
         return ip_network(unicode(ip_addr)).network_address.packed
 
     def _get_snat_indexes(self, floatingip_dict):
-        """Return the internal and external SNAT interface indexes.
+        """Return the internal and external interface indices for SNAT.
 
-        If needed the external subinterface will be created.
+        Ensure the internal n/w, external n/w and their corresponding
+        BVI loopback interfaces are present, before returning their
+        index values.
         """
 
         # Get internal network details.
@@ -1607,23 +1609,19 @@ class VPPForwarder(object):
             floatingip_dict['internal_physnet'],
             floatingip_dict['internal_net_type'],
             floatingip_dict['internal_segmentation_id'])
-        if internal_network_data:
-            net_br_idx = internal_network_data['bridge_domain_id']
-
-            # if needed the external subinterface will be created.
-            external_if_name, external_if_idx = self.get_if_for_physnet(
-                floatingip_dict['external_physnet'])
-            # Get the external vlan sub_intf for VLAN network_type
-            if floatingip_dict[
-                'external_net_type'] == plugin_constants.TYPE_VLAN:
-                external_if_idx = self._ensure_external_vlan_subif(
-                    external_if_name, external_if_idx,
-                    floatingip_dict['external_segmentation_id'])
-
-            # Return the internal and external interface indexes.
-            return (self.ensure_bridge_bvi(net_br_idx), external_if_idx)
+        # Get the external network details
+        external_network_data = self.ensure_network_on_host(
+            floatingip_dict['external_physnet'],
+            floatingip_dict['external_net_type'],
+            floatingip_dict['external_segmentation_id'])
+        if internal_network_data and external_network_data:
+            int_br_idx = internal_network_data['bridge_domain_id']
+            ext_br_idx = external_network_data['bridge_domain_id']
+            # Return the internal and external BVI loopback intf indxs.
+            return (self.ensure_bridge_bvi(int_br_idx),
+                    self.ensure_bridge_bvi(ext_br_idx))
         else:
-            LOG.error('Failed to get internal network data.')
+            LOG.error('Failed to ensure network on host while setting SNAT')
             return None, None
 
     def _delete_external_subinterface(self, floatingip_dict):
@@ -2120,6 +2118,8 @@ class VPPForwarder(object):
         LOG.debug('Router: Associating floating ip address: %s: %s',
                   floatingip, floatingip_dict)
         loopback_idx, external_idx = self._get_snat_indexes(floatingip_dict)
+        LOG.debug('Router: Retrieved floating ip intf indxs- int:%s, ext:%s',
+                  loopback_idx, external_idx)
         self.floating_ips[floatingip] = {
             'fixed_ip_address': floatingip_dict['fixed_ip_address'],
             'floating_ip_address': floatingip_dict['floating_ip_address'],
