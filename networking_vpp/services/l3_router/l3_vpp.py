@@ -221,7 +221,8 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         gateway_port = router_dict['gw_port_id']
         # Get the mac-addr of the port to create the port
         if not delete:
-            gw_port = self._core_plugin.get_port(context, gateway_port)
+            gw_port = self._core_plugin.get_port(
+                context.elevated(), gateway_port)
             router_dict['loopback_mac'] = gw_port['mac_address']
         # Grab all external subnets' gateway IPs
         # This is added to the router dictionary using the key: gateways
@@ -233,7 +234,8 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         # on that subnet with the correct IP address
         for fixed_ip in fixed_ips:
             subnet_id = fixed_ip['subnet_id']
-            subnet = self._core_plugin.get_subnet(context, subnet_id)
+            subnet = self._core_plugin.get_subnet(
+                context.elevated(), subnet_id)
             address = ip_network(subnet['cidr'])
             is_ipv6 = True if address.version == 6 else False
             gateways.append((fixed_ip['ip_address'],
