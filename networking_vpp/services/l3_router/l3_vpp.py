@@ -330,9 +330,15 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         if fip_dict.get('port_id') is not None:
             event_type = 'associate'
             vpp_fip_dict = fip_dict
+            self.update_floatingip_status(
+                    context, floatingip_id,
+                    constants.FLOATINGIP_STATUS_ACTIVE)
         else:
             event_type = 'disassociate'
             vpp_fip_dict = org_fip_dict
+            self.update_floatingip_status(
+                    context, floatingip_id,
+                    constants.FLOATINGIP_STATUS_DOWN)
         self._process_floatingip(context, vpp_fip_dict, event_type)
 
         return fip_dict
