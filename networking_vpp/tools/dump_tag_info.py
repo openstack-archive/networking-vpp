@@ -94,7 +94,7 @@ def get_interfaces():
 
     global conn
 
-    t = vpp_call('swinterface_dump')
+    t = vpp_call('sw_interface_dump')
 
     for iface in t:
         mac = bytearray(iface.l2_address[:iface.l2_address_length])
