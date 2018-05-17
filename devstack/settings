@@ -19,7 +19,7 @@ VPP_STARTUP_OVERRIDE_CONFIG=${VPP_STARTUP_OVERRIDE_CONFIG:-}
 #If the system is already configured with more huge pages than NR_HUGEPAGES, no action will be taken.
 NR_HUGEPAGES=${NR_HUGEPAGES:-}
 
-MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:tap-0}
+MECH_VPP_PHYSNETLIST=${MECH_VPP_PHYSNETLIST:-physnet:tapcli-0}
 #Ip address of the host to connect to
 if is_service_enabled etcd3; then
     # The standard service puts it here
