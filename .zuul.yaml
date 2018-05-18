@@ -1,0 +1,46 @@
+- project:
+    name: openstack/networking-vpp
+    check:
+        jobs:
+            - networking-vpp-tempest:
+                voting: false
+
+- job:
+    name: networking-vpp-tempest
+    description: |
+        Run tempest tests for networking-vpp plugin
+    parent: devstack-tempest
+    required-projects:
+        - name: openstack/networking-vpp
+    vars:
+        devstack_localrc:
+            VPP_BRANCH: 'stable.1804'
+            Q_PLUGIN: 'ml2'
+            Q_USE_SECGROUP: True
+            Q_ML2_PLUGIN_MECHANISM_DRIVERS: 'vpp'
+            Q_ML2_PLUGIN_TYPE_DRIVERS: 'vlan,flat'
+            Q_ML2_TENANT_NETWORK_TYPE: 'vlan'
+            ML2_VLAN_RANGES: 'physnet:100:200'
+            MECH_VPP_PHYSNETLIST: 'physnet:tapcli-0'
+            NR_HUGEPAGES: 1024
+        devstack-services:
+            horizon: False
+            ceilometer-acentral: False
+            ceilometer-acompute: False
+            ceilometer-alarm-evaluator: False
+            ceilometer-alarm-notifier: False
+            ceilometer-anotification: False
+            ceilometer-api: False
+            ceilometer-collector: False
+            s-account: False
+            s-container: False
+            s-object: False
+            s-proxy: False
+            cinder: False
+            c-sch: False
+            c-api: False
+            c-vol: False
+            etcd3: False
+            q-agt: False
+        devstack-plugins:
+            networking-vpp: https://git.openstack.org/openstack/networking-vpp
