@@ -2115,6 +2115,14 @@ class VPPForwarder(object):
         floating_ip: The UUID of the floating ip address
         floatingip_dict : The floating ip data
         """
+        LOG.debug("Router: Checking for existing association for"
+                  " floating ip: %s", floatingip)
+        existing_floatingip_dict = self.floating_ips.get(floatingip)
+        if existing_floatingip_dict:
+            self.disassociate_floatingip(floatingip)
+        else:
+            LOG.debug("Router: Found no existing association for floating ip:"
+                      " %s", floatingip)
         LOG.debug('Router: Associating floating ip address: %s: %s',
                   floatingip, floatingip_dict)
         loopback_idx, external_idx = self._get_snat_indexes(floatingip_dict)
@@ -2154,7 +2162,8 @@ class VPPForwarder(object):
         floatingip_dict = self.floating_ips.get(floatingip)
         if floatingip_dict:
             # Delete the SNAT internal and external IP address mapping.
-            LOG.debug('Router: disassociating floating ip: %s', floatingip)
+            LOG.debug('Router: deleting NAT mappings for floating ip: %s',
+                      floatingip)
             snat_local_ipaddresses = self.vpp.get_snat_local_ipaddresses()
             if floatingip_dict['fixed_ip_address'] in snat_local_ipaddresses:
                 self.vpp.set_snat_static_mapping(
