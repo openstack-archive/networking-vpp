@@ -128,13 +128,20 @@ class VPPInterface(object):
 
     def create_tap(self, ifname, mac, tag):
         # (we don't like unicode in VPP hence str(ifname))
-        t = self.call_vpp('tap_connect',
+
+        t = self.call_vpp('tap_create_v2',
                           use_random_mac=False,
-                          tap_name=str(ifname),
                           mac_address=mac_to_bytes(mac),
-                          renumber=False,
-                          custom_dev_instance=0,
-                          tag=tag)
+                          host_if_name_set=True,
+                          host_if_name=str(ifname),
+                          id=0xffff,  # choose ifidx automatically
+                          host_ip4_addr_set=False,
+                          host_ip6_addr_set=False,
+                          host_bridge_set=False,
+                          host_namespace_set=False,
+                          host_mac_addr_set=False,
+                          tx_ring_sz=1024,
+                          rx_ring_sz=1024)
 
         if t.sw_if_index >= 0:
             # TODO(ijw): This is a temporary fix to a 17.01 bug where new
@@ -142,10 +149,16 @@ class VPPInterface(object):
             # It breaks atomicity of this call and it should be removed.
             self.disable_vlan_rewrite(t.sw_if_index)
 
+            # TODO(ijw): The v2 TAP API took away the possibility of setting
+            # a tag on the TAP port atomically as it was created.  This
+            # breaks the atomicity of this call and needs addressing
+            # upstream.
+            self.set_interface_tag(t.sw_if_index, tag)
+
         return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
     def delete_tap(self, idx):
-        self.call_vpp('tap_delete',
+        self.call_vpp('tap_delete_v2',
                       sw_if_index=idx)
 
     def get_taps(self):
