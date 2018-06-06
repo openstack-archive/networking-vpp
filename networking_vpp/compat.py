@@ -110,21 +110,23 @@ except AttributeError:
 
 # Register security group option
 def register_securitygroups_opts(cfg):
-    # Mitaka compatibility
-    try:
-        from neutron.conf.agent import securitygroups_rpc
-        securitygroups_rpc.register_securitygroups_opts()
-    except ImportError:
-        security_group_opts = [
-            cfg.BoolOpt(
-                'enable_security_group', default=True,
-                help=_('Controls whether neutron security groups is enabled '
-                       'Set it to false to disable security groups')), ]
-        # This can get loaded from other parts of Mitaka because other
-        # mechanism drivers respect this flag too
-        if not (hasattr(cfg.CONF, 'SECURITYGROUP') and
-                hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
-            cfg.register_opts(security_group_opts, 'SECURITYGROUP')
+    # In some versions of Neutron, the security group options are
+    # registered in the neutron server despite not being universally
+    # implemented by mechanism drivers.  However, for consistency with
+    # other mechanism drivers we prefer to keep the enable_security_group
+    # option in the same place, so we have to adapt.
+
+    # TODO(ijw): likely works badly with the oslo config generator.
+    security_group_opts = [
+        cfg.BoolOpt(
+            'enable_security_group', default=True,
+            help=_('Controls whether neutron security groups is enabled '
+                   'Set it to false to disable security groups')), ]
+    # This can get loaded from other parts of Mitaka because other
+    # mechanism drivers respect this flag too
+    if not (hasattr(cfg.CONF, 'SECURITYGROUP') and
+            hasattr(cfg.CONF.SECURITYGROUP.enable_security_group)):
+        cfg.register_opts(security_group_opts, 'SECURITYGROUP')
 
 def register_ml2_base_opts(cfg):
     try:
