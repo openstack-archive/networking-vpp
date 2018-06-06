@@ -56,6 +56,8 @@ _vpp_opts = [
                help=_("bridge domain MAC aging TTL (in seconds)")),
     cfg.IntOpt('vpp_cmd_queue_len', default=None,
                help=_("Size of the VPP command queue (in messages)")),
+    cfg.IntOpt('read_timeout', default=None,
+               help=_("How long we will wait for replies to VPP calls")),
     cfg.StrOpt('l3_hosts', default="127.0.0.1",
                help=_("A comma separated list of Hostnames "
                       "to render L3 services on.")),
