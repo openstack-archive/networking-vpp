@@ -1,4 +1,3 @@
-# Copyright (c) 2016 Cisco Systems, Inc.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -818,9 +817,9 @@ _etcd_conn_opts = [
 ]
 
 
-def register_etcd_conn_opts(cfg, group):
+def register_etcd_conn_opts(group):
     global _etcd_conn_opts
-    cfg.register_opts(_etcd_conn_opts, group)
+    cfg.CONF.register_opts(_etcd_conn_opts, group)
 
 
 def list_opts():

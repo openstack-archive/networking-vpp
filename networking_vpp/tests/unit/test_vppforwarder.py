@@ -33,9 +33,9 @@ INTERNAL_SEGMENATION_ID = 100
 INTERNAL_SEGMENATION_TYPE = 'vlan'
 INTERNAL_PHYSNET = 'physnet1'
 FIXED_IP_ADDRESS = '192.168.100.10'
-compat.register_ml2_base_opts(cfg.CONF)
-compat.register_securitygroups_opts(cfg.CONF)
-config_opts.register_vpp_opts(cfg.CONF)
+compat.register_ml2_base_opts()
+config_opts.register_securitygroups_opts()
+config_opts.register_vpp_opts()
 
 
 class VPPForwarderTestCase(base.BaseTestCase):

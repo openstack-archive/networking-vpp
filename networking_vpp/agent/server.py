@@ -61,13 +61,6 @@ from networking_vpp import version
 from neutron.agent.linux import bridge_lib
 from neutron.agent.linux import ip_lib
 from neutron.agent.linux import utils
-try:
-    # TODO(ijw): TEMPORARY, better fix coming that reverses this
-    from neutron.plugins.ml2 import config
-    assert config
-except ImportError:
-    from neutron.conf.plugins.ml2 import config
-    config.register_ml2_plugin_opts()
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_reports import guru_meditation_report as gmr
@@ -3630,9 +3623,9 @@ def main():
 
     openstack_base_setup('vpp_agent')
 
-    compat.register_ml2_base_opts(cfg.CONF)
-    compat.register_securitygroups_opts(cfg.CONF)
-    config_opts.register_vpp_opts(cfg.CONF)
+    compat.register_ml2_base_opts()
+    config_opts.register_securitygroups_opts()
+    config_opts.register_vpp_opts()
 
     # Pull physnets out of config and interpret them
     if not cfg.CONF.ml2_vpp.physnets:

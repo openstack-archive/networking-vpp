@@ -76,8 +76,8 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
 
-        config_opts.register_vpp_opts(cfg.CONF)
-        compat.register_securitygroups_opts(cfg.CONF)
+        config_opts.register_securitygroups_opts()
+        config_opts.register_vpp_opts()
 
         def callback(host, port):
             pass

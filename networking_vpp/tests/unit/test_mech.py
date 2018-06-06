@@ -69,9 +69,9 @@ class VPPMechanismDriverTestCase(
     @mock.patch('etcd.Client')
     @mock.patch('networking_vpp.etcdutils.EtcdClientFactory.client')
     def setUp(self, mock_eventlet, mock_client, mock_make_client):
-        compat.register_ml2_base_opts(cfg.CONF)
-        compat.register_securitygroups_opts(cfg.CONF)
-        config_opts.register_vpp_opts(cfg.CONF)
+        compat.register_ml2_base_opts()
+        config_opts.register_securitygroups_opts()
+        config_opts.register_vpp_opts()
 
         mock_make_client.side_effect = self.etcd_client
         self.client = etcd.Client()
@@ -240,9 +240,9 @@ class VPPMechanismDriverTestCase(
 
 class EtcdAgentCommunicatorTestCases(base.BaseTestCase):
     def setUp(self):
-        compat.register_ml2_base_opts(cfg.CONF)
-        compat.register_securitygroups_opts(cfg.CONF)
-        config_opts.register_vpp_opts(cfg.CONF)
+        compat.register_ml2_base_opts()
+        compat.register_securitygroups_opts()
+        config_opts.register_vpp_opts()
 
         super(EtcdAgentCommunicatorTestCases, self).setUp()
 
