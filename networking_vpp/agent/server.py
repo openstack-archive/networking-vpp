@@ -301,9 +301,10 @@ class VPPForwarder(object):
                  physnets,  # physnet_name: interface-name
                  mac_age,
                  vpp_cmd_queue_len=None,
+                 read_timeout=None,
                  gpe_src_cidr=None,
                  gpe_locators=None):
-        self.vpp = vpp.VPPInterface(LOG, vpp_cmd_queue_len)
+        self.vpp = vpp.VPPInterface(LOG, vpp_cmd_queue_len, read_timeout)
 
         self.physnets = physnets
 
@@ -3669,6 +3670,7 @@ def main():
     vppf = VPPForwarder(physnets,
                         mac_age=mac_age_min,
                         vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,
+                        read_timeout=cfg.CONF.ml2_vpp.read_timeout,
                         gpe_src_cidr=cfg.CONF.ml2_vpp.gpe_src_cidr,
                         gpe_locators=cfg.CONF.ml2_vpp.gpe_locators,
                         )

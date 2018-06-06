@@ -194,7 +194,7 @@ class VPPInterface(object):
 
     ########################################
 
-    def __init__(self, log, vpp_cmd_queue_len=None):
+    def __init__(self, log, vpp_cmd_queue_len=None, read_timeout=None):
         self.LOG = log
         jsonfiles = []
         for root, dirnames, filenames in os.walk('/usr/share/vpp/api/'):
@@ -215,11 +215,15 @@ class VPPInterface(object):
         self.event_q_lock = Lock()
         self.event_q = []
 
+        args = {}
+
         if vpp_cmd_queue_len is not None:
-            self._vpp.connect("python-VPPInterface",
-                              rx_qlen=vpp_cmd_queue_len)
-        else:
-            self._vpp.connect("python-VPPInterface")
+            args['rx_qlen'] = vpp_cmd_queue_len
+        if read_timeout is not None:
+            args['read_timeout'] = read_timeout
+
+        self._vpp.connect("python-VPPInterface",
+                          **args)
 
         eventlet.spawn_n(self.vpp_watcher_thread)
 
