@@ -81,12 +81,12 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
 
     @neutron_db_api.context_manager.writer
     def _process_floatingip(self, context, fip_dict, event_type):
-        port = self._core_plugin.get_port(context, fip_dict['port_id'])
-        external_network = self._core_plugin.get_network(
-            context, fip_dict['floating_network_id'])
-        internal_network = self._core_plugin.get_network(
-            context, port['network_id'])
         if event_type == 'associate':
+            port = self._core_plugin.get_port(context, fip_dict['port_id'])
+            external_network = self._core_plugin.get_network(
+                context, fip_dict['floating_network_id'])
+            internal_network = self._core_plugin.get_network(
+                context, port['network_id'])
             LOG.debug("Router: Associating floating ip: %s", fip_dict)
             if internal_network[provider.NETWORK_TYPE] == 'vxlan':
                 internal_physnet = self.gpe_physnet
@@ -318,8 +318,6 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             initial_status=constants.FLOATINGIP_STATUS_ACTIVE)
         if fip_dict.get('port_id') is not None:
             self._process_floatingip(context, fip_dict, 'associate')
-
-        if fip_dict.get('port_id') is not None:
             self.communicator.kick()
 
         return fip_dict
