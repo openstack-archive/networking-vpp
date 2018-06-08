@@ -14,17 +14,15 @@
 
 """VPP Taas service plugin."""
 import eventlet
+from networking_vpp.compat import context as n_context
+from networking_vpp.compat import n_exc
 from networking_vpp.constants import LEADIN
 from networking_vpp.db import db
 from networking_vpp import etcdutils
 from networking_vpp.extension import MechDriverExtensionBase
 
-
-from neutron.db import api as neutron_db_api
-
 from neutron_lib import constants
-from neutron_lib import context as n_context
-from neutron_lib import exceptions as n_exc
+from neutron_lib.db import api as lib_db_api
 from neutron_taas.extensions import taas as taas_ex
 from neutron_taas.services.taas import service_drivers
 
@@ -220,6 +218,9 @@ class FeatureTaasFlow(etcdutils.EtcdChangeWatcher):
           "name": ""},
       "taas_id": ,
       "port_mac": ,
+      "tf_host": ,
+      "ts_host": ,
+      "ts_port_mac": ,
       "port":
           {"allowed_address_pairs": [],
            "extra_dhcp_opts": [],
@@ -474,14 +475,29 @@ class TaasEtcdDriver(service_drivers.TaasBaseDriver):
         # Extract the host where the source port is located
         port = self.service_plugin._get_port_details(context._plugin_context,
                                                      tf['source_port'])
+        tf_host = port['binding:host_id']
         port_mac = port['mac_address']
+
+        # Find the host of the tap service
+        ts = self.service_plugin.get_tap_service(context._plugin_context,
+                                                 tf['tap_service_id'])
+        ts_port = self.service_plugin._get_port_details(
+            context._plugin_context,
+            ts['port_id'])
+        ts_host = ts_port['binding:host_id']
+        ts_port_mac = ts_port['mac_address']
 
         # This status will be set in the callback
         msg = {"tap_flow": tf,
                "port_mac": port_mac,
                "taas_id": taas_id,
-               "port": port}
+               "port": port,
+               "ts_port_mac": ts_port_mac,
+               "tf_host": tf_host,
+               "ts_host": ts_host}
         self.taas_flow.create(port, msg)
+        if ts_host != tf_host:
+            self.taas_flow.create(ts_port, msg)
         return
 
     def create_tap_flow_postcommit(self, context):
@@ -496,7 +512,17 @@ class TaasEtcdDriver(service_drivers.TaasBaseDriver):
                                                      tf['source_port'])
         host = port['binding:host_id']
 
+        # Find the host of the tap service
+        ts = self.service_plugin.get_tap_service(context._plugin_context,
+                                                 tf['tap_service_id'])
+        ts_port = self.service_plugin._get_port_details(
+            context._plugin_context,
+            ts['port_id'])
+        ts_host = ts_port['binding:host_id']
+
         self.taas_flow.delete(host, tf['id'])
+        if ts_host != host:
+            self.taas_flow.delete(ts_host, tf['id'])
         return
 
     def delete_tap_flow_postcommit(self, context):
@@ -512,4 +538,4 @@ class TaasVPPDriverExtension(MechDriverExtensionBase):
         self.etcdJournalHelper = \
             EtcdJournalHelper(
                 communicator,
-                neutron_db_api.get_writer_session())
+                lib_db_api.get_writer_session())
