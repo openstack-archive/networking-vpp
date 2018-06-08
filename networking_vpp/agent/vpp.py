@@ -629,6 +629,7 @@ class VPPInterface(object):
         # Sets the specified loopback interface to act as  the BVI
         # for the bridge. This interface will act as a gateway and
         # terminate the VLAN.
+<<<<<<< HEAD
         if self.ver_ge(18, 10):
             self.call_vpp(
                 'sw_interface_set_l2_bridge',
@@ -645,6 +646,15 @@ class VPPInterface(object):
                 shg=0,
                 bvi=True,  # 18.07-
                 enable=True)
+=======
+        self.call_vpp(
+            'sw_interface_set_l2_bridge',
+            rx_sw_if_index=loopback,
+            bd_id=bridge_id,
+            shg=0,
+            port_type=self.L2_API_PORT_TYPE_BVI,  # 18.10+
+            enable=True)
+>>>>>>> 81bc795... Add support for Tap as a service via VXlan network
 
     def set_interface_vrf(self, if_idx, vrf_id, is_ipv6=False):
         # Set the interface's VRF to the routers's table id
@@ -1289,13 +1299,14 @@ class VPPInterface(object):
                       is_add=1)
 
     #  direction : 1 = rx, 2 = tx, 3 tx & rx
-    def enable_port_mirroring(self, source_idx, dest_idx, direction=3):
+    def enable_port_mirroring(self, src_idx, dst_idx, direction=3, is_l2=1):
         self.LOG.debug("Enable span from %d to %d",
-                       source_idx, dest_idx)
+                       src_idx, dst_idx)
         self.call_vpp('sw_interface_span_enable_disable',
-                      sw_if_index_from=source_idx,
-                      sw_if_index_to=dest_idx,
-                      state=direction)
+                      sw_if_index_from=src_idx,
+                      sw_if_index_to=dst_idx,
+                      state=direction,
+                      is_l2=is_l2)
 
     def disable_port_mirroring(self, source_idx, dest_idx):
         self.LOG.debug("Disable span from %d to %d",
@@ -1322,9 +1333,36 @@ class VPPInterface(object):
         self.call_vpp('bridge_flags',
                       bd_id=bridge_domain_id,
                       is_set=0,
-                      feature_bitmap=(L2_LEARN | L2_FWD | L2_FLOOD |
-                                      L2_UU_FLOOD | L2_ARP_TERM))
+                      # feature_bitmap=(L2_LEARN | L2_FWD | L2_FLOOD |
+                      flags=(L2_LEARN | L2_FWD | L2_FLOOD |
+                             L2_UU_FLOOD | L2_ARP_TERM))
         self.call_vpp('bridge_flags',
                       bd_id=bridge_domain_id,
                       is_set=1,
-                      feature_bitmap=L2_UU_FLOOD)
+                      # feature_bitmap=L2_UU_FLOOD)
+                      flags=L2_UU_FLOOD)
+
+    def create_vxlan_tunnel(self, src_addr, dst_addr, is_ipv6, vni):
+        self.LOG.debug("Create vxlan tunnel VNI: %d", vni)
+        t = self.call_vpp('vxlan_add_del_tunnel',
+                          is_add=1,
+                          is_ipv6=is_ipv6,
+                          instance=0xffffffff,
+                          src_address=src_addr,
+                          dst_address=dst_addr,
+                          decap_next_index=0xffffffff,
+                          vni=vni)
+        return t.sw_if_index
+
+    def delete_vxlan_tunnel(self, src_addr, dst_addr, is_ipv6, vni):
+        self.LOG.debug("Delete vxlan tunnel VNI: %d", vni)
+        self.call_vpp('vxlan_add_del_tunnel',
+                      is_add=0,
+                      is_ipv6=is_ipv6,
+                      src_address=src_addr,
+                      dst_address=dst_addr,
+                      vni=vni)
+
+    def get_vxlan_tunnels(self):
+        t = self.call_vpp('vxlan_tunnel_dump', sw_if_index=0xffffffff)
+        return set([(tun.vni, tun.sw_if_index) for tun in t])
