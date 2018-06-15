@@ -277,7 +277,7 @@ class VPPMechanismDriver(api.MechanismDriver):
                 binding_type = self.get_vif_type(port_context)
                 # Remove port membership from any previously associated
                 # security groups for updating remote_security_group_id ACLs
-                self.communicator.unbind_port_from_remote_groups(
+                self.communicator.remove_port_from_remote_groups(
                     port_context._plugin_context.session,
                     port_context.original,
                     port_context.current)
@@ -1008,7 +1008,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
                              None)
         self.kick()
 
-    def unbind_port_from_remote_groups(self, session, original_port,
+    def remove_port_from_remote_groups(self, session, original_port,
                                        current_port):
         """Remove ports from remote groups when port security is updated."""
         removed_sec_groups = set(original_port['security_groups']) - set(
