@@ -181,6 +181,13 @@ class ParsedEtcdResult(etcd.EtcdResult):
     # result values.
 
 
+def json_writer(etcd_client):
+    if cfg.CONF.ml2_vpp.jwt_signing:
+        return SignedEtcdJSONWriter(etcd_client)
+    else:
+        return EtcdJSONWriter(etcd_client)
+
+
 class EtcdJSONWriter(EtcdWriter):
     """Write Python datastructures to etcd in a consistent form.
 
@@ -211,29 +218,25 @@ class SignedEtcdJSONWriter(EtcdJSONWriter):
     """
 
     def __init__(self, etcd_client):
-        self.jwt_signing = cfg.CONF.ml2_vpp.jwt_signing
-        if (self.jwt_signing):
-            self.jwt_agent = jwt_agent.JWTUtils(
-                cfg.CONF.ml2_vpp.jwt_node_cert,
-                cfg.CONF.ml2_vpp.jwt_node_private_key,
-                cfg.CONF.ml2_vpp.jwt_ca_cert,
-                cfg.CONF.ml2_vpp.jwt_controller_name_pattern)
+        self.jwt_agent = jwt_agent.JWTUtils(
+            cfg.CONF.ml2_vpp.jwt_node_cert,
+            cfg.CONF.ml2_vpp.jwt_node_private_key,
+            cfg.CONF.ml2_vpp.jwt_ca_cert,
+            cfg.CONF.ml2_vpp.jwt_controller_name_pattern)
         super(SignedEtcdJSONWriter, self).__init__(etcd_client)
 
     def _process_read_value(self, key, value):
         value = jsonutils.loads(value)
-        if (self.jwt_signing):
-            if (self.jwt_agent.should_path_be_signed(key)):
-                signerNodeName = self.jwt_agent.get_signer_name(key)
-                value = self.jwt_agent.verify(signerNodeName,
-                                              key,
-                                              value)
+        if (self.jwt_agent.should_path_be_signed(key)):
+            signerNodeName = self.jwt_agent.get_signer_name(key)
+            value = self.jwt_agent.verify(signerNodeName,
+                                          key,
+                                          value)
         return value
 
     def _process_written_value(self, key, value):
-        if (self.jwt_signing):
-            if (self.jwt_agent.should_path_be_signed(key)):
-                value = self.jwt_agent.sign(key, value)
+        if (self.jwt_agent.should_path_be_signed(key)):
+            value = self.jwt_agent.sign(key, value)
         return jsonutils.dumps(value)
 
 
@@ -671,7 +674,7 @@ class EtcdChangeWatcher(EtcdWatcher):
 
     def __init__(self, etcd_client, name, watch_path, election_path=None,
                  wait_until_elected=False, recovery_time=5,
-                 data=None, heartbeat=60, encoder=EtcdJSONWriter):
+                 data=None, heartbeat=60):
         self.implemented_state = {}
         self.watch_path = watch_path
 
