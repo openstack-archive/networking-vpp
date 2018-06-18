@@ -1142,6 +1142,11 @@ class VPPForwarder(object):
                 acl_rule['srcport_or_icmptype_last'] = 255
                 acl_rule['dstport_or_icmpcode_first'] = 0
                 acl_rule['dstport_or_icmpcode_last'] = 255
+            elif r.port_max == -1:  # All ICMP codes for an ICMP Type
+                acl_rule['srcport_or_icmptype_first'] = r.port_min
+                acl_rule['srcport_or_icmptype_last'] = r.port_min
+                acl_rule['dstport_or_icmpcode_first'] = 0
+                acl_rule['dstport_or_icmpcode_last'] = 255
             else:  # port_min == ICMP Type and port_max == ICMP Code
                 acl_rule['srcport_or_icmptype_first'] = r.port_min
                 acl_rule['srcport_or_icmptype_last'] = r.port_min

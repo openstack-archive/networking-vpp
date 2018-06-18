@@ -846,6 +846,16 @@ class EtcdAgentCommunicator(AgentCommunicator):
         else:
             port_min, port_max = (rule['port_range_min'],
                                   rule['port_range_max'])
+
+        # Handle a couple of special ICMP cases
+        if protocol in [1, 58]:
+            # All ICMP types and codes
+            if rule['port_range_min'] is None:
+                port_min, port_max = (-1, -1)
+            # All codes for a specific type
+            elif rule['port_range_max'] is None:
+                port_min, port_max = (rule['port_range_min'], -1)
+
         sg_rule = SecurityGroupRule(is_ipv6, remote_ip_addr,
                                     ip_prefix_len,
                                     remote_group_id, protocol, port_min,
