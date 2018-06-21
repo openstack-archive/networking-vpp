@@ -35,15 +35,15 @@ function install_networking_vpp {
 
 function init_networking_vpp {
     # In test environments where the network topology is unknown or cannot
-    # be modified, we use 'tap-0' as a logical interface by default
+    # be modified, we use 'tap0' as a logical interface by default
     if ! [ -z "$MECH_VPP_PHYSNETLIST" ]; then
         uplink=$(echo $MECH_VPP_PHYSNETLIST | cut -d ':' -f 2)
-        # checking specifically for tap-0 to avoid problems in developer
+        # checking specifically for tap0 to avoid problems in developer
         # test envs where other logical interfaces may be specified.
-        if ! [[ `vppctl show interface` =~ "$uplink" ]] && [[ "$uplink" == 'tap-0' ]]; then
+        if ! [[ `vppctl show interface` =~ "$uplink" ]] && [[ "$uplink" == 'tap0' ]]; then
             echo "$uplink not found in vppctl show interface"
-            # by default, vpp will internally name the first tap device 'tap-0'
-            vppctl tap connect test
+            # by default, vpp will internally name the first tap device 'tap0'
+            vppctl create tap host-if-name test
             vppctl set interface state $uplink up
         fi
     fi
