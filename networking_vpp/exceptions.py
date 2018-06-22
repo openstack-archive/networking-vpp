@@ -14,18 +14,17 @@
 #    under the License.
 
 from networking_vpp._i18n import _
-from networking_vpp.compat import n_exc
 
 
-class InvalidEtcdCAConfig(n_exc.NeutronException):
+class InvalidEtcdCAConfig(Exception):
     message = _("Invalid etcd CA config.")
 
 
-class InvalidEtcHostsConfig(n_exc.NeutronException):
+class InvalidEtcHostsConfig(Exception):
     message = _("Invalid etc host config. Expect comma-separated list of "
                 "<Host> or <Host:Port> format")
 
 
-class InvalidEtcHostConfig(n_exc.NeutronException):
+class InvalidEtcHostConfig(Exception):
     message = _("Invalid etc host config. Expect an IP or host name in "
                 "the form <Host> or <Host:Port>")

@@ -3684,7 +3684,7 @@ def main():
               cfg.CONF.ml2_vpp.etcd_port,
               cfg.CONF.ml2_vpp.etcd_user)
 
-    client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
+    client_factory = etcdutils.EtcdClientFactory.from_conf(cfg.CONF.ml2_vpp)
 
     # Do the work
 

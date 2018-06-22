@@ -864,8 +864,7 @@ class EtcdClientFactory(object):
         host.
         """
 
-        if not isinstance(etc_host, str):
-            raise vpp_exceptions.InvalidEtcHostsConfig()
+        etc_host = str(etc_host)
 
         if ETC_HOSTS_DELIMITER in etc_host:
             hosts = etc_host.split(ETC_HOSTS_DELIMITER)
@@ -878,22 +877,30 @@ class EtcdClientFactory(object):
 
         return etc_hosts
 
-    def __init__(self, conf_group):
-        hostconf = self._parse_host_config(conf_group.etcd_host,
-                                           conf_group.etcd_port)
+    @classmethod
+    def from_conf(cls, conf_group):
+        return cls(conf_group.etcd_host, conf_group.etcd_port,
+                conf_group.etcd_user, conf_group.etcd_pass,
+                conf_group.etcd_ca_cert,
+                conf_group.etcd_insecure_explicit_disable_https)
+
+    def __init__(self, etcd_host, etcd_port, etcd_user, etcd_pass,
+            etcd_ca_cert, etcd_insecure_explicit_disable_https):
+        hostconf = self._parse_host_config(etcd_host,
+                                           etcd_port)
 
         self.etcd_args = {
             'host': hostconf,
-            'username': conf_group.etcd_user,
-            'password': conf_group.etcd_pass,
+            'username': etcd_user,
+            'password': etcd_pass,
             'allow_reconnect': True}
 
-        if not conf_group.etcd_insecure_explicit_disable_https:
-            if conf_group.etcd_ca_cert is None:
+        if not etcd_insecure_explicit_disable_https:
+            if etcd_ca_cert is None:
                 raise vpp_exceptions.InvalidEtcdCAConfig()
 
             self.etcd_args['protocol'] = 'https'
-            self.etcd_args['ca_cert'] = conf_group.etcd_ca_cert
+            self.etcd_args['ca_cert'] = etcd_ca_cert
 
         else:
             LOG.warning("etcd is not using HTTPS, insecure setting")

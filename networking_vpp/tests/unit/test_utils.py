@@ -39,20 +39,20 @@ class TestAgentUtils(base.BaseTestCase):
     def parse_config_test_run(self, host, port, user=None, pw=None):
             fk = FakeConfig(host, port, user, pw)
 
-            cf = etcdutils.EtcdClientFactory(fk)
+            cf = etcdutils.EtcdClientFactory.from_conf(fk)
 
             return cf.etcd_args['host']
 
     def test_pass_user_password(self):
         # The defaults
         fk = FakeConfig('host', 1, None, None)
-        cf = etcdutils.EtcdClientFactory(fk)
+        cf = etcdutils.EtcdClientFactory.from_conf(fk)
         self.assertThat(cf.etcd_args['username'], matchers.Equals(None))
         self.assertThat(cf.etcd_args['password'], matchers.Equals(None))
 
         # When set
         fk = FakeConfig('host', 1, 'uuu', 'ppp')
-        cf = etcdutils.EtcdClientFactory(fk)
+        cf = etcdutils.EtcdClientFactory.from_conf(fk)
         self.assertThat(cf.etcd_args['username'], matchers.Equals('uuu'))
         self.assertThat(cf.etcd_args['password'], matchers.Equals('ppp'))
 

@@ -460,7 +460,7 @@ class EtcdAgentCommunicator(AgentCommunicator):
         # this state by Nova.
         self.notify_bound = notify_bound
 
-        self.client_factory = etcdutils.EtcdClientFactory(cfg.CONF.ml2_vpp)
+        self.client_factory = etcdutils.EtcdClientFactory.from_conf(cfg.CONF.ml2_vpp)
 
         # For Liberty support, we have to have a memory between notifications
         self.deleted_rule_secgroup_id = {}
