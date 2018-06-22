@@ -3190,14 +3190,19 @@ class EtcdListener(object):
 
 class PortWatcher(etcdutils.EtcdChangeWatcher):
 
-    def do_tick(self):
-        # The key that indicates to people that we're alive
-        # (not that they care)
-        # TODO(ijw): use refresh after the create to avoid the
-        # notification
+
+    def __init__(self, *args, **kwargs):
+        super(PortWatcher, self).__init__(*args, **kwargs)
         self.etcd_client.write(LEADIN + '/state/%s/alive' %
                                self.data.host,
                                1, ttl=3 * self.heartbeat)
+
+    def do_tick(self):
+        # The key that indicates to people that we're alive
+        # (not that they care)
+        self.etcd_client.refresh(LEADIN + '/state/%s/alive' %
+                                 self.data.host,
+                                 ttl=3 * self.heartbeat)
 
     def init_resync_start(self):
         """Identify known ports in VPP
