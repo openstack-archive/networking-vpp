@@ -1048,7 +1048,94 @@ class VPPForwarder(object):
                                             net['network_type'],
                                             net['segmentation_id'])
 
+    def bind_subport_on_host(self, parent_port, subport_data):
+        """Bind the subport of a bound parent vhostuser port."""
+        # We ensure parent port binding before calling this method.
+        subport_uuid = subport_data['port_id']
+        subport_seg_id = subport_data['segmentation_id']
+
+        # parent vhostuser intf
+        parent_props = self.interfaces[parent_port]
+        parent_if_idx = parent_props['iface_idx']
+        # Ensure that the uplink and the BD's are setup
+        physnet = subport_data['physnet']
+        uplink_seg_type = subport_data['uplink_seg_type']
+        uplink_seg_id = subport_data['uplink_seg_id']
+        LOG.debug('trunk: ensuring subport network on host '
+                  'physnet %s, uplink_seg_type %s, uplink_seg_id %s',
+                  physnet, uplink_seg_type, uplink_seg_id)
+        # Ensure an uplink for the subport
+        # Use the uplink physnet, uplink_seg_id & seg_type
+        net_data = self.ensure_network_on_host(physnet,
+                                               uplink_seg_type,
+                                               uplink_seg_id)
+        if net_data is None:
+            LOG.error('trunk sub-port binding is not possible as the '
+                      'physnet could not be configured for subport')
+            return None
+
+        # fetch if the subport interface already in vpp
+        subport_tag = port_tag(subport_uuid)
+        subport_if_idx = self.vpp.get_ifidx_by_tag(subport_tag)
+        if subport_if_idx is not None:
+            # It's already there and we created it
+            LOG.debug('Recovering existing trunk subport %s in VPP',
+                      subport_uuid)
+        else:
+            # create subport vhostuser intf and ensure it's in vpp bridge
+            net_br_idx = net_data['bridge_domain_id']
+            LOG.debug('trunk: ensuring subport interface on host '
+                      'parent_if_idx %s, seg_id %s', parent_if_idx,
+                      subport_seg_id)
+            subport_if_idx = self.vpp.create_vlan_subif(parent_if_idx,
+                                                        subport_seg_id)
+            self.ensure_interface_in_vpp_bridge(net_br_idx, subport_if_idx)
+            # set subport tag, so we can find it during resyncs
+            self.vpp.set_interface_tag(subport_if_idx, subport_tag)
+            # Admin up the subport interface
+            self.vpp.ifup(subport_if_idx)
+            LOG.debug("Bound subport in vpp with sw_idx: %s on BD: %s ",
+                      subport_if_idx, net_br_idx)
+        # Add subport props to interfaces
+        self.interfaces[subport_uuid] = {'iface_idx': subport_if_idx,
+                                         'net_data': net_data,
+                                         'mac': parent_props['mac'],
+                                         'bind_type': 'vhostuser',
+                                         'path': parent_props['path'],
+                                         'parent_uuid': parent_port
+                                         }
+
+        if 'trunk' not in parent_props:
+            LOG.debug('Setting trunk attr value in parent port props for '
+                      'subport %s', subport_uuid)
+            parent_props['trunk'] = set([subport_uuid])
+        else:
+            LOG.debug('Adding subport to trunk parent props for subport %s ',
+                      subport_uuid)
+            parent_props['trunk'].add(subport_uuid)
+        return self.interfaces[subport_uuid]
+
+    def unbind_subport_on_host(self, subport):
+        """Unbind the vhostuser subport in VPP.
+
+        After the last subport is unbound, unbind the parent port.
+        """
+        if subport not in self.interfaces:
+            LOG.debug('unknown subport %s unbinding request - ignored',
+                      subport)
+        else:
+            parent_port = self.interfaces[subport]['parent_uuid']
+            self.unbind_interface_on_host(subport)
+            self.interfaces[parent_port]['trunk'].remove(subport)
+            # Unbind the parent port if it has no subports
+            self.unbind_interface_on_host(parent_port)
+
     def clean_interface_from_vpp(self, uuid, props):
+        # Don't unbind a trunk port with subports
+        if 'trunk' in props:
+            LOG.debug('Waiting for subports to be unbound before '
+                      'unbinding trunk port %s', uuid)
+            return
         iface_idx = props['iface_idx']
 
         LOG.debug('unbinding port %s, recorded as type %s',
@@ -2560,7 +2647,16 @@ class EtcdListener(object):
         # Members of this are ports requiring security groups with unsatisfied
         # requirements.
         self.iface_awaiting_secgroups = {}
-
+        # Sub-ports of a trunk with pending port bindings.
+        # trunk_port ID => List(sub_ports awaiting binding)
+        # When the agent is restarted, it could receive an etcd watch event
+        # to bind subports even before the parent port itself is bound. This
+        # dict keeps tracks of such sub_ports. They will be reconsidered
+        # for binding after the parent is bound.
+        self.subports_awaiting_parents = {}
+        # bound subports of parent ports
+        # trunk_port ID => set(bound subports)
+        self.bound_subports = defaultdict(set)
         # We also need to know if the vhostuser interface has seen a socket
         # connection: this tells us there's a state change, and there is
         # a state detection function on self.vppf.
@@ -3110,6 +3206,86 @@ class EtcdListener(object):
                                                        bridge_idx)
             self.fetch_remote_gpe_mappings(segmentation_id)
 
+    # EtcdListener Trunking section
+    def reconsider_trunk_subports(self):
+        """Try to bind subports awaiting their parent port to be bound."""
+        for parent_port, subports in self.subports_awaiting_parents.items():
+            LOG.debug('reconsidering bind for trunk subports %s, parent %s',
+                      subports, parent_port)
+            # Is the parent port ready?
+            props = self.vppf.interfaces.get(parent_port, None)
+            # Parent is bound, so we can now bind its subports
+            if props:
+                self.bind_unbind_subports(parent_port, subports)
+                self.subports_awaiting_parents.pop(parent_port)
+
+    def subports_to_unbind(self, parent_port, subports):
+        """Return a list of subports to unbind for a parent port.
+
+        subports :- A set of subports that need to be currently bound
+        to the parent port.
+        """
+        # unbind 'bound sub-ports' that are not in the current subports
+        return self.bound_subports[parent_port] - subports
+
+    def subports_to_bind(self, parent_port, subports):
+        """Return a list of subports to unbind for a parent port.
+
+        subports :- A set of subports that need to be currently bound
+        to the parent port.
+        """
+        # remove ports from subports that are already bound and only bind the
+        # new ports.
+        return subports - self.bound_subports[parent_port]
+
+    def bind_unbind_subports(self, parent_port, subports):
+        """Bind or unbind the subports of the parent ports as needed.
+
+        To unbind all bound subports of a parent port, provide the
+        parent_port argument with subports set to an empty list.
+        Sample subports data structure: List of dicts
+
+        [{"segmentation_id": 11,
+         "uplink_seg_id": 149,
+         "segmentation_type": "vlan",
+         "uplink_seg_type": "vlan",
+         "port_id": "9ee91c37-9150-49ff-9ea7-48e98547771a",
+         "physnet": "physnet1"},
+
+         {"segmentation_id": 12,
+          "uplink_seg_id": 139,
+          "segmentation_type": "vlan",
+          "uplink_seg_type": "vlan",
+          "port_id": "2b1a89ba-78f1-4350-b71a-7caf7f23cbcf",
+          "physnet": "physnet1"}]
+
+        """
+        LOG.debug('Binding or Unbinding subports %s of parent trunk port %s',
+                  subports, parent_port)
+        subport_set = set([p['port_id'] for p in subports])
+        subports_to_bind = self.subports_to_bind(parent_port, subport_set)
+        LOG.debug('Binding subports %s of a parent trunk port %s',
+                  subports_to_bind, parent_port)
+        subports_to_unbind = self.subports_to_unbind(parent_port,
+                                                     subport_set)
+        LOG.debug('Unbinding subports %s of a parent trunk port %s',
+                  subports_to_unbind, parent_port)
+        # bind subports we are told to bind
+        for subport in subports_to_bind:
+            subport_data = [p for p in subports
+                            if p['port_id'] == subport][0]
+            LOG.debug('Binding subport %s of parent_port %s '
+                      'sub_port_data %s',
+                      subport, parent_port, subport_data)
+            self.vppf.bind_subport_on_host(parent_port, subport_data)
+            self.bound_subports[parent_port].add(subport)
+        # unbind subports we are told to unbind
+        for subport in subports_to_unbind:
+            LOG.debug('Unbinding subport %s of parent_port %s',
+                      subport, parent_port)
+            self.vppf.unbind_subport_on_host(subport)
+            self.bound_subports[parent_port].remove(subport)
+
     AGENT_HEARTBEAT = 60  # seconds
 
     def process_ops(self):
@@ -3124,6 +3300,7 @@ class EtcdListener(object):
         self.physnet_key_space = LEADIN + "/state/%s/physnets" % self.host
         self.gpe_key_space = LEADIN + "/global/networks/gpe"
         self.remote_group_key_space = LEADIN + "/global/remote_group"
+        self.trunk_key_space = LEADIN + "/nodes/%s/trunks" % self.host
 
         etcd_client = self.client_factory.client()
         etcd_helper = etcdutils.EtcdHelper(etcd_client)
@@ -3136,6 +3313,7 @@ class EtcdListener(object):
         etcd_helper.ensure_dir(self.router_key_space)
         etcd_helper.ensure_dir(self.gpe_key_space)
         etcd_helper.ensure_dir(self.remote_group_key_space)
+        etcd_helper.ensure_dir(self.trunk_key_space)
 
         etcd_helper.clear_state(self.state_key_space)
 
@@ -3188,6 +3366,15 @@ class EtcdListener(object):
                                     heartbeat=self.AGENT_HEARTBEAT,
                                     data=self).watch_forever)
 
+        # Spawn trunk watcher if enabled
+        if 'vpp-trunk' in cfg.CONF.service_plugins:
+            LOG.debug("Spawning trunk_watcher")
+            self.pool.spawn(TrunkWatcher(self.client_factory.client(),
+                                         'trunk_watcher',
+                                         self.trunk_key_space,
+                                         heartbeat=self.AGENT_HEARTBEAT,
+                                         data=self).watch_forever)
+
         # Spawn GPE watcher for vxlan tenant networks
         if 'vxlan' in cfg.CONF.ml2.type_drivers:
             LOG.debug("Spawning gpe_watcher")
@@ -3197,14 +3384,9 @@ class EtcdListener(object):
                                        heartbeat=self.AGENT_HEARTBEAT,
                                        data=self).watch_forever)
 
-        # Check if the vpp router service plugin is enabled
-        enable_router_watcher = False
-        for service_plugin in cfg.CONF.service_plugins:
-            if 'vpp' in service_plugin:
-                enable_router_watcher = True
         # Spawning after the vlan/vxlan bindings are done so that
         # the RouterWatcher doesn't do unnecessary work
-        if enable_router_watcher:
+        if 'vpp-router' in cfg.CONF.service_plugins:
             if cfg.CONF.ml2_vpp.enable_l3_ha:
                 LOG.info("L3 HA is enabled")
             LOG.debug("Spawning router_watcher")
@@ -3213,6 +3395,7 @@ class EtcdListener(object):
                                           self.router_key_space,
                                           heartbeat=self.AGENT_HEARTBEAT,
                                           data=self).watch_forever)
+
         self.pool.waitall()
 
 
@@ -3599,6 +3782,63 @@ class GpeWatcher(etcdutils.EtcdChangeWatcher):
                     mac=mac,
                     ip=ip)
                 del self.data.vppf.gpe_map['remote_map'][(ip, vni)]
+
+
+class TrunkWatcher(etcdutils.EtcdChangeWatcher):
+    """Watches trunk parent/subport bindings on the host and takes actions.
+
+    Trunk keyspace format.
+    /networking-vpp/nodes/<node-name>/trunks/<UUID of the trunk>
+
+    Sample data format:
+    {"status": "ACTIVE",
+     "name": "trunk-new",
+     "admin_state_up": true,
+     "sub_ports": [
+         {"segmentation_id": 11,
+          "uplink_seg_id": 149,
+          "segmentation_type": "vlan",
+          "uplink_seg_type": "vlan",
+          "port_id": "9ee91c37-9150-49ff-9ea7-48e98547771a",
+          "physnet": "physnet1"},
+
+         {"segmentation_id": 12,
+          "uplink_seg_id": 139,
+          "segmentation_type": "vlan",
+          "uplink_seg_type": "vlan",
+          "port_id": "2b1a89ba-78f1-4350-b71a-7caf7f23cbcf",
+          "physnet": "physnet1"}],
+    }
+    How does it work?
+    The ml2 server:
+    1) Writes above etcd key/value when a trunk port is bound on the host.
+    2) Updates the above value when subports on a bound trunk are updated.
+    3) Deletes the key when the trunk is unbound.
+    The trunkwatcher receives the watch event and it figures out whether
+    it should perform a bind or unbind action on the parent and its subport
+    and performs it.
+    """
+
+    def do_tick(self):
+        pass
+
+    def added(self, parent_port, value):
+        """Bind and unbind sub-ports of the parent port."""
+        data = jsonutils.loads(value)
+        LOG.debug('trunk watcher received add for parent_port %s '
+                  'with data %s', parent_port, data)
+        # Due to out-of-sequence etcd watch events during an agent restart,
+        # we do not yet know at this point whether the parent port is setup.
+        # So, we'll add it to the awaiting parents queue and reconsider it.
+        self.data.subports_awaiting_parents[parent_port] = data['sub_ports']
+        # reconsider awaiting sub_ports
+        self.data.reconsider_trunk_subports()
+
+    def removed(self, parent_port):
+        """Unbind all sub-ports and then unbind the parent port."""
+        LOG.debug('trunk watcher received unbound for parent port %s ',
+                  parent_port)
+        self.data.bind_unbind_subports(parent_port, subports=[])
 
 
 class BindNotifier(object):
