@@ -967,7 +967,9 @@ class EtcdAgentCommunicator(AgentCommunicator):
             'security_groups': port.get('security_groups', []),
             'allowed_address_pairs': port.get('allowed_address_pairs', []),
             'fixed_ips': port.get('fixed_ips', []),
-            'port_security_enabled': port.get('port_security_enabled', True)
+            'port_security_enabled': port.get('port_security_enabled', True),
+            # Non-essential, but useful for monitoring and debug:
+            'device_id': port.get('device_id', None)
         }
         LOG.debug("Queueing bind request for port:%s, "
                   "segment:%s, host:%s, type:%s",

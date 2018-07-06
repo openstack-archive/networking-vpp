@@ -134,7 +134,8 @@ class EtcdAgentCommunicatorTestCase(base.BaseTestCase):
             'security_groups': security_groups,
             'allowed_address_pairs': allowed_address_pairs,
             'port_security_enabled': port_security_enabled,
-            'fixed_ips': fixed_ips
+            'fixed_ips': fixed_ips,
+            'device_id': fake_device
         }
         self.agent_communicator.bind(
             session,
