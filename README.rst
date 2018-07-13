@@ -227,7 +227,7 @@ If the specified VPP uplink interface in the physnet list is ``tap-0``, the
 plugin will create it in VPP to use if it's not already present
 (and you won't have to give a physical interface up to VPP and work out the
 configuration steps, which can be quite involved).  This will turn up on
-your host as an interface called 'test', which you should be able to use normally -
+your host as an interface named 'test', which you should be able to use normally -
 you can give it an address, add routes, set up NAT or even make VLAN subinterfaces.
 
 Take a peek into the ``init_networking_vpp`` function of ``devstack/plugin.sh``
@@ -250,7 +250,7 @@ you're using.  Refer to the VPP documentation if you need more help.
 If running on VirtualBox you will need to use an experimental option
 to allow SSE4.2 passthrough from the host CPU to the VM. Refer to
 the `VirtualBox Manual <https://www.virtualbox.org/manual/ch09.html#sse412passthrough>`_
- for details.
+for details.
 
 What overlays does it support?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -328,7 +328,7 @@ driver, in conjunction with the other ones on the system, needs to do
 anything. In some cases it may not be responsible for the port at all.
 
 How do I enable the vpp-router plugin?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 NOTE: As of release 18.04, the native L3 service plugin (``vpp-router``) is
       fully supported in L3 HA configuration for VLAN, Flat and VXLAN-GPE
@@ -366,10 +366,11 @@ file.
 
 Sample L3 host settings in ml2_conf.ini
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+::
 
-[ml2_vpp]
-l3_hosts = node1,node2
-enable_l3_ha = True
+    [ml2_vpp]
+    l3_hosts = node1,node2
+    enable_l3_ha = True
 
 How does Layer3 HA Work and how do I test it?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -413,7 +414,7 @@ an admin channel, implemented in shared memory, to exchange control
 messages with whatever agent is running. The Python bindings are a very
 thin layer between that shared memory system and a set of Python APIs.
 We add our own internal layer of Python to turn vpp's low level
-communcations into something a little easier to work with.
+communications into something a little easier to work with.
 
 What does it support?
 ~~~~~~~~~~~~~~~~~~~~~
@@ -440,7 +441,7 @@ Following are some key concepts that will help you set it up and get going.
 
 First, it's much easier than what you think it is! Most of the complexities
 are handled in the code to make the user experience and service deployment
-much easier. We will walk you though all of it.
+much easier. We will walk you through all of it.
 
 If you are just interested in setting it up, you only need to understand
 the concept of a locator. VPP uses this name to identify the uplink interface
@@ -562,7 +563,7 @@ and the agents know that they must resync themselves with the desired
 state when they completely lose track of what's happening.
 
 How are you testing the project during development?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 We have unit tests written by developers, and are also doing system tests
 by leveraging the upstream Openstack CI infrastructure. Going forward,
