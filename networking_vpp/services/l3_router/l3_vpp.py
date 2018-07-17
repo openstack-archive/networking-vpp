@@ -310,7 +310,11 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             if router.get('external_gateway_info', False):
                 self._write_router_external_gw_journal(context, router_id,
                                                        router, delete=True)
+            for l3_host in self.l3_hosts:
+                etcd_key = self._get_router_intf_path(l3_host, router_id, '')
+                db.journal_write(context.session, etcd_key, None)
             db.delete_router_vrf(context.session, router_id)
+            self.communicator.kick()
 
     def create_floatingip(self, context, floatingip):
         fip_dict = super(VppL3RouterPlugin, self).create_floatingip(
