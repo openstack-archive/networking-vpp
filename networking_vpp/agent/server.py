@@ -1,4 +1,3 @@
-
 # Copyright (c) 2017 Cisco Systems, Inc.
 # All Rights Reserved
 #
@@ -350,14 +349,13 @@ class VPPForwarder(object):
         self.port_vpp_acls = defaultdict(dict)
         # keeps track of gpe locators and mapping info
         self.gpe_map = {'remote_map': {}}
-        # key: sw if index in VPP; present when vhost-user is
+
+        # key: OpenStack port UUID; present when vhost-user is
         # connected and removed when we delete things.  May accumulate
         # any other VPP interfaces too, but that's harmless.
-        self.iface_connected = set()
-
+        self.port_connected = set()
         self.vhost_ready_callback = None
-        cb_event = self.vpp.CallbackEvents.VHOST_USER_CONNECT
-        self.vpp.register_for_events(cb_event, self._vhost_ready_event)
+        eventlet.spawn_n(self.vhost_notify_thread)
 
         # Device monitor to ensure the tap interfaces are plugged into the
         # right Linux brdige
@@ -498,39 +496,59 @@ class VPPForwarder(object):
 
     ########################################
 
-    def _vhost_ready_event(self, iface):
-        """Callback from VPP interface on vhostuser socket connection"""
+    def vhost_notify_thread(self):
+        """Find vhostuser connections with an attached VM
 
-        # TODO(ijw): messy and a bit specific to the VPP interface -
-        # shouldn't be returning the API datastructure?
-        LOG.debug("vhost online: %s", str(iface))
-        self._notify_connected(iface.sw_if_index)
+        The moment of VM attachment is useful, as it's one of the
+        preconditions for notifying Nova a socket is ready.  Watching
+        the vhostuser data inside VPP has a performance impact on
+        forwarding, so instead we watch the kernel's idea of which
+        vhostuser connections are properly opened.
 
-    def _notify_connected(self, sw_if_index):
-        """Deal with newly active interfaces noticed by VPP
-
-        Any interface that has been created and has also been
-        connected to goes into the up state.  At this point, we can
-        safely say that the VM is ready for traffic passing.
-
-        When interacting with Nova, this usually indicates that the VM
-        has been created and the vhost-user connection made.  We
-        should send the notification only after the port has been
-        created and the hypervisor has attached to it.  (You have to
-        create the interface to be attached to but this checks for
-        the data that's written on creation to be ready to avoid
-        a race condition.)
-
-        We may send multiple notifications to Nova if an interface
-        disconnects and reconnects - this is harmless.
+        Having two open sockets is 99% ready - technically, the interface
+        is ready when VPP has mapped its memory, but these two events are
+        nearly contemporaenous, so this is good enough.
         """
-        self.iface_connected.add(sw_if_index)
+        dirname = cfg.CONF.ml2_vpp.vhost_user_dir
+        # We need dirname to have precisely one trailing slash.
+        dirname = dirname.rstrip('/') + '/'
 
-        if self.vhost_ready_callback:
-            self.vhost_ready_callback(sw_if_index)
+        while True:
+            opens = defaultdict(int)
 
-    def vhostuser_linked_up(self, sw_if_index):
-        return sw_if_index in self.iface_connected
+            with open('/proc/net/unix') as file:
+                # Track unix sockets in vhost directory that are opened more
+                # than once
+                for f in file:
+                    # Problems with files with spaces in, though
+                    _, file = f.rsplit(' ', 1)
+                    if file.startswith(dirname):
+                        file = file[len(dirname):].rstrip("\n")
+                        opens[file] = opens[file] + 1
+
+            # Report on any sockets that are open exactly twice (VPP + KVM)
+            for f in list(opens.keys()):
+                if opens[f] != 2:
+                    del opens[f]
+
+            opens = set(opens.keys())
+            open_notifications = opens - self.port_connected
+            # .. we don't have to notify the port drops, that's fine
+
+            # Update this *before* making callbacks so that this register is up
+            # to date
+            self.port_connected = opens
+            if self.vhost_ready_callback:
+                for uuid in open_notifications:
+                    self.vhost_ready_callback(uuid)
+
+            eventlet.sleep(1)
+
+    def vhostuser_linked_up(self, uuid):
+        return uuid in self.port_connected
+
+    def vhostuser_unlink(self, uuid):
+        self.port_connected.discard(uuid)
 
     ########################################
 
@@ -549,7 +567,7 @@ class VPPForwarder(object):
             return None, None
         ifidx = self.vpp.get_ifidx_by_name(ifname)
         if ifidx is None:
-            LOG.error('Physnet {1} interface {2} does not '
+            LOG.error('Physnet %s interface %s does not '
                       'exist in VPP', physnet, ifname)
             return None, None
         self.vpp.set_interface_tag(ifidx, physnet_if_tag(physnet))
@@ -1061,8 +1079,7 @@ class VPPForwarder(object):
             # This interface is no longer connected if it's deleted
             # RACE, as we may call unbind BEFORE the vhost user
             # interface is notified as connected to qemu
-            if iface_idx in self.iface_connected:
-                self.iface_connected.remove(iface_idx)
+            self.vhostuser_unlink(uuid)
         elif props['bind_type'] == 'tap':
             # remove port from bridge (sets to l3 mode) prior to deletion
             self.vpp.delete_from_bridge(iface_idx)
@@ -2534,8 +2551,10 @@ class EtcdListener(object):
         # These data structures are used as readiness indicators.
         # A port is only in here only if the attachment part of binding
         # has completed.
-        # key: if index in VPP; value: (ID, bound-callback, vpp-prop-dict)
+        # key: ifidx of port; value: (UUID, bound-callback, vpp-prop-dict)
         self.iface_state = {}
+        # key: UUID of port; value: ifidx
+        self.iface_state_ifidx = {}
 
         # Members of this are ports requiring security groups with unsatisfied
         # requirements.
@@ -2547,6 +2566,8 @@ class EtcdListener(object):
         self.vppf.vhost_ready_callback = self._vhost_ready
 
     def unbind(self, id):
+        del self.iface_state[self.iface_state_ifidx[id]]
+        del self.iface_state_ifidx[id]
         self.vppf.unbind_interface_on_host(id)
 
     def bind(self, bound_callback, id, binding_type, mac_address, physnet,
@@ -2604,8 +2625,9 @@ class EtcdListener(object):
             self.iface_awaiting_secgroups[iface_idx] = None
 
         self.iface_state[iface_idx] = (id, bound_callback, props)
+        self.iface_state_ifidx[id] = iface_idx
 
-        self.apply_spoof_macip(iface_idx, security_data)
+        self.apply_spoof_macip(iface_idx, security_data, props)
 
         self.maybe_apply_secgroups(iface_idx)
 
@@ -2631,7 +2653,7 @@ class EtcdListener(object):
 
         return self.vppf.find_bound_ports()
 
-    def apply_spoof_macip(self, iface_idx, security_data):
+    def apply_spoof_macip(self, iface_idx, security_data, props):
         """Apply non-secgroup security to a port
 
         This is an idempotent function to set up the port security
@@ -2639,8 +2661,6 @@ class EtcdListener(object):
         solely from the data on the port itself.
 
         """
-
-        (id, bound_callback, props) = self.iface_state[iface_idx]
 
         # TODO(ijw): this is a convenience for spotting L3 and DHCP
         # ports, but it's not the right way
@@ -2702,6 +2722,7 @@ class EtcdListener(object):
 
         # TODO(ijw): this is a convenience for spotting L3 and DHCP
         # ports, but it's not the right way
+        # (TODO(ijw) it's also the only reason we go to iface_state)
         is_secured_port = props['bind_type'] == 'vhostuser'
 
         # If security-groups are enabled and it's a port needing
@@ -2723,15 +2744,21 @@ class EtcdListener(object):
             LOG.debug("Clearing port_security on "
                       "port %s", id)
             self.vppf.remove_acls_on_port(
-                props['iface_idx'])
+                iface_idx)
 
         # Remove with no error if not present
         self.iface_awaiting_secgroups.pop(iface_idx, None)
 
         self.maybe_up(iface_idx)
 
-    def _vhost_ready(self, sw_if_index):
-            self.maybe_up(sw_if_index)
+    def _vhost_ready(self, id):
+        # The callback from VPP only knows the IP; convert
+        # .. and note that we may not know the conversion
+        iface_idx = self.iface_state_ifidx.get(id)
+        if iface_idx is None:
+            # Not a port we know about
+            return
+        self.maybe_up(iface_idx)
 
     def maybe_up(self, iface_idx):
         """Flag that an interface is connected, if it is
@@ -2756,7 +2783,7 @@ class EtcdListener(object):
         (id, bound_callback, props) = self.iface_state[iface_idx]
 
         if (props['bind_type'] == 'vhostuser' and
-                not self.vppf.vhostuser_linked_up(iface_idx)):
+                not self.vppf.vhostuser_linked_up(id)):
             # vhostuser connection that hasn't yet found a friend
             return
 
