@@ -172,7 +172,7 @@ does depend a bit on your hardware setup, so you may need to run
 devstack, then run the command 'sudo vppctl show int' - which will
 list the interfaces that VPP found - fix the ``local.conf`` file and try
 again.  (If your situation is especially unusual, you will need to go
-look at VPP's documentation at <http://wiki.fd.io/> to work out how
+look at VPP's documentation at <https://wiki.fd.io/> to work out how
 VPP chooses its interfaces and things about how its passthrough
 drivers work). If you're setting up a multinode system, bridge this
 between the servers and it will form the Neutron dataplane link.
