@@ -106,7 +106,11 @@ try:
     # Newton
     n_const.L3
 except AttributeError:
-    n_const.L3 = plugin_constants.L3_ROUTER_NAT
+    try:
+        n_const.L3 = plugin_constants.L3_ROUTER_NAT
+    except AttributeError:
+        # Rocky
+        n_const.L3 = neutron_lib.plugins.constants.L3
 
 # Register security group option
 def register_securitygroups_opts(cfg):
