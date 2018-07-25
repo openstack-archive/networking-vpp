@@ -325,6 +325,29 @@ class VPPInterface(object):
         with self.event_q_lock:
             self.event_q.append((msg_name, data,))
 
+    def do_callbacks(self):
+        """Call back based on any events that have been seen
+
+        This is built to be called by a main process thread on whatever
+        schedule suits (which means that the threading model is not dictated by
+        the low level library).  It makes callbacks based on VPP events
+        received in the interim.
+        """
+
+        # See if anything is queued
+        events = []
+        with self.event_q_lock:
+            # Grabbing the entire queue is more efficient than lock-pop, and
+            # we're the only consumer
+            events = self.event_q
+            self.event_q = []
+
+        for (t, data) in events:
+            self._fire_cb(t, data)
+            active = True
+
+        return active
+            
     def _fire_cb(self, msg_name, data):
         """VPP callback.
 
