@@ -589,7 +589,9 @@ class VPPInterface(object):
 
     def set_interface_vrf(self, if_idx, vrf_id, is_ipv6=False):
         # Set the interface's VRF to the routers's table id
-        # allocated by neutron.
+        # allocated by neutron. If the VRF table does not exist, create it.
+        self.call_vpp('ip_table_add_del', table_id=vrf_id, is_ipv6=is_ipv6,
+                      is_add=True)
         self.call_vpp('sw_interface_set_table', sw_if_index=if_idx,
                       vrf_id=vrf_id, is_ipv6=is_ipv6)
 
