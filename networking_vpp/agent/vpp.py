@@ -796,7 +796,18 @@ class VPPInterface(object):
         return int_addrs
 
     def set_interface_mtu(self, sw_if_idx, mtu):
-        self.call_vpp('sw_interface_set_mtu', sw_if_index=sw_if_idx, mtu=mtu)
+        # In VPP 18.07, the mtu field is an array which allows for setting
+        # MTU for L3, IPv4, IPv6 and MPLS:
+        #
+        #     u32 mtu[4]; /* 0 - L3, 1 - IP4, 2 - IP6, 3 - MPLS */
+        #
+        # Details in the following link:
+        #     https://docs.fd.io/vpp/18.07/md_src_vnet_MTU.html
+        #
+        # TODO(onong): This is a quick fix for 18.07. Further changes may be
+        # required after the discussion around jumbo frames
+        self.call_vpp('sw_interface_set_mtu', sw_if_index=sw_if_idx,
+                      mtu=[mtu, 0, 0, 0])
 
     # Enables or Disables the NAT feature on an interface
     def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
