@@ -811,7 +811,7 @@ _etcd_conn_opts = [
                       "host form of etcd_host is used.")),
     cfg.StrOpt('etcd_user', default=None,
                help=_("Username for etcd authentication")),
-    cfg.StrOpt('etcd_pass', default=None,
+    cfg.StrOpt('etcd_pass', default=None, secret=True,
                help=_("Password for etcd authentication")),
     # TODO(ijw): make false default
     cfg.BoolOpt('etcd_insecure_explicit_disable_https', default=True,
