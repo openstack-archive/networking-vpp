@@ -1,0 +1,9 @@
+Code-Review+1: Naveen Joy <najoy@cisco.com>
+Code-Review+2: Ian Wells <iawells@cisco.com>
+Workflow+1: Ian Wells <iawells@cisco.com>
+Verified+2: Zuul
+Submitted-by: Zuul
+Submitted-at: Fri, 03 Aug 2018 00:16:11 +0000
+Reviewed-on: https://review.openstack.org/587574
+Project: openstack/networking-vpp
+Branch: refs/heads/master
