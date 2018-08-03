@@ -3227,9 +3227,28 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
     def do_tick(self):
         # The key that indicates to people that we're alive
         # (not that they care)
-        self.etcd_client.refresh(LEADIN + '/state/%s/alive' %
-                                 self.data.host,
-                                 ttl=3 * self.heartbeat)
+        try:
+            # Instead of invoking the refresh method, invoke the write
+            # method with refresh=True which is what the refresh method does
+            # anyways. Doing this ensures that we are not hampered by
+            # older versions of the etcd client which may not support the
+            # refresh method.
+            # TODO(onong): should be doing a compare-and-swap with our
+            # identity as this would prevent two agents running.
+            self.etcd_client.write(LEADIN + '/state/%s/alive' %
+                                   self.data.host, 1,
+                                   ttl=3 * self.heartbeat,
+                                   refresh=True,
+                                   prevExist=True)
+        except Exception as e:
+            # The method will fail when
+            #   - the key doesn't exist, or
+            #   - etcd unreachable/network issues, or
+            #   - a very old/errant etcd version with no refresh support
+            LOG.exception("Failed to refresh 'alive' key", e)
+            LOG.critical("Is another client active? Is etcd unreachable?"
+                         " Exiting...")
+            sys.exit(1)
 
     def init_resync_start(self):
         """Identify known ports in VPP
