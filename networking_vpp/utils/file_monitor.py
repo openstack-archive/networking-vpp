@@ -18,9 +18,8 @@ import os
 import re
 
 import pyinotify
+import select
 
-from networking_vpp.utils.pyinotify_eventlet_notifier import (
-    Notifier as eventlet_Notifier)
 from oslo_log import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -28,6 +27,51 @@ LOG = logging.getLogger(__name__)
 # Inotify mask values
 IN_CREATE = 256
 IN_DELETE = 512
+
+
+# From 0.20.0 above eventlet has removed the select.poll method, but pyinotify
+# has a dependency on it. We don't actually use the poll object anyway (we
+# can't since eventlet doesn't monkey patch it, it doesn't work, which is why
+# 0.20+ deletes it), so we can fix it specifically to make the initialiser
+# here happy.
+# So we set select.poll to a dummy poll object to let the init method of
+# pyinotify.Notifier complete.
+
+patch_select_poll = False
+try:
+    select.poll
+except AttributeError:
+    patch_select_poll = True
+
+
+class DummyPoll(object):
+    def register(self, *args, **kwargs):
+        pass
+
+    def unregister(self, *args, **kwargs):
+        pass
+
+
+class Notifier(pyinotify.Notifier):
+
+    def __init__(self, watch_manager, default_proc_fun=None, read_freq=0,
+                 threshold=0, timeout=None):
+
+        # Monkeypatch select.poll temporarily if needed
+        if patch_select_poll:
+            select.poll = DummyPoll
+        pyinotify.Notifier.__init__(self, watch_manager, default_proc_fun=None,
+                                    read_freq=0, threshold=0, timeout=None)
+        # Remove - no-one should be using poll, but leaving this would give
+        # confusing behaviour.
+        # But for eventlet <=0.20 pyudev seems to be needing it,so remove it
+        # only if we patch it.
+        if patch_select_poll:
+            delattr(select, 'poll')
+
+        # We won't be using the pollobj
+        self._pollobj.unregister(self._fd)
+        self._pollobj = None
 
 
 class FileMonitor(object):
@@ -121,14 +165,13 @@ class FileMonitor(object):
                               "Exception is: %s. ", e)
 
         wm = pyinotify.WatchManager()  # Watch Manager
+        mask = pyinotify.IN_DELETE | pyinotify.IN_CREATE
+        wm.add_watch(self.watch_dir, mask,
+                     proc_fun=on_notified, rec=False)
+        self.notifier = Notifier(wm)
         while True:
-            try:
-                mask = pyinotify.IN_DELETE | pyinotify.IN_CREATE
-                self.notifier = eventlet_Notifier(wm)
-                wm.add_watch(self.watch_dir, mask,
-                             proc_fun=on_notified, rec=False)
-                self.notifier.loop()
-                LOG.debug("File event notifier [pyinotify] waiting")
-            except Exception as e:
-                LOG.error(e)
-                wm.rm_watch(self.watch_dir)
+            self.notifier.process_events()
+            ready, _, _ = select.select([wm.get_fd()], [], [])
+            if ready:
+                self.notifier.read_events()
+                self.notifier.process_events()

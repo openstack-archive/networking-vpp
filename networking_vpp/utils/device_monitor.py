@@ -55,7 +55,7 @@ class DeviceMonitor(object):
         while True:
             # monitor.poll() is synchronized call, which will block eventlet
             # for certain time. So use select to avoid the stall.
-            ready, _, _ = select.select([monitor.fileno()], [], [], 10)
+            ready, _, _ = select.select([monitor.fileno()], [], [])
             if ready:
                 try:
                     # This will work with pyudev <= v0.15
