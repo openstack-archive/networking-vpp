@@ -1,0 +1,8 @@
+Code-Review+2: Naveen Joy <najoy@cisco.com>
+Workflow+1: Naveen Joy <najoy@cisco.com>
+Verified+2: Zuul
+Submitted-by: Zuul
+Submitted-at: Wed, 15 Aug 2018 20:55:31 +0000
+Reviewed-on: https://review.openstack.org/590820
+Project: openstack/networking-vpp
+Branch: refs/heads/master
