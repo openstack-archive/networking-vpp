@@ -76,9 +76,13 @@ def set_storage_engine(target, parent):
 def run_migrations_online():
     set_mysql_engine()
     try:
+        extra_args = {}
+        if hasattr(neutron_config.database, 'mysql_enable_ndb'):
+            extra_args = {
+                mysql_enable_ndb: neutron_config.database.mysql_enable_ndb}
         engine = session.create_engine(
             sql_connection=neutron_config.database.connection,
-            mysql_enable_ndb=neutron_config.database.mysql_enable_ndb)
+            **extra_args)
     except NameError:
         # This permits this plugin to work with older Neutron versions
         # that don't support the extended 'create_engine' call syntax
