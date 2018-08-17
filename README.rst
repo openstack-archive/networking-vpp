@@ -570,3 +570,21 @@ by leveraging the upstream Openstack CI infrastructure. Going forward,
 we will be increasing the coverage of the unit tests, as well as
 enhancing the types of system/integration tests that we run, e.g.
 negative testing, compatibility testing, etc.
+
+What's new in the 18.07 release?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In the 18.07 release, we support the network trunk service plugin.
+You will now be able to attach multiple networks to an instance by binding
+it to a single vhostuser port. Each network trunk has a parent port with any
+number of subports.When creating a subport, a segmentation-id is required
+by the vpp driver. The segmentation-id defines the segmentation
+ID on which the subport network is presented to the instance.
+
+Another new feature in this release is the Tap-as-a-service (TaaS).
+This service can be used to create remote port mirroring capability for
+tenant virtual networks.TaaS will be helpful to debug your virtual networks
+and gain visibility into your VM's network traffic.
+
+Besides the above, this release also has several bug and stability
+related fixes and improvements.
