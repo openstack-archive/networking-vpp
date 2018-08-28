@@ -219,6 +219,8 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
         trunk_obj = trunk_objects.Trunk.get_object(context,
                                                    port_id=port_id)
         if trunk_obj:
+            host = ""
+            trunk_data = None
             # Bind - write to etcd
             if (current_port[portbindings.VIF_TYPE] ==
                     portbindings.VIF_TYPE_VHOST_USER):
