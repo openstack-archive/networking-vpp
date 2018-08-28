@@ -231,7 +231,7 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
                 self.update_trunk(context, trunk_obj.id,
                                   {'trunk': {'status':
                                              trunk_const.ACTIVE_STATUS}})
-
+                update_etcd = True
             # Unbind - delete from etcd
             elif (current_port[portbindings.VIF_TYPE] ==
                     portbindings.VIF_TYPE_UNBOUND and
@@ -243,8 +243,15 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
                 self.update_trunk(context, trunk_obj.id,
                                   {'trunk': {'status':
                                              trunk_const.DOWN_STATUS}})
-            trunk_path = self._trunk_path(host, port_id)
-            self._write_trunk_journal(context, trunk_path, trunk_data)
+                update_etcd = True
+            else:
+                # This does not affect a vhostuser port, so no
+                # change is required
+                update_etcd = False
+
+            if update_etcd:
+                trunk_path = self._trunk_path(host, port_id)
+                self._write_trunk_journal(context, trunk_path, trunk_data)
 
     def update_trunk(self, context, trunk_id, trunk):
         """Update the trunk object."""
