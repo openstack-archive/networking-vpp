@@ -1035,20 +1035,24 @@ class VPPForwarder(object):
                       uuid)
         else:
             props = self.interfaces[uuid]
+            net = props.get('net_data')
             self.clean_interface_from_vpp(uuid, props)
             # Delete the port ip address from remote_group_id list
             self.port_ips.pop(uuid, None)
 
-            # Check if this is the last interface on host
-            for interface in self.interfaces.values():
-                if props['net_data'] == interface['net_data']:
-                    break
-            else:
-                # Network is not used on this host, delete it
-                net = props['net_data']
-                self.delete_network_on_host(net['physnet'],
-                                            net['network_type'],
-                                            net['segmentation_id'])
+            if net is not None:
+                # Check if this is the last interface on host, safe if this
+                # interface is incompletely bound
+                for interface in self.interfaces.values():
+                    if net == interface.get('net_data'):
+                        # safe if the other interface is not bound
+                        break
+                else:
+                    # Network is not used on this host, delete it
+                    self.delete_network_on_host(net['physnet'],
+                                                net['network_type'],
+                                                net['segmentation_id'])
+
 
     def bind_subport_on_host(self, parent_port, subport_data):
         """Bind the subport of a bound parent vhostuser port."""
@@ -2664,7 +2668,12 @@ class EtcdListener(object):
         self.vppf.vhost_ready_callback = self._vhost_ready
 
     def unbind(self, id):
-        del self.iface_state[self.iface_state_ifidx[id]]
+        if id not in self.iface_state_ifidx:
+            # Unbinding an unknown port
+            return
+
+        if self.iface_state_ifidx[id] in self.iface_state:
+            del self.iface_state[self.iface_state_ifidx[id]]
         del self.iface_state_ifidx[id]
         self.vppf.unbind_interface_on_host(id)
 
