@@ -3217,16 +3217,33 @@ class EtcdListener(object):
 
     # EtcdListener Trunking section
     def reconsider_trunk_subports(self):
-        """Try to bind subports awaiting their parent port to be bound."""
+        """Try to bind subports awaiting their parent port to be bound.
+
+        If the parent port
+            - is bound
+            - instance has connected to the other end of the vhostuser
+            - security groups has been applied
+            - is in admin UP state
+        then:
+            - bind the subports, and
+            - set subport state to admin UP
+
+        It is invoked every 'heartbeat' secs from TrunkWatcher's do_tick().
+        """
         for parent_port, subports in self.subports_awaiting_parents.items():
             LOG.debug('reconsidering bind for trunk subports %s, parent %s',
                       subports, parent_port)
-            # Is the parent port ready?
             props = self.vppf.interfaces.get(parent_port, None)
-            # Parent is bound, so we can now bind its subports
-            if props:
+            # Make sure parent port is really ready
+            if (props and props['iface_idx'] in self.iface_state and
+                    self.vppf.vhostuser_linked_up(parent_port) and
+                    props['iface_idx'] not in self.iface_awaiting_secgroups):
+                LOG.debug("Parent trunk port vhostuser ifidx %s is ready",
+                          props['iface_idx'])
                 self.bind_unbind_subports(parent_port, subports)
                 self.subports_awaiting_parents.pop(parent_port)
+            else:
+                LOG.debug("Parent trunk port is not ready")
 
     def subports_to_unbind(self, parent_port, subports):
         """Return a list of subports to unbind for a parent port.
@@ -3289,16 +3306,11 @@ class EtcdListener(object):
             props = self.vppf.bind_subport_on_host(parent_port, subport_data)
             # Bring up the subport if the parent vhostuser is connected
             if props:
-                parent_iface_idx = self.iface_state_ifidx[parent_port]
-                if (parent_iface_idx in self.iface_state and
-                        self.vppf.vhostuser_linked_up(parent_port)):
-                    LOG.debug("Parent trunk port vhostuser %s is bound",
-                              parent_iface_idx)
-                    subport_iface_idx = props['iface_idx']
-                    LOG.debug("Bringing up the trunk subport vhost ifidx %s",
-                              subport_iface_idx)
-                    self.vppf.ifup(subport_iface_idx)
-                    self.bound_subports[parent_port].add(subport)
+                self.bound_subports[parent_port].add(subport)
+                subport_iface_idx = props['iface_idx']
+                LOG.debug("Bringing up the trunk subport vhost ifidx %s",
+                          subport_iface_idx)
+                self.vppf.ifup(subport_iface_idx)
         # unbind subports we are told to unbind
         for subport in subports_to_unbind:
             LOG.debug('Unbinding subport %s of parent_port %s',
@@ -3387,12 +3399,13 @@ class EtcdListener(object):
                                     data=self).watch_forever)
 
         # Spawn trunk watcher if enabled
+        # TODO(onong): make heartbeat interval configurable if need be
         if 'vpp-trunk' in cfg.CONF.service_plugins:
             LOG.debug("Spawning trunk_watcher")
             self.pool.spawn(TrunkWatcher(self.client_factory.client(),
                                          'trunk_watcher',
                                          self.trunk_key_space,
-                                         heartbeat=self.AGENT_HEARTBEAT,
+                                         heartbeat=30,
                                          data=self).watch_forever)
 
         # Spawn GPE watcher for vxlan tenant networks
@@ -3821,7 +3834,8 @@ class TrunkWatcher(etcdutils.EtcdChangeWatcher):
     """
 
     def do_tick(self):
-        pass
+        # check if there are child ports to be bound and brought UP
+        self.data.reconsider_trunk_subports()
 
     def added(self, parent_port, value):
         """Bind and unbind sub-ports of the parent port."""
