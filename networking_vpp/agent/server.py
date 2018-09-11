@@ -2630,6 +2630,10 @@ class VPPForwarder(object):
 
 LEADIN = nvpp_const.LEADIN  # TODO(ijw): make configurable?
 
+# TrunkWatcher thread's heartbeat interval
+# TODO(onong): make it configurable if need be
+TRUNK_WATCHER_HEARTBEAT = 30
+
 
 class EtcdListener(object):
     def __init__(self, host, client_factory, vppf, physnets):
@@ -3217,16 +3221,31 @@ class EtcdListener(object):
 
     # EtcdListener Trunking section
     def reconsider_trunk_subports(self):
-        """Try to bind subports awaiting their parent port to be bound."""
+        """Try to bind subports awaiting their parent port to be bound.
+
+        If the parent port
+            - is bound
+            - instance has connected to the other end of the vhostuser
+            - security groups has been applied
+            - is in admin UP state
+        then:
+            - bind the subports, and
+            - set subport state to admin UP
+        """
         for parent_port, subports in self.subports_awaiting_parents.items():
             LOG.debug('reconsidering bind for trunk subports %s, parent %s',
                       subports, parent_port)
-            # Is the parent port ready?
             props = self.vppf.interfaces.get(parent_port, None)
-            # Parent is bound, so we can now bind its subports
-            if props:
+            # Make sure parent port is really ready
+            if (props and props['iface_idx'] in self.iface_state and
+                    self.vppf.vhostuser_linked_up(parent_port) and
+                    props['iface_idx'] not in self.iface_awaiting_secgroups):
+                LOG.debug("Parent trunk port vhostuser ifidx %s is ready",
+                          props['iface_idx'])
                 self.bind_unbind_subports(parent_port, subports)
                 self.subports_awaiting_parents.pop(parent_port)
+            else:
+                LOG.debug("Parent trunk port is not ready")
 
     def subports_to_unbind(self, parent_port, subports):
         """Return a list of subports to unbind for a parent port.
@@ -3287,18 +3306,13 @@ class EtcdListener(object):
                       'sub_port_data %s',
                       subport, parent_port, subport_data)
             props = self.vppf.bind_subport_on_host(parent_port, subport_data)
-            # Bring up the subport if the parent vhostuser is connected
+            # Bring up the subport
             if props:
-                parent_iface_idx = self.iface_state_ifidx[parent_port]
-                if (parent_iface_idx in self.iface_state and
-                        self.vppf.vhostuser_linked_up(parent_port)):
-                    LOG.debug("Parent trunk port vhostuser %s is bound",
-                              parent_iface_idx)
-                    subport_iface_idx = props['iface_idx']
-                    LOG.debug("Bringing up the trunk subport vhost ifidx %s",
-                              subport_iface_idx)
-                    self.vppf.ifup(subport_iface_idx)
-                    self.bound_subports[parent_port].add(subport)
+                self.bound_subports[parent_port].add(subport)
+                subport_iface_idx = props['iface_idx']
+                LOG.debug("Bringing up the trunk subport vhost ifidx %s",
+                          subport_iface_idx)
+                self.vppf.ifup(subport_iface_idx)
         # unbind subports we are told to unbind
         for subport in subports_to_unbind:
             LOG.debug('Unbinding subport %s of parent_port %s',
@@ -3392,7 +3406,7 @@ class EtcdListener(object):
             self.pool.spawn(TrunkWatcher(self.client_factory.client(),
                                          'trunk_watcher',
                                          self.trunk_key_space,
-                                         heartbeat=self.AGENT_HEARTBEAT,
+                                         heartbeat=TRUNK_WATCHER_HEARTBEAT,
                                          data=self).watch_forever)
 
         # Spawn GPE watcher for vxlan tenant networks
@@ -3820,8 +3834,10 @@ class TrunkWatcher(etcdutils.EtcdChangeWatcher):
     and performs it.
     """
 
+    # It is invoked every TRUNK_WATCHER_HEARTBEAT secs.
     def do_tick(self):
-        pass
+        # Check if there are child ports to be bound and brought UP
+        self.data.reconsider_trunk_subports()
 
     def added(self, parent_port, value):
         """Bind and unbind sub-ports of the parent port."""
