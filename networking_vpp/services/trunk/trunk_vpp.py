@@ -15,15 +15,15 @@
 #
 
 import copy
+from networking_vpp.compat import events
 from networking_vpp.compat import n_provider as provider
 from networking_vpp.compat import portbindings
+from networking_vpp.compat import registry
+from networking_vpp.compat import resources
 from networking_vpp import constants as nvpp_const
 from networking_vpp.db import db
 from networking_vpp.mech_vpp import EtcdAgentCommunicator
 
-from neutron.callbacks import events
-from neutron.callbacks import registry
-from neutron.callbacks import resources
 from neutron.db import api as neutron_db_api
 from neutron.db import common_db_mixin
 from neutron.db import db_base_plugin_common
@@ -75,9 +75,9 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
             trunk_const.VLAN: plugin_utils.is_valid_vlan_tag
             }
         # Subscribe to trunk parent-port binding events
+        # We use this event to trigger the etcd trunk key update.
         registry.subscribe(self._trigger_etcd_trunk_update,
                            resources.PORT, events.AFTER_UPDATE)
-        # TODO(najoy): Handle trunk subport updates after parent port binding
         registry.notify(trunk_const.TRUNK_PLUGIN, events.AFTER_INIT, self)
         LOG.debug('vpp-trunk: vpp trunk service plugin has initialized')
 
@@ -209,7 +209,13 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
 
     @kick_communicator_on_end
     def _trigger_etcd_trunk_update(self, resource, event, trigger, **kwargs):
-        """Trigger an etcd update on a trunk parent port binding event."""
+        """Trigger an etcd update on a network trunk update event.
+
+        This method triggers an etcd key update for the network trunk. A
+        trunk update event calls this method during parent port binds or
+        subport adds and removals.When invoked, this method fetches the
+        updated trunk object and writes to the etcd journal.
+        """
         LOG.debug("Triggering a trunk update with data %s", kwargs)
         context = kwargs['context']
         original_port = kwargs['original_port']
@@ -222,7 +228,12 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
             # Bind - write to etcd
             if (current_port[portbindings.VIF_TYPE] ==
                     portbindings.VIF_TYPE_VHOST_USER):
-                LOG.debug('Binding trunk port %s', port_id)
+                # Update the original trunk port if it's already bound
+                if (original_port[portbindings.VIF_TYPE] ==
+                        portbindings.VIF_TYPE_VHOST_USER):
+                    LOG.debug('Updating the bound trunk port %s', port_id)
+                else:
+                    LOG.debug('Binding the trunk port %s', port_id)
                 trunk_data = self._get_trunk_data(trunk_obj)
                 # Add uplink network data to trunk to enable binding
                 trunk_data = self.add_uplink_to_subports(context, trunk_data)
@@ -309,6 +320,10 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
         # The trunk should not be in the ERROR_STATUS
         if trunk.status == trunk_const.ERROR_STATUS:
             raise trunk_exc.TrunkInErrorState(trunk_id=trunk_id)
+        else:
+            # The trunk will transition to DOWN and subsequently to ACTIVE
+            # when a subport is added.
+            trunk.update(status=trunk_const.DOWN_STATUS)
         with neutron_db_api.context_manager.writer.using(context):
             for subport in subports:
                 subport_obj = trunk_objects.SubPort(
@@ -328,11 +343,26 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
                 registry.notify(trunk_const.SUBPORTS,
                                 events.PRECOMMIT_CREATE,
                                 self, payload=payload)
+                self.send_subport_update_to_etcd(context, trunk)
         if added_subports:
             registry.notify(trunk_const.SUBPORTS,
                             events.AFTER_CREATE,
                             self, payload=payload)
         return trunk
+
+    def send_subport_update_to_etcd(self, context, trunk):
+        """After a trunk subport update, write the current value in etcd."""
+        LOG.debug('Sending etcd subport update for the parent port %s',
+                  trunk.port_id)
+        port = self._get_core_plugin().get_port(context, trunk.port_id)
+        # The parent port is unchanged when subports are updated
+        kwargs = {'context': context,
+                  'original_port': port,
+                  'port': port}
+        self._trigger_etcd_trunk_update(trunk_const.SUBPORTS,
+                                        events.AFTER_UPDATE,
+                                        self,
+                                        **kwargs)
 
     def remove_subports(self, context, trunk_id, subports):
         """Remove one or more subports from the trunk."""
@@ -348,6 +378,10 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
         # The trunk should not be in the ERROR_STATUS
         if trunk.status == trunk_const.ERROR_STATUS:
             raise trunk_exc.TrunkInErrorState(trunk_id=trunk_id)
+        else:
+            # The trunk will transition to DOWN and subsequently to ACTIVE
+            # when a subport is removed.
+            trunk.update(status=trunk_const.DOWN_STATUS)
         current_subports = {p.port_id: p for p in trunk.sub_ports}
         # Ensure that all sub-ports to be removed are actually present
         for subport in subports:
@@ -371,6 +405,7 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
                 registry.notify(trunk_const.SUBPORTS,
                                 events.PRECOMMIT_DELETE,
                                 self, payload=payload)
+                self.send_subport_update_to_etcd(context, trunk)
         if removed_subports:
             registry.notify(trunk_const.SUBPORTS,
                             events.AFTER_DELETE,
