@@ -1082,13 +1082,15 @@ class VPPForwarder(object):
         # fetch if the subport interface already in vpp
         subport_tag = port_tag(subport_uuid)
         subport_if_idx = self.vpp.get_ifidx_by_tag(subport_tag)
+        net_br_idx = net_data['bridge_domain_id']
         if subport_if_idx is not None:
             # It's already there and we created it
             LOG.debug('Recovering existing trunk subport %s in VPP',
                       subport_uuid)
+            # Ensure that the recovered subport is in vpp bridge
+            self.ensure_interface_in_vpp_bridge(net_br_idx, subport_if_idx)
         else:
             # create subport vhostuser intf and ensure it's in vpp bridge
-            net_br_idx = net_data['bridge_domain_id']
             LOG.debug('trunk: ensuring subport interface on host '
                       'parent_if_idx %s, seg_id %s', parent_if_idx,
                       subport_seg_id)
