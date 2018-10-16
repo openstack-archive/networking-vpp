@@ -786,15 +786,17 @@ class VPPInterface(object):
                                  is_ipv6=False)
         for v4_addr in v4_addrs:
             # Only count the first 4 bytes for v4 addresses
-            sanitized_v4 = v4_addr[3][:4]
-            int_addrs.append((str(ipaddress.ip_address(sanitized_v4).exploded),
-                             v4_addr[4]))
+            sanitized_v4 = v4_addr.ip[:4]
+            # The standard library has ipinterface, but it's hard to construct with
+            # a numeric netmask
+            int_addrs.append((ipaddress.ip_address(sanitized_v4)),
+                             v4_addr.prefix_length)
 
         v6_addrs = self.call_vpp('ip_address_dump', sw_if_index=sw_if_idx,
                                  is_ipv6=True)
         for v6_addr in v6_addrs:
-            int_addrs.append((str(ipaddress.ip_address(v6_addr[3]).exploded),
-                             v6_addr[4]))
+            int_addrs.append((ipaddress.ip_address(v6_addr.ip),
+                             v6_addr.prefix_length))
         return int_addrs
 
     def set_interface_mtu(self, sw_if_idx, mtu):

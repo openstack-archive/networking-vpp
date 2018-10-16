@@ -395,7 +395,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                return_value=5):
             with mock.patch.object(
                 self.vpp.vpp, 'get_interface_ip_addresses',
-                return_value=[(router['gateway_ip'], router['prefixlen'])]):
+                return_value=[(ip_address(router['gateway_ip']),
+                               router['prefixlen'])]):
                 with mock.patch.object(self.vpp.vpp, 'get_interface_vrf',
                                        return_value=[]):
                     self.vpp.ensure_router_interface_on_host(port, router)
@@ -445,8 +446,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
         prefixlen = router_port['prefixlen']
         self.vpp.vpp.get_snat_interfaces.return_value = [5]
         self.vpp.vpp.get_bridge_bvi.return_value = 5
-        self.vpp.vpp.get_interface_ip_addresses.return_value = [(gateway_ip,
-                                                                prefixlen)]
+        self.vpp.vpp.get_interface_ip_addresses.return_value =
+            [(ip_address(gateway_ip), prefixlen)]
         self.vpp.delete_router_interface_on_host(port)
         self.vpp.vpp.set_snat_on_interface.assert_called_once_with(
             5, is_add=False, is_inside=True)
@@ -474,8 +475,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.get_snat_interfaces.return_value = [5]
         self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_interface_ip_addresses.return_value = [
-            (gateway_ip, prefixlen), (second_gateway_ip,
-                                      second_gateway_prefixlen)]
+            (ip_address(gateway_ip), prefixlen),
+            (ip_address(second_gateway_ip), second_gateway_prefixlen)]
 
         self.vpp.delete_router_interface_on_host(port)
         self.vpp.vpp.delete_loopback.assert_not_called()
@@ -556,7 +557,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                    return_value=[5]):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
-                        return_value=[(interface_ip, prefixlen)]):
+                        return_value=[(ip_address(interface_ip),
+                                       prefixlen)]):
                         self.vpp.ensure_router_interface_on_host(
                             uuidgen.uuid1(), router)
                         self.vpp.vpp.set_snat_on_interface.assert_not_called()
@@ -571,11 +573,12 @@ class VPPForwarderTestCase(base.BaseTestCase):
             with mock.patch.object(self.vpp.vpp,
                                    'get_outside_snat_interface_indices',
                                    return_value=[router_port['bvi_if_idx']]):
-                with mock.patch.object(self.vpp.vpp,
-                                       'get_interface_ip_addresses',
-                                       return_value=[
-                                           (router_port['gateway_ip'],
-                                            router_port['prefixlen'])]):
+                with mock.patch.object(
+                        self.vpp.vpp,
+                        'get_interface_ip_addresses',
+                         return_value=[
+                         (ip_address(router_port['gateway_ip']),
+                          router_port['prefixlen'])]):
                     with mock.patch.object(self.vpp.vpp,
                                            'get_bridge_bvi',
                                            return_value=router_port[
@@ -605,8 +608,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
                     return_value=router_port['bvi_if_idx']):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
-                        return_value=[(router_port['gateway_ip'],
-                                       router_port['prefixlen'])]):
+                        return_value=[(
+                            ip_address(router_port['gateway_ip']),
+                            router_port['prefixlen'])]):
                         self.vpp.delete_router_interface_on_host(port_id)
                         self.vpp.vpp.set_snat_on_interface.\
                             assert_not_called()
