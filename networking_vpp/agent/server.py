@@ -1879,8 +1879,9 @@ class VPPForwarder(object):
                 self.add_local_gpe_mapping(seg_id, loopback_mac)
         # Set the gateway IP address on the BVI interface, if not already set
         addresses = self.vpp.get_interface_ip_addresses(loopback_idx)
+        gw_ip_obj = ipaddress.ip_address(unicode(gateway_ip))
         for address in addresses:
-            if address[0] == str(gateway_ip):
+            if address[0] == gw_ip_obj:
                 break
         else:
             self.vpp.set_interface_ip(
