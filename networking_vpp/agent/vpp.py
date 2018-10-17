@@ -529,12 +529,20 @@ class VPPInterface(object):
         self.LOG.info("Set subinterface vlan tag pop response: %s",
                       str(t))
 
+    # These constants are based on those coded into VPP and need to
+    # correspond to its values
+    # Port not in bridge
+    L2_API_PORT_TYPE_NORMAL = 0
+    # Port in bridge
+    L2_API_PORT_TYPE_BVI = 1
+
     def add_to_bridge(self, bridx, *ifidxes):
         for ifidx in ifidxes:
             self.call_vpp(
                 'sw_interface_set_l2_bridge',
                 rx_sw_if_index=ifidx, bd_id=bridx,
-                bvi=False,              # BVI (no thanks)
+                port_type=self.L2_API_PORT_TYPE_NORMAL,  # 18.10+
+                bvi=False,  # 18.07-
                 shg=0,                  # shared horizon group
                 enable=True)            # enable bridge mode
 
@@ -544,7 +552,8 @@ class VPPInterface(object):
                 'sw_interface_set_l2_bridge',
                 rx_sw_if_index=ifidx,
                 bd_id=0,                # no bridge id is necessary
-                bvi=False,              # BVI (no thanks)
+                port_type=self.L2_API_PORT_TYPE_NORMAL,  # 18.10+
+                bvi=False,  # 18.07-
                 shg=0,                  # shared horizon group
                 enable=False)           # disable bridge mode (sets l3 mode)
 
@@ -584,8 +593,14 @@ class VPPInterface(object):
         # Sets the specified loopback interface to act as  the BVI
         # for the bridge. This interface will act as a gateway and
         # terminate the VLAN.
-        self.call_vpp('sw_interface_set_l2_bridge', rx_sw_if_index=loopback,
-                      bd_id=bridge_id, shg=0, bvi=True, enable=True)
+        self.call_vpp(
+            'sw_interface_set_l2_bridge',
+            rx_sw_if_index=loopback,
+            bd_id=bridge_id,
+            shg=0,
+            port_type=self.L2_API_PORT_TYPE_BVI,  # 18.10+
+            bvi=True,  # 18.07-
+            enable=True)
 
     def set_interface_vrf(self, if_idx, vrf_id, is_ipv6=False):
         # Set the interface's VRF to the routers's table id
