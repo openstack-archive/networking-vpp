@@ -1163,10 +1163,13 @@ class VPPForwarder(object):
         if props['bind_type'] == 'vhostuser':
             # remove port from bridge (sets to l3 mode) prior to deletion
             self.vpp.delete_from_bridge(iface_idx)
-            # Do not delete a vhostuser sub-interface. Delete only the parent
-            # vhostuser.
+            # If it is a subport of a trunk port then delete the corresponding
+            # vlan sub-interface. Otherwise it is a parent port or a normal
+            # vhostuser port and we delete the vhostuser interface itself.
             if 'parent_uuid' not in props:
                 self.vpp.delete_vhostuser(iface_idx)
+            else:
+                self.vpp.delete_vlan_subif(iface_idx)
             # Delete port from vpp_acl map if present
             if iface_idx in self.port_vpp_acls:
                 del self.port_vpp_acls[iface_idx]
