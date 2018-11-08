@@ -571,20 +571,23 @@ we will be increasing the coverage of the unit tests, as well as
 enhancing the types of system/integration tests that we run, e.g.
 negative testing, compatibility testing, etc.
 
-What's new in the 18.07 release?
+What's new in the 18.10 release?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In the 18.07 release, we support the network trunk service plugin.
-You will now be able to attach multiple networks to an instance by binding
-it to a single vhostuser port. Each network trunk has a parent port with any
-number of subports.When creating a subport, a segmentation-id is required
-by the vpp driver. The segmentation-id defines the segmentation
-ID on which the subport network is presented to the instance.
+In the 18.10 release, we have made improvements to fully support the network
+trunk service plugin.Using this plugin, you can attach multiple networks to an
+instance by binding it to a single vhostuser trunk port. The APIs are the same
+as the OpenStack Neutron Trunk service APIs. When creating a subport, you must
+provide a segmentation-id. The segmentation-id defines the VLAN ID on which
+the subport network is presented to the instance. You will also be able to
+bind and unbind subports to a bound network trunk.
 
-Another new feature in this release is the Tap-as-a-service (TaaS).
-This service can be used to create remote port mirroring capability for
-tenant virtual networks.TaaS will be helpful to debug your virtual networks
-and gain visibility into your VM's network traffic.
+Another feature we have improved in this release is the Tap-as-a-service(TaaS).
+The TaaS code has been updated to handle out of order etcd messages received
+during agent restarts. You can use this service to create remote port
+mirroring capability for tenant virtual networks. TaaS will be helpful when
+you debug your virtual networks by providing visibility into your VM's network
+traffic.
 
-Besides the above, this release also has several bug and stability
-related fixes and improvements.
+Besides the above, this release also has several bug fixes, VPP 18.10 API
+compatibility and stability related improvements.
