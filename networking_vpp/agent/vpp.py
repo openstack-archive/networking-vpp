@@ -122,6 +122,29 @@ class VPPInterface(object):
 
         return fix_string(t.version)
 
+    def semver(self):
+        """Return the 'semantic' version components of a VPP version"""
+
+        # version string is in the form yy.mm{cruft}*
+        # the cruft is there if it's an interstitial version during
+        # the dev cycle, and note that these versions may have a
+        # changed and unpredictable API.
+        version_string = self.get_version()
+        yy = int(version_string[:2])
+        mm = int(version_string[3:5])
+        plus = len(version_string[5:]) != 0
+
+        return (yy, mm, plus)
+
+    def ver_ge(self, tyy, tmm):
+        (yy, mm, plus) = self.semver()
+        if tyy < yy:
+            return True
+        elif tyy == yy and tmm <= mm:
+            return True
+        else:
+            return False
+
     ########################################
 
     def create_tap(self, ifname, mac, tag):
@@ -537,25 +560,42 @@ class VPPInterface(object):
     L2_API_PORT_TYPE_BVI = 1
 
     def add_to_bridge(self, bridx, *ifidxes):
-        for ifidx in ifidxes:
-            self.call_vpp(
-                'sw_interface_set_l2_bridge',
-                rx_sw_if_index=ifidx, bd_id=bridx,
-                port_type=self.L2_API_PORT_TYPE_NORMAL,  # 18.10+
-                bvi=False,  # 18.07-
-                shg=0,                  # shared horizon group
-                enable=True)            # enable bridge mode
+        if self.ver_ge(18, 10):
+            for ifidx in ifidxes:
+                self.call_vpp(
+                    'sw_interface_set_l2_bridge',
+                    rx_sw_if_index=ifidx, bd_id=bridx,
+                    port_type=self.L2_API_PORT_TYPE_NORMAL,  # 18.10+
+                    shg=0,              # shared horizon group
+                    enable=True)        # enable bridge mode
+        else:
+            for ifidx in ifidxes:
+                self.call_vpp(
+                    'sw_interface_set_l2_bridge',
+                    rx_sw_if_index=ifidx, bd_id=bridx,
+                    bvi=False,  # 18.07-
+                    shg=0,              # shared horizon group
+                    enable=True)        # enable bridge mode
 
     def delete_from_bridge(self, *ifidxes):
-        for ifidx in ifidxes:
-            self.call_vpp(
-                'sw_interface_set_l2_bridge',
-                rx_sw_if_index=ifidx,
-                bd_id=0,                # no bridge id is necessary
-                port_type=self.L2_API_PORT_TYPE_NORMAL,  # 18.10+
-                bvi=False,  # 18.07-
-                shg=0,                  # shared horizon group
-                enable=False)           # disable bridge mode (sets l3 mode)
+        if self.ver_ge(18, 10):
+            for ifidx in ifidxes:
+                self.call_vpp(
+                    'sw_interface_set_l2_bridge',
+                    rx_sw_if_index=ifidx,
+                    bd_id=0,            # no bridge id is necessary
+                    port_type=self.L2_API_PORT_TYPE_NORMAL,  # 18.10+
+                    shg=0,              # shared horizon group
+                    enable=False)       # disable bridge mode (sets l3 mode)
+        else:
+            for ifidx in ifidxes:
+                self.call_vpp(
+                    'sw_interface_set_l2_bridge',
+                    rx_sw_if_index=ifidx,
+                    bd_id=0,            # no bridge id is necessary
+                    bvi=False,  # 18.07-
+                    shg=0,              # shared horizon group
+                    enable=False)       # disable bridge mode (sets l3 mode)
 
     def ifup(self, *ifidxes):
         """Bring a list of interfaces up
@@ -593,14 +633,22 @@ class VPPInterface(object):
         # Sets the specified loopback interface to act as  the BVI
         # for the bridge. This interface will act as a gateway and
         # terminate the VLAN.
-        self.call_vpp(
-            'sw_interface_set_l2_bridge',
-            rx_sw_if_index=loopback,
-            bd_id=bridge_id,
-            shg=0,
-            port_type=self.L2_API_PORT_TYPE_BVI,  # 18.10+
-            bvi=True,  # 18.07-
-            enable=True)
+        if self.ver_ge(18, 10):
+            self.call_vpp(
+                'sw_interface_set_l2_bridge',
+                rx_sw_if_index=loopback,
+                bd_id=bridge_id,
+                shg=0,
+                port_type=self.L2_API_PORT_TYPE_BVI,  # 18.10+
+                enable=True)
+        else:
+            self.call_vpp(
+                'sw_interface_set_l2_bridge',
+                rx_sw_if_index=loopback,
+                bd_id=bridge_id,
+                shg=0,
+                bvi=True,  # 18.07-
+                enable=True)
 
     def set_interface_vrf(self, if_idx, vrf_id, is_ipv6=False):
         # Set the interface's VRF to the routers's table id
