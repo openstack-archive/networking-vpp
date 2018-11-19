@@ -1284,20 +1284,3 @@ class VPPInterface(object):
                       bd_id=bridge_domain_id,
                       is_set=1,
                       feature_bitmap=L2_UU_FLOOD)
-
-    def create_host_interface(self, if_name):
-        # Create an af packet interface
-        # The mac address will be replaced by a random address.
-        mac_address = mac_to_bytes("ff:ff:ff:ff:ff:ff")
-        host_itf = self.call_vpp('af_packet_create',
-                                 host_if_name=if_name,
-                                 hw_addr=mac_address,
-                                 use_random_hw_addr=True)
-
-        self.ifup(host_itf.sw_if_index)
-        return host_itf.sw_if_index
-
-    def delete_host_interface(self, if_name):
-        # Delete an af packet interface
-        self.call_vpp('af_packet_delete',
-                      host_if_name=if_name)
