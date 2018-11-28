@@ -2537,13 +2537,18 @@ class VPPForwarder(object):
                   'interface %s', self.gpe_src_cidr, intf)
         (self.gpe_underlay_addr,
          self.gpe_underlay_mask) = self.gpe_src_cidr.split('/')
-        self.vpp.set_interface_address(
-            sw_if_index=if_physnet,
-            is_ipv6=1 if ip_network(unicode(self.gpe_underlay_addr)
-                                    ).version == 6 else 0,
-            address_length=int(self.gpe_underlay_mask),
-            address=self._pack_address(self.gpe_underlay_addr)
-            )
+        physnet_ip_addrs = self.vpp.get_interface_ip_addresses(if_physnet)
+        LOG.debug('Exising IP addresses %s', str(physnet_ip_addrs))
+        cidr = (ip_address(unicode(self.gpe_underlay_addr)),
+                int(self.gpe_underlay_mask))
+        if cidr not in physnet_ip_addrs:
+            self.vpp.set_interface_address(
+                sw_if_index=if_physnet,
+                is_ipv6=1 if ip_network(unicode(self.gpe_underlay_addr)
+                                        ).version == 6 else 0,
+                address_length=int(self.gpe_underlay_mask),
+                address=self._pack_address(self.gpe_underlay_addr)
+                )
         return (intf, if_physnet)
 
     def ensure_gpe_underlay(self):
