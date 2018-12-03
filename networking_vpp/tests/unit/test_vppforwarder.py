@@ -21,6 +21,7 @@ sys.modules['vpp_papi'] = mock.MagicMock()
 sys.modules['vpp'] = mock.MagicMock()
 sys.modules['threading'] = mock.MagicMock()
 from ipaddress import ip_address
+from networking_vpp.agent import gpe
 from networking_vpp.agent import server
 from networking_vpp import compat
 from networking_vpp import config_opts
@@ -53,6 +54,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         # TAP wait timeout does not need to be 60s, set it to 6s, as this may
         # speed up the test
         physnets = {"test_net": "test_iface"}
+        server.enable_gpe = False
         self.vpp = server.VPPForwarder(physnets, 180, 6)
         self.etcd_listener = server.EtcdListener("test-host",
                                                  mock.MagicMock(),
@@ -786,10 +788,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
     def test_ensure_gpe_network_on_host(self):
         self.vpp.networks = {}
         self.vpp.mac_age = 300
-        self.vpp.gpe_locators = "uplink"
-        physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
         self.vpp.physnets = {"uplink": "test_iface"}
-        self.vpp.gpe_src_cidr = "10.1.1.1/24"
+        self.vpp.gpe = gpe.GPE(self.vpp)
+        self.vpp.gpe.gpe_locators = "uplink"
+        physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
+        self.vpp.gpe.gpe_src_cidr = "10.1.1.1/24"
         self.vpp.vpp.get_bridge_domains.return_value = []
         self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = []
         ret_val = self.vpp.ensure_network_on_host(physnet, net_type, seg_id)
@@ -813,10 +816,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
 
     def test_delete_gpe_network_on_host(self):
         self.vpp.networks = {}
-        self.vpp.gpe_map = {}
         gpe_lset_name = constants.GPE_LSET_NAME
-        self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
+        self.vpp.gpe = gpe.GPE(self.vpp)
+        self.vpp.gpe.gpe_map = {}
+        self.vpp.gpe.gpe_locators = "uplink"
         physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
         mock_data = {'bridge_domain_id': 70000,
                      'if_physnet': "test_iface",
@@ -831,18 +835,18 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                     }
         self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = [(5000,
                                                                   70000)]
-        self.vpp.gpe_map[gpe_lset_name] = mock_gpe_local_map_data
-        self.vpp.gpe_map['remote_map'] = mock_gpe_remote_map_data
+        self.vpp.gpe.gpe_map[gpe_lset_name] = mock_gpe_local_map_data
+        self.vpp.gpe.gpe_map['remote_map'] = mock_gpe_remote_map_data
         self.vpp.networks[(physnet, net_type, seg_id)] = mock_data
         self.vpp.delete_network_on_host(physnet, net_type, seg_id)
         self.vpp.vpp.del_lisp_vni_to_bd_mapping.assert_called_once_with(
             vni=5000, bridge_domain=70000)
-        self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['vnis'], set([]))
+        self.assertEqual(self.vpp.gpe.gpe_map[gpe_lset_name]['vnis'], set([]))
         self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
             '1:1:1:1:1:1', 5000)
         self.vpp.vpp.del_lisp_remote_mac.assert_any_call(
             '2:2:2:2:2:2', 5000)
-        self.assertEqual(self.vpp.gpe_map['remote_map'], {
+        self.assertEqual(self.vpp.gpe.gpe_map['remote_map'], {
             ('3:3:3:3:3:3', 5001): '3.3.3.3'})
         self.assertEqual(self.vpp.networks, {})
 
@@ -858,8 +862,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                         mock_ensure_int_on_host,
                                         mock_ensure_int_in_bridge):
         gpe_lset_name = constants.GPE_LSET_NAME
-        self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
+        self.vpp.gpe = gpe.GPE(self.vpp)
+        self.vpp.gpe.gpe_locators = "uplink"
+
         mock_net_data = {'bridge_domain_id': 70000,
                          'if_physnet': "test_iface",
                          'if_uplink_idx': 720,
@@ -873,7 +879,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         mock_gpe_map = {'vnis': set([]),
                         'sw_if_idxs': set([]),
                         'local_map': {}}
-        self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
+        self.vpp.gpe.gpe_map[gpe_lset_name] = mock_gpe_map
         mock_ensure_net_on_host.return_value = mock_net_data
         mock_ensure_int_on_host.return_value = mock_props
         self.vpp.bind_interface_on_host('vhostuser', 'fake-uuid',
@@ -881,18 +887,20 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                         5000)
         mock_ensure_int_in_bridge.assert_called_once_with(70000, 10)
         self.assertEqual(
-            self.vpp.gpe_map[gpe_lset_name]['vnis'],
+            self.vpp.gpe.gpe_map[gpe_lset_name]['vnis'],
             set([5000]))
         self.vpp.vpp.add_lisp_local_mac.assert_called_once_with(
             mock_props['mac'], 5000, gpe_lset_name)
         self.assertEqual(
-            self.vpp.gpe_map[gpe_lset_name]['local_map'][mock_props['mac']],
-            5000)
+            self.vpp.gpe.gpe_map[gpe_lset_name]['local_map'][mock_props[
+                'mac']], 5000)
 
     def test_unbind_gpe_interface_on_host(self):
         gpe_lset_name = constants.GPE_LSET_NAME
-        self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
+        self.vpp.gpe = gpe.GPE(self.vpp)
+        self.vpp.gpe.gpe_locators = "uplink"
+
         port_uuid = 'fake-port-uuid'
         mock_net_data = {'bridge_domain_id': 70000,
                          'if_physnet': "test_iface",
@@ -913,8 +921,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                                                   70000)]
         self.vpp.interfaces[port_uuid] = mock_props
         self.vpp.networks[('uplink', 'vxlan', 5000)] = mock_net_data
-        self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
-        self.vpp.gpe_map['remote_map'] = {}
+        self.vpp.gpe.gpe_map[gpe_lset_name] = mock_gpe_map
+        self.vpp.gpe.gpe_map['remote_map'] = {}
         self.vpp.port_ips[port_uuid] = '1.1.1.1'
         # Nominates an empty bridge that must be deleted
         # We no longer delete bridges that don't exist
@@ -926,18 +934,20 @@ class VPPForwarderTestCase(base.BaseTestCase):
             mock_props['mac'],
             mock_net_data['segmentation_id'],
             gpe_lset_name)
-        self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['local_map'], {})
+        self.assertEqual(self.vpp.gpe.gpe_map[gpe_lset_name]['local_map'], {})
         self.assertEqual(self.vpp.interfaces, {})
         self.vpp.vpp.delete_bridge_domain.assert_called_once_with(
             mock_net_data['bridge_domain_id'])
         self.vpp.vpp.del_lisp_vni_to_bd_mapping.assert_called_once_with(
             vni=mock_net_data['segmentation_id'],
             bridge_domain=mock_net_data['bridge_domain_id'])
-        self.assertEqual(self.vpp.gpe_map[gpe_lset_name]['vnis'], set([]))
+        self.assertEqual(self.vpp.gpe.gpe_map[gpe_lset_name]['vnis'], set([]))
         self.assertEqual(self.vpp.networks, {})
 
+    @mock.patch('networking_vpp.agent.gpe.GpeListener')
     @mock.patch('networking_vpp.agent.server.EtcdListener')
-    def test_ensure_remote_gpe_mapping(self, mock_etcd_listener):
+    def test_ensure_remote_gpe_mapping(self, mock_etcd_listener,
+                                       mock_gpe_listener):
         """Test Adding remote GPE mappings.
 
         Patch the EtcdListener object in and create a mock GpeWatcher.
@@ -948,48 +958,56 @@ class VPPForwarderTestCase(base.BaseTestCase):
                        "/1077/ml-ucs-02/fa:16:3e:47:2e:3c/10.1.1.2"
         mock_remote_ip = "1.1.1.1"
         mock_bridge_domain = 66077
-        with patch.object(server.GpeWatcher, 'added',
+        with patch.object(gpe.GpeWatcher, 'added',
                           autospec=True) as mock_add_key:
             mock_etcd_client = mock.MagicMock()
-            mock_etcd_listener.is_valid_remote_map.return_value = True
+            mock_etcd_listener.gpe_listener = mock_gpe_listener
+            mock_etcd_listener.gpe_listener.\
+                is_valid_remote_map.return_value = True
+            self.vpp.physnets = {"uplink": "test_iface"}
+            self.vpp.gpe = gpe.GPE(self.vpp)
+            self.vpp.gpe.gpe_locators = "uplink"
+
             mock_etcd_listener.vppf = self.vpp
             gpe_lset_name = constants.GPE_LSET_NAME
-            self.vpp.gpe_map = {gpe_lset_name: {'local_map': {},
-                                                'vnis': set(),
-                                                'sw_if_idxs': set()},
-                                'remote_map': {}}
+            self.vpp.gpe.gpe_map = {gpe_lset_name: {
+                'local_map': {},
+                'vnis': set(),
+                'sw_if_idxs': set()},
+                'remote_map': {}}
             self.vpp.vpp.exists_lisp_arp_entry.return_value = False
             remote_locator = {"is_ip4": 1,
                               "priority": 1,
                               "weight": 1,
                               "addr": self.vpp._pack_address("1.1.1.1")
                               }
-            server.GpeWatcher(mock_etcd_client,
-                              'gpe_watcher',
-                              mock_gpe_key,
-                              mock_etcd_listener
-                              ).added(mock_gpe_key,
-                                      mock_remote_ip)
+            gpe.GpeWatcher(mock_etcd_client,
+                           'gpe_watcher',
+                           mock_gpe_key,
+                           mock_etcd_listener).added(mock_gpe_key,
+                                                     mock_remote_ip)
             mock_add_key.assert_called_once_with(mock.ANY,
                                                  mock_gpe_key,
                                                  mock_remote_ip)
-            self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
-                                               '10.1.1.2', '1.1.1.1')
+            self.vpp.gpe.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                                   '10.1.1.2', '1.1.1.1')
             self.vpp.vpp.\
                 add_lisp_remote_mac.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', 1077, remote_locator)
             self.assertIn(('fa:16:3e:47:2e:3c', 1077),
-                          self.vpp.gpe_map['remote_map'])
+                          self.vpp.gpe.gpe_map['remote_map'])
             self.assertEqual(
-                self.vpp.gpe_map['remote_map'][('fa:16:3e:47:2e:3c', 1077)],
-                "1.1.1.1")
+                self.vpp.gpe.gpe_map['remote_map'][('fa:16:3e:47:2e:3c',
+                                                    1077)], "1.1.1.1")
             self.vpp.vpp.\
                 add_lisp_arp_entry.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', mock_bridge_domain,
                     int(ip_address(unicode('10.1.1.2'))))
 
+    @mock.patch('networking_vpp.agent.gpe.GpeListener')
     @mock.patch('networking_vpp.agent.server.EtcdListener')
-    def test_delete_remote_gpe_mapping(self, mock_etcd_listener):
+    def test_delete_remote_gpe_mapping(self, mock_etcd_listener,
+                                       mock_gpe_listener):
         """Test Deleting a remote GPE mapping.
 
         Patch the EtcdListener object in and create a mock GpeWatcher.
@@ -1000,23 +1018,28 @@ class VPPForwarderTestCase(base.BaseTestCase):
                        "/1077/ml-ucs-02/fa:16:3e:47:2e:3c/10.1.1.2"
         mock_remote_ip = "1.1.1.1"
         mock_bridge_domain = 66077
-        with patch.object(server.GpeWatcher, 'removed',
+        with patch.object(gpe.GpeWatcher, 'removed',
                           autospec=True) as mock_remove_key:
             mock_etcd_client = mock.MagicMock()
-            mock_etcd_listener.is_valid_remote_map.return_value = True
+            mock_etcd_listener.gpe_listener = mock_gpe_listener
+            mock_etcd_listener.gpe_listener.\
+                is_valid_remote_map.return_value = True
             mock_etcd_listener.vppf = self.vpp
-            self.vpp.gpe_map = {'remote_map': {
-                                ('fa:16:3e:47:2e:3c', 1077): mock_remote_ip}}
+            self.vpp.physnets = {"uplink": "test_iface"}
+            self.vpp.gpe = gpe.GPE(self.vpp)
+            self.vpp.gpe.gpe_locators = "uplink"
+
+            self.vpp.gpe.gpe_map = {
+                'remote_map': {('fa:16:3e:47:2e:3c', 1077): mock_remote_ip}}
             self.vpp.vpp.exists_lisp_arp_entry.return_value = True
-            server.GpeWatcher(mock_etcd_client,
-                              'gpe_watcher',
-                              mock_gpe_key,
-                              mock_etcd_listener
-                              ).removed(mock_gpe_key)
+            gpe.GpeWatcher(mock_etcd_client,
+                           'gpe_watcher',
+                           mock_gpe_key,
+                           mock_etcd_listener).removed(mock_gpe_key)
             mock_remove_key.assert_called_once_with(mock.ANY,
                                                     mock_gpe_key)
-            self.vpp.delete_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
-                                               '10.1.1.2')
+            self.vpp.gpe.delete_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                                   '10.1.1.2')
             self.vpp.vpp.\
                 del_lisp_remote_mac.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', 1077)
@@ -1033,28 +1056,31 @@ class VPPForwarderTestCase(base.BaseTestCase):
         """
         mock_bridge_domain = 66077
         gpe_lset_name = constants.GPE_LSET_NAME
-        self.vpp.gpe_map = {gpe_lset_name: {'local_map': {},
-                                            'vnis': set(),
-                                            'sw_if_idxs': set()},
-                            'remote_map': {}}
+        self.vpp.physnets = {"uplink": "test_iface"}
+        self.vpp.gpe = gpe.GPE(self.vpp)
+        self.vpp.gpe.gpe_locators = "uplink"
+        self.vpp.gpe.gpe_map = {gpe_lset_name: {'local_map': {},
+                                                'vnis': set(),
+                                                'sw_if_idxs': set()},
+                                'remote_map': {}}
         self.vpp.vpp.exists_lisp_arp_entry.return_value = True
         remote_locator = {"is_ip4": 1,
                           "priority": 1,
                           "weight": 1,
                           "addr": self.vpp._pack_address("1.1.1.1")
                           }
-        self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
-                                           '10.1.1.2', '1.1.1.1')
+        self.vpp.gpe.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                               '10.1.1.2', '1.1.1.1')
         self.vpp.vpp.\
             add_lisp_remote_mac.assert_called_once_with(
                 'fa:16:3e:47:2e:3c', 1077, remote_locator)
         self.assertIn(('fa:16:3e:47:2e:3c', 1077),
-                      self.vpp.gpe_map['remote_map'])
+                      self.vpp.gpe.gpe_map['remote_map'])
         self.assertEqual(
-            self.vpp.gpe_map['remote_map'][('fa:16:3e:47:2e:3c', 1077)],
+            self.vpp.gpe.gpe_map['remote_map'][('fa:16:3e:47:2e:3c', 1077)],
             "1.1.1.1")
-        self.vpp.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
-                                           '10.1.1.2', '1.1.1.1')
+        self.vpp.gpe.ensure_remote_gpe_mapping(1077, 'fa:16:3e:47:2e:3c',
+                                               '10.1.1.2', '1.1.1.1')
         self.vpp.vpp.\
             replace_lisp_arp_entry.assert_called_once_with(
                 'fa:16:3e:47:2e:3c', mock_bridge_domain,
