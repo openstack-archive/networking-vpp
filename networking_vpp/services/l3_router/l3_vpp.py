@@ -88,7 +88,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             internal_network = self._core_plugin.get_network(
                 context, port['network_id'])
             LOG.debug("Router: Associating floating ip: %s", fip_dict)
-            if internal_network[provider.NETWORK_TYPE] == 'vxlan':
+            if internal_network[provider.NETWORK_TYPE] == nvpp_const.TYPE_GPE:
                 internal_physnet = self.gpe_physnet
             else:
                 internal_physnet = internal_network[
@@ -132,7 +132,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
 
         SideEffect: Changes the parameter: router_dict
         Returns the router_dict populated with the network, subnet
-        gateway ip_address, GPE locators for vxlan, network type,
+        gateway ip_address, GPE locators for gpe, network type,
         segmentation ID, is_ipv6, VRF and prefix-length information so
         vpp-agent can create the vpp router interface.
 
@@ -167,7 +167,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         router_dict['mtu'] = network['mtu']
         router_dict['segmentation_id'] = network[provider.SEGMENTATION_ID]
         router_dict['net_type'] = network[provider.NETWORK_TYPE]
-        if router_dict['net_type'] == 'vxlan':
+        if router_dict['net_type'] == nvpp_const.TYPE_GPE:
             router_dict['physnet'] = self.gpe_physnet
         else:
             router_dict['physnet'] = network[provider.PHYSICAL_NETWORK]

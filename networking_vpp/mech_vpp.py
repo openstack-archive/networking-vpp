@@ -81,7 +81,8 @@ class VPPMechanismDriver(api.MechanismDriver):
     supported_vnic_types = [portbindings.VNIC_NORMAL]
     allowed_network_types = [plugin_constants.TYPE_FLAT,
                              plugin_constants.TYPE_VLAN,
-                             plugin_constants.TYPE_VXLAN]
+                             plugin_constants.TYPE_VXLAN,
+                             nvpp_const.TYPE_GPE]
     MECH_NAME = 'vpp'
 
     vif_details = {}

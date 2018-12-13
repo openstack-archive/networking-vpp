@@ -88,10 +88,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.assertLessEqual(
             len(server.uplink_tag(longest_physnet, 'vlan', max_vlan_id)), 64,
             'Overlong vlan uplink tag')
-        max_vxlan_id = 16777215
+        max_gpe_id = 16777215
         self.assertLessEqual(
-            len(server.uplink_tag(longest_physnet, 'vxlan', max_vxlan_id)), 64,
-            'Overlong vxlan uplink tag')
+            len(server.uplink_tag(longest_physnet, 'gpe', max_gpe_id)), 64,
+            'Overlong gpe uplink tag')
 
     def test_decode_port_tag(self):
         uuid = uuidgen.uuid1()
@@ -787,7 +787,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.networks = {}
         self.vpp.mac_age = 300
         self.vpp.gpe_locators = "uplink"
-        physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
+        physnet, net_type, seg_id = 'uplink', 'gpe', 5000
         self.vpp.physnets = {"uplink": "test_iface"}
         self.vpp.gpe_src_cidr = "10.1.1.1/24"
         self.vpp.vpp.get_bridge_domains.return_value = []
@@ -802,10 +802,10 @@ class VPPForwarderTestCase(base.BaseTestCase):
             address_length=24, address=self.vpp._pack_address("10.1.1.1"))
         self.vpp.vpp.set_interface_tag.assert_called_with(
             720, 'net-vpp.physnet:uplink')
-        network_data = self.vpp.networks[('uplink', 'vxlan', 5000)]
+        network_data = self.vpp.networks[('uplink', 'gpe', 5000)]
         expected_val = {'bridge_domain_id': 70000,
                         'if_physnet': "test_iface",
-                        'network_type': 'vxlan',
+                        'network_type': 'gpe',
                         'segmentation_id': 5000,
                         'physnet': 'uplink'}
         self.assertEqual(network_data, expected_val)
@@ -817,11 +817,11 @@ class VPPForwarderTestCase(base.BaseTestCase):
         gpe_lset_name = constants.GPE_LSET_NAME
         self.vpp.gpe_locators = "uplink"
         self.vpp.physnets = {"uplink": "test_iface"}
-        physnet, net_type, seg_id = 'uplink', 'vxlan', 5000
+        physnet, net_type, seg_id = 'uplink', 'gpe', 5000
         mock_data = {'bridge_domain_id': 70000,
                      'if_physnet': "test_iface",
                      'if_uplink_idx': 720,
-                     'network_type': 'vxlan',
+                     'network_type': 'gpe',
                      'segmentation_id': 5000,
                      'physnet': "uplink"}
         mock_gpe_local_map_data = {'vnis': set([5000])}
@@ -863,7 +863,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         mock_net_data = {'bridge_domain_id': 70000,
                          'if_physnet': "test_iface",
                          'if_uplink_idx': 720,
-                         'network_type': 'vxlan',
+                         'network_type': 'gpe',
                          'segmentation_id': 5000,
                          'physnet': 'uplink'}
         mock_props = {'iface_idx': 10,
@@ -877,7 +877,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         mock_ensure_net_on_host.return_value = mock_net_data
         mock_ensure_int_on_host.return_value = mock_props
         self.vpp.bind_interface_on_host('vhostuser', 'fake-uuid',
-                                        mock_props['mac'], 'uplink', 'vxlan',
+                                        mock_props['mac'], 'uplink', 'gpe',
                                         5000)
         mock_ensure_int_in_bridge.assert_called_once_with(70000, 10)
         self.assertEqual(
@@ -897,7 +897,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         mock_net_data = {'bridge_domain_id': 70000,
                          'if_physnet': "test_iface",
                          'if_uplink_idx': 720,
-                         'network_type': 'vxlan',
+                         'network_type': 'gpe',
                          'segmentation_id': 5000,
                          'physnet': 'uplink'}
         mock_props = {'iface_idx': 10,
@@ -912,7 +912,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.get_lisp_vni_to_bd_mappings.return_value = [(5000,
                                                                   70000)]
         self.vpp.interfaces[port_uuid] = mock_props
-        self.vpp.networks[('uplink', 'vxlan', 5000)] = mock_net_data
+        self.vpp.networks[('uplink', 'gpe', 5000)] = mock_net_data
         self.vpp.gpe_map[gpe_lset_name] = mock_gpe_map
         self.vpp.gpe_map['remote_map'] = {}
         self.vpp.port_ips[port_uuid] = '1.1.1.1'
