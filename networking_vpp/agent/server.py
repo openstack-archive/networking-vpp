@@ -47,7 +47,6 @@ from networking_vpp._i18n import _
 from networking_vpp import compat
 from networking_vpp.compat import n_const
 from networking_vpp.compat import net_utils
-from networking_vpp.compat import plugin_constants
 from networking_vpp import config_opts
 from networking_vpp import constants as nvpp_const
 from networking_vpp import etcdutils
@@ -325,7 +324,7 @@ class VPPForwarder(object):
         self.deferred_delete_secgroups = set()
 
         # This is the address we'll use if we plan on broadcasting
-        # vxlan packets
+        # gpe packets
         # GPE underlay IP address/mask
         self.gpe_src_cidr = gpe_src_cidr
         # Name of the GPE physnet uplink and its address
@@ -641,8 +640,8 @@ class VPPForwarder(object):
 
             self.vpp.ifup(if_uplink)
 
-        elif net_type == 'vxlan':
-            # VXLAN bridges have no uplink interface at all.
+        elif net_type == nvpp_const.TYPE_GPE:
+            # GPE bridges have no uplink interface at all.
             # We link the bridge directly to the GPE code.
 
             self.ensure_gpe_link()
@@ -677,7 +676,7 @@ class VPPForwarder(object):
             bridge_domain_id = net['bridge_domain_id']
             uplink_if_idx = net.get('if_uplink_idx', None)
 
-            if net['network_type'] == 'vxlan':
+            if net['network_type'] == nvpp_const.TYPE_GPE:
                 # TODO(ijw): this needs reconsidering for resync
                 # network cleanup cases - it won't be called if it
                 # lives here - but for now, these rely on local
@@ -1009,7 +1008,7 @@ class VPPForwarder(object):
         iface_idx = props['iface_idx']
         self.ensure_interface_in_vpp_bridge(net_br_idx, iface_idx)
         # Ensure local mac to VNI mapping for GPE
-        if net_type == 'vxlan':
+        if net_type == nvpp_const.TYPE_GPE:
             mac = props['mac']
             LOG.debug('Adding local GPE mapping for seg_id:%s and mac:%s',
                       seg_id, mac)
@@ -1155,7 +1154,7 @@ class VPPForwarder(object):
         # local GPE eid mapping. So remove local mapping,
         # if we are bound using GPE
 
-        if props['net_data']['network_type'] == 'vxlan':
+        if props['net_data']['network_type'] == nvpp_const.TYPE_GPE:
             mac = props['mac']
             seg_id = props['net_data']['segmentation_id']
             self.delete_local_gpe_mapping(seg_id, mac)
@@ -1877,9 +1876,9 @@ class VPPForwarder(object):
             if not is_inside:
                 self.vpp.snat_overload_on_interface_address(loopback_idx)
 
-        # Add VXLAN GPE mappings for vxlan type networks only on the master
+        # Add GPE mappings for gpe type networks only on the master
         # node, if ha_enabled
-        if net_type == plugin_constants.TYPE_VXLAN:
+        if net_type == nvpp_const.TYPE_GPE:
             if (ha_enabled and self.router_state) or not ha_enabled:
                 self.add_local_gpe_mapping(seg_id, loopback_mac)
         # Set the gateway IP address on the BVI interface, if not already set
@@ -2168,8 +2167,8 @@ class VPPForwarder(object):
                 self.vpp.delete_loopback(bvi_if_idx)
                 if cfg.CONF.ml2_vpp.enable_l3_ha:
                     self.router_interface_states.pop(bvi_if_idx, None)
-        if router['net_type'] == 'vxlan':
-            LOG.debug('Removing local vxlan GPE mappings for router '
+        if router['net_type'] == nvpp_const.TYPE_GPE:
+            LOG.debug('Removing local GPE mappings for router '
                       'interface: %s', port_id)
             self.delete_local_gpe_mapping(router['segmentation_id'],
                                           router['mac_address'])
@@ -2521,10 +2520,10 @@ class VPPForwarder(object):
         The software_if_index of the GPE uplink functioning as the underlay
         """
         intf, if_physnet = self.get_if_for_physnet(self.gpe_locators)
-        LOG.debug('Setting vxlan gpe underlay attachment interface: %s',
+        LOG.debug('Setting GPE underlay attachment interface: %s',
                   intf)
         if if_physnet is None:
-            LOG.error('Cannot create a vxlan GPE network because the gpe_'
+            LOG.error('Cannot create a GPE network because the gpe_'
                       'locators config value:%s is broken. Make sure this '
                       'value is set to a valid physnet name used as the '
                       'GPE underlay interface',
@@ -2711,8 +2710,8 @@ class EtcdListener(object):
         # For GPE, fetch remote mappings from etcd for any "new" network
         # segments we will be binding to so we are aware of all the remote
         # overlay (mac) to underlay (IP) values
-        if network_type == 'vxlan':
-            # For vxlan-gpe, a physnet value is not messaged by ML2 as it
+        if network_type == nvpp_const.TYPE_GPE:
+            # For GPE, a physnet value is not messaged by ML2 as it
             # is not specified for creating a gpe tenant network. Hence for
             # these net types we replace the physnet with the value of
             # gpe_locators, which stand for the physnet name.
@@ -3118,7 +3117,7 @@ class EtcdListener(object):
             # what will retry if a failure happens
 
     def update_router_gpe_mappings(self):
-        """Update GPE for VXLAN bound router ports upon HA state transitions.
+        """Update GPE bound router ports upon HA state transitions.
 
         During a router HA state transitions, it is required to update it's
         local and remote GPE mappings. When a master router becomes backup,
@@ -3130,14 +3129,14 @@ class EtcdListener(object):
         router_ports.update(self.vppf.router_external_interfaces)
         for port in router_ports:
             data = router_ports[port]
-            vxlan_bound = data['net_type'] == plugin_constants.TYPE_VXLAN
+            gpe_bound = data['net_type'] == nvpp_const.TYPE_GPE
             seg_id = data['segmentation_id']
             mac_addr = data['mac_address']
             ip_addr = data['gateway_ip']
             # Master --> Backup state transiiton
             # Delete local GPE mapping as we no longer own this mac-address
             # Delete etcd GPE GPE mapping to let other router's know
-            if vxlan_bound and not self.vppf.router_state:
+            if gpe_bound and not self.vppf.router_state:
                 LOG.debug("GPE bound router port becoming BACKUP")
                 self.vppf.delete_local_gpe_mapping(seg_id, mac_addr)
                 LOG.debug('Deleted local GPE mapping for segment %s '
@@ -3149,7 +3148,7 @@ class EtcdListener(object):
             # Delete any GPE remote-mappings in our CP because we own the mac
             # Add a local mapping and establish a remote mapping in etcd to
             # communicate the state transition to all routers
-            elif vxlan_bound and self.vppf.router_state:
+            elif gpe_bound and self.vppf.router_state:
                 LOG.debug("GPE bound router port becoming MASTER")
                 self.vppf.delete_remote_gpe_mapping(seg_id, mac_addr, ip_addr)
                 LOG.debug('Deleted remote GPE mapping for segment %s '
@@ -3374,7 +3373,7 @@ class EtcdListener(object):
 
         # load sw_if_index to macip acl index mappings
         self.load_macip_acl_mapping()
-        if 'vxlan' in cfg.CONF.ml2.type_drivers:
+        if nvpp_const.TYPE_GPE in cfg.CONF.ml2.type_drivers:
             self.vppf.load_gpe_mappings()
 
         self.binder = BindNotifier(self.client_factory, self.state_key_space)
@@ -3420,8 +3419,8 @@ class EtcdListener(object):
                                          heartbeat=TRUNK_WATCHER_HEARTBEAT,
                                          data=self).watch_forever)
 
-        # Spawn GPE watcher for vxlan tenant networks
-        if 'vxlan' in cfg.CONF.ml2.type_drivers:
+        # Spawn the GPE watcher for GPE type tenant networks
+        if nvpp_const.TYPE_GPE in cfg.CONF.ml2.type_drivers:
             LOG.debug("Spawning gpe_watcher")
             self.pool.spawn(GpeWatcher(self.client_factory.client(),
                                        'gpe_watcher',
@@ -3429,7 +3428,7 @@ class EtcdListener(object):
                                        heartbeat=self.AGENT_HEARTBEAT,
                                        data=self).watch_forever)
 
-        # Spawning after the vlan/vxlan bindings are done so that
+        # Spawning after the vlan/gpe bindings are done so that
         # the RouterWatcher doesn't do unnecessary work
         if 'vpp-router' in cfg.CONF.service_plugins:
             if cfg.CONF.ml2_vpp.enable_l3_ha:
@@ -3476,20 +3475,20 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # Removing key == desire to unbind
 
         try:
-            is_vxlan = False
+            is_gpe = False
             port_data = self.data.vppf.interfaces[port]
             port_net = port_data['net_data']
-            is_vxlan = port_net['network_type'] == 'vxlan'
+            is_gpe = port_net['network_type'] == nvpp_const.TYPE_GPE
 
-            if is_vxlan:
+            if is_gpe:
                 # Get seg_id and mac to delete any gpe mappings
                 seg_id = port_net['segmentation_id']
                 mac = port_data['mac']
         except KeyError:
             # On initial resync, this information may not
             # be available; also, the network may not
-            # be vxlan
-            if is_vxlan:
+            # be gpe
+            if is_gpe:
                 LOG.warning('Unable to delete GPE mappings for port')
 
         self.data.unbind(port)
@@ -3500,7 +3499,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
             self.etcd_client.delete(
                 self.data.state_key_space + '/%s'
                 % port)
-            if is_vxlan:
+            if is_gpe:
                 self.data.delete_etcd_gpe_remote_mapping(seg_id, mac)
         except etcd.EtcdKeyNotFound:
             # Gone is fine; if we didn't delete it
@@ -3539,12 +3538,12 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # we have nothing we can do at this point.  We simply
         # decline to notify Nova the port is ready.
 
-        # For vxlan GPE networks,
+        # For GPE networks,
         # write the remote mapping data to etcd to
         # propagate both the mac to underlay mapping and
         # mac to instance's IP (for ARP) mapping to all
         # agents that bind this segment using GPE
-        if data['network_type'] == 'vxlan':
+        if data['network_type'] == nvpp_const.TYPE_GPE:
             props = self.data.vppf.interfaces[port]
             mac = props['mac']
             for ip in [ip['ip_address'] for ip in data.get('fixed_ips')]:
@@ -3617,7 +3616,7 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                 self.data.vppf.ensure_router_interface_on_host(
                     port_id, router_data)
                 self.data.vppf.maybe_associate_floating_ips()
-                if router_data.get('net_type') == 'vxlan':
+                if router_data.get('net_type') == nvpp_const.TYPE_GPE:
                     self.add_remove_gpe_mappings(port_id, router_data,
                                                  is_add=1)
             else:
@@ -3637,7 +3636,7 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                 self.data.vppf.become_master_router()
             else:
                 self.data.vppf.become_backup_router()
-            # Update remote mappings for VXLAN bound router ports
+            # Update remote mappings for GPE bound router ports
             self.data.update_router_gpe_mappings()
 
     def removed(self, router_key):
@@ -3648,7 +3647,8 @@ class RouterWatcher(etcdutils.EtcdChangeWatcher):
                 router_data = self.data.vppf.router_interfaces.get(port_id)
                 # Delete the GPE mapping first as we need to lookup the
                 # router interface mac-address from vppf
-                if router_data and router_data.get('net_type') == 'vxlan':
+                if router_data and router_data.get('net_type') == \
+                    nvpp_const.TYPE_GPE:
                     self.add_remove_gpe_mappings(port_id, router_data,
                                                  is_add=0)
                 self.data.vppf.delete_router_interface_on_host(port_id)

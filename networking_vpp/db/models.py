@@ -49,3 +49,13 @@ class VppRouterVrf(model_base.BASEV2):
 
     router_id = sa.Column(sa.String(36), primary_key=True)
     vrf_id = sa.Column(sa.Integer, nullable=False)
+
+
+class GpeAllocation(model_base.BASEV2):
+
+    __tablename__ = 'vpp_gpe_allocations'
+
+    gpe_vni = sa.Column(sa.Integer, nullable=False, primary_key=True,
+                        autoincrement=False)
+    allocated = sa.Column(sa.Boolean, nullable=False, default=False,
+                          index=True)
