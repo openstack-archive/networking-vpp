@@ -19,3 +19,6 @@ LEADIN = '/networking-vpp'
 ROUTERS_DIR = 'routers/'
 ROUTER_FIP_DIR = 'routers/floatingip/'
 GPE_LSET_NAME = 'net-vpp-gpe-lset-1'
+TYPE_GPE = 'gpe'
+GPE_UDP_PORT = 4790
+GPE_ENCAP_OVERHEAD = 30

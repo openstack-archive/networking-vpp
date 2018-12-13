@@ -49,3 +49,26 @@ class VppRouterVrf(model_base.BASEV2):
 
     router_id = sa.Column(sa.String(36), primary_key=True)
     vrf_id = sa.Column(sa.Integer, nullable=False)
+
+
+class GpeAllocation(model_base.BASEV2):
+
+    __tablename__ = 'vpp_gpe_allocations'
+
+    vxlan_vni = sa.Column(sa.Integer, nullable=False, primary_key=True,
+                          autoincrement=False)
+    allocated = sa.Column(sa.Boolean, nullable=False, default=False,
+                          index=True)
+
+
+class GpeEndpoints(model_base.BASEV2):
+    """Represents a tunnel endpoint."""
+
+    __tablename__ = 'vpp_gpe_endpoints'
+
+    ip_address = sa.Column(sa.String(64), primary_key=True)
+    udp_port = sa.Column(sa.Integer, nullable=False)
+    host = sa.Column(sa.String(255), nullable=True)
+
+    def __repr__(self):
+        return "<GpeTunnelEndpoint(%s)>" % self.ip_address

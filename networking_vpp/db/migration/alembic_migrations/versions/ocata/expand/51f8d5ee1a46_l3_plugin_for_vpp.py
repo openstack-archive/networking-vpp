@@ -33,3 +33,12 @@ def upgrade():
     op.create_table('vpp_router_vrfs',
                     sa.Column('router_id', sa.String(36), primary_key=True),
                     sa.Column('vrf_id', sa.Integer, nullable=False))
+
+    op.create_table('vpp_gpe_allocations',
+                    sa.Column('vxlan_vni', sa.Integer, primary_key=True),
+                    sa.Column('allocated', sa.Boolean, nullable=False))
+
+    op.create_table('vpp_gpe_endpoints',
+                    sa.Column('ip_address', sa.String(64), primary_key=True),
+                    sa.Column('udp_port', sa.Integer, nullable=False),
+                    sa.Column('host', sa.String(255), nullable=True))
