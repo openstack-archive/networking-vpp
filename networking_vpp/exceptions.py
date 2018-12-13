@@ -29,3 +29,28 @@ class InvalidEtcHostsConfig(n_exc.NeutronException):
 class InvalidEtcHostConfig(n_exc.NeutronException):
     message = _("Invalid etc host config. Expect an IP or host name in "
                 "the form <Host> or <Host:Port>")
+
+
+class GpeVNIRangeError(n_exc.NeutronException):
+    """An exception indicating an invalid GPE VNI range was specified.
+
+    :param vni_range: The invalid vni range specified in the
+                      'start:end' format
+    """
+    message = _("Invalid VNI range string for the GPE network. Expect a "
+                "string in the form %(vni_range)s")
+
+    def __init__(self, **kwargs):
+        # Convert the vni_range tuple to 'start:end' format for display
+        if isinstance(kwargs['vni_range'], tuple):
+            kwargs['vni_range'] = "%d:%d" % kwargs['vni_range']
+        super(GpeVNIRangeError, self).__init__(**kwargs)
+
+
+class GpeVNIInUse(n_exc.NeutronException):
+    """GPE network creation failed exception due to the VNI being in use.
+
+    :param vni_id: The ID of the GPE VNI that's in use.
+    """
+    message = _("Invalid GPE VNI value %(vni_id)s for allocation "
+                "The VNI is already in use by another GPE network")
