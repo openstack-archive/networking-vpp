@@ -435,7 +435,7 @@ underlay network to transport Layer2 and Layer3 packets (a.k.a overlay) sent
 by tenant instances.
 
 At this point, we only support Layer2 overlays between bridge domains using
-the existing ML2 "vxlan" type driver.
+the included 'gpe' type driver.
 
 Following are some key concepts that will help you set it up and get going.
 
@@ -458,7 +458,7 @@ node.
 
 These are the only two new settings you need to know to get GPE working.
 
-Also ensure, that you have enabled vxlan as one of the tenant_network_type
+Also ensure, that you have enabled gpe as one of the tenant_network_type
 settings and allocated some vni's in the vni_ranges. It is a good practice
 to keep your VLAN and VXLAN ranges in separate namespaces to avoid any
 conflicts.

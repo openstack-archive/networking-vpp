@@ -32,6 +32,10 @@ _vpp_opts = [
                       "specified on compute and network nodes. In the "
                       "current implementation only a single locator "
                       "is supported.")),
+    cfg.ListOpt('gpe_vni_ranges', default=[],
+                help=_("A comma-separated list of <tun_min>:<tun_max> "
+                       "tuples enumerating ranges of GPE VNI IDs "
+                       "available for tenant network allocation")),
     cfg.IntOpt('etcd_write_time', default=20,
                help=_("The period of time alloted to etcd write before it is "
                       "timed out.")),

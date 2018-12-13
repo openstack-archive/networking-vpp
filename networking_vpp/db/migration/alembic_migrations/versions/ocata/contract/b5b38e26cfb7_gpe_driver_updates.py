@@ -1,5 +1,4 @@
-# Copyright (c) 2016 Cisco Systems, Inc.
-# All Rights Reserved.
+# Copyright 2019 Cisco
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -12,15 +11,20 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
 
-# Common constants used by mech_vpp, server and plugins
+"""gpe driver updates
 
-LEADIN = '/networking-vpp'
-ROUTERS_DIR = 'routers/'
-ROUTER_FIP_DIR = 'routers/floatingip/'
-GPE_LSET_NAME = 'net-vpp-gpe-lset-1'
-TYPE_GPE = 'gpe'
-GPE_UDP_PORT = 4790
-GPE_ENCAP_OVERHEAD = 30
-MIN_GPE_VNI = 1
-MAX_GPE_VNI = 2 ** 24 - 1
+Revision ID: b5b38e26cfb7
+Revises: d0369f1d9e85
+Create Date: 2019-01-18 12:13:12.636215
+
+"""
+
+# revision identifiers, used by Alembic.
+revision = 'b5b38e26cfb7'
+down_revision = 'd0369f1d9e85'
+
+
+def upgrade():
+    pass
