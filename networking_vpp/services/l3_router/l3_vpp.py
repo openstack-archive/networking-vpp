@@ -160,7 +160,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
         router_dict['subnet_id'] = subnet['id']
         router_dict['fixed_ips'] = fixed_ips
 
-        address = ip_network(subnet['cidr'])
+        address = ip_network(unicode(subnet['cidr']))
         router_dict['network_id'] = network['id']
         router_dict['is_ipv6'] = True if address.version == 6 else False
         router_dict['prefixlen'] = address.prefixlen
@@ -236,7 +236,7 @@ class VppL3RouterPlugin(common_db_mixin.CommonDbMixin,
             subnet_id = fixed_ip['subnet_id']
             subnet = self._core_plugin.get_subnet(
                 context.elevated(), subnet_id)
-            address = ip_network(subnet['cidr'])
+            address = ip_network(unicode(subnet['cidr']))
             is_ipv6 = True if address.version == 6 else False
             gateways.append((fixed_ip['ip_address'],
                              address.prefixlen,
