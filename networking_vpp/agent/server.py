@@ -39,6 +39,7 @@ from ipaddress import ip_address
 from ipaddress import ip_network
 import os
 import re
+import shlex
 import sys
 import time
 import vpp
@@ -71,6 +72,7 @@ except ImportError:
     config.register_ml2_plugin_opts()
 from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_privsep import priv_context
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
 from oslo_serialization import jsonutils
@@ -3952,6 +3954,8 @@ def openstack_base_setup(process_name):
         version.version_info,
         service_name='vpp-agent')
 
+    # Use root helper (if present) to execute privileged commands
+    priv_context.init(root_helper=shlex.split(cfg.CONF.AGENT.root_helper))
 
 def main():
     """Main function for VPP agent functionality."""
