@@ -14,6 +14,8 @@
 #    under the License.
 
 
+from __future__ import absolute_import
+from __future__ import print_function
 import collections
 import enum
 import fnmatch
@@ -24,6 +26,7 @@ import pwd
 import sys
 from threading import Lock
 import vpp_papi
+import six
 
 
 L2_VTR_POP_1 = 3
@@ -32,12 +35,16 @@ NO_BVI_SET = 4294967295
 
 
 def mac_to_bytes(mac):
-    return str(''.join(chr(int(x, base=16)) for x in mac.split(':')))
-
+    if six.PY2:
+        return ''.join(chr(int(x, base=16)) for x in mac.split(':'))
+    else:
+        return bytes.fromhex(mac.replace(':',''))
 
 def fix_string(s):
-    return s.rstrip("\0").decode(encoding='ascii')
-
+    if type(s) == bytes:
+        return (s.rstrip(b"\x00")).decode()
+    else:
+        return s.rstrip("\0")
 
 def bytes_to_mac(mbytes):
     return ':'.join(['%02x' % ord(x) for x in mbytes[:6]])
@@ -115,7 +122,7 @@ class VPPInterface(object):
         self.call_vpp('sw_interface_tag_add_del',
                       is_add=1,
                       sw_if_index=if_idx,
-                      tag=str(tag))
+                      tag=bytes(tag,'utf-8'))
 
     def get_version(self):
         t = self.call_vpp('show_version')
@@ -131,7 +138,7 @@ class VPPInterface(object):
                           use_random_mac=False,
                           mac_address=mac_to_bytes(mac),
                           host_if_name_set=True,
-                          host_if_name=str(ifname),
+                          host_if_name=bytes(ifname,'ascii'),
                           id=0xffffffff,  # choose ifidx automatically
                           host_ip4_addr_set=False,
                           host_ip6_addr_set=False,
@@ -449,7 +456,7 @@ class VPPInterface(object):
     def acl_add_replace(self, acl_index, tag, rules, count):
         t = self.call_vpp('acl_add_replace',
                           acl_index=acl_index,
-                          tag=str(tag),
+                          tag=bytes(tag,'utf-8'),
                           r=rules,
                           count=count)
         return t.acl_index
@@ -658,10 +665,10 @@ class VPPInterface(object):
         if not self.route_in_vrf(vrf, ip_address, prefixlen,
                                  next_hop_address, next_hop_sw_if_index,
                                  is_ipv6):
-            ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
+            ip = ipaddress.ip_address(six.text_type(bytes_to_ip(ip_address,
                                                           is_ipv6)))
             if next_hop_address is not None:
-                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                next_hop = ipaddress.ip_address(six.text_type(bytes_to_ip(
                     next_hop_address, is_ipv6)))
                 self.LOG.debug('Adding route %s/%s to %s in router vrf:%s',
                                ip, prefixlen, next_hop, vrf)
@@ -700,10 +707,10 @@ class VPPInterface(object):
         if self.route_in_vrf(vrf, ip_address, prefixlen,
                              next_hop_address, next_hop_sw_if_index,
                              is_ipv6):
-            ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
+            ip = ipaddress.ip_address(six.text_type(bytes_to_ip(ip_address,
                                                           is_ipv6)))
             if next_hop_address is not None:
-                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                next_hop = ipaddress.ip_address(six.text_type(bytes_to_ip(
                     next_hop_address, is_ipv6)))
                 self.LOG.debug('Deleting route %s/%s to %s in router vrf:%s',
                                ip, prefixlen, next_hop, vrf)
@@ -744,10 +751,10 @@ class VPPInterface(object):
         # in the VRF table by checking the ip_address, prefixlen and
         # Convert the ip & next_hop addresses to an ipaddress format for
         # comparison
-        ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
+        ip = ipaddress.ip_address(six.text_type(bytes_to_ip(ip_address,
                                                       is_ipv6)))
         if next_hop_address is not None:
-            next_hop = ipaddress.ip_address(unicode(
+            next_hop = ipaddress.ip_address(six.text_type(
                 bytes_to_ip(next_hop_address, is_ipv6)))
         else:
             next_hop = next_hop_address
@@ -759,12 +766,12 @@ class VPPInterface(object):
                 route.address_length == prefixlen and
                 # check if route.address == ip
                 ipaddress.ip_address(
-                    unicode(bytes_to_ip(route.address,
+                    six.text_type(bytes_to_ip(route.address,
                                         is_ipv6))) == ip and
                 # check if the next_hop is present the list
                 # of next hops in the route's path
                 next_hop in [ipaddress.ip_address(
-                    unicode(bytes_to_ip(p.next_hop,
+                    six.text_type(bytes_to_ip(p.next_hop,
                                         is_ipv6))) for p in route.path]):
                 self.LOG.debug('Route: %s/%s to %s exists in VRF:%s',
                                ip, prefixlen, next_hop, vrf)
@@ -773,7 +780,7 @@ class VPPInterface(object):
                   route.address_length == prefixlen and
                   # check if route.address == ip
                   ipaddress.ip_address(
-                      unicode(bytes_to_ip(route.address,
+                      six.text_type(bytes_to_ip(route.address,
                                           is_ipv6))) == ip and
                   # check if the next_hop matches
                   sw_if_index in [p.sw_if_index for p in route.path]):

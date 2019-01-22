@@ -14,6 +14,7 @@
 #  under the License.
 #
 
+from __future__ import absolute_import
 import copy
 from networking_vpp.compat import events
 from networking_vpp.compat import n_provider as provider
@@ -395,7 +396,7 @@ class VppTrunkPlugin(common_db_mixin.CommonDbMixin):
                 removed_subports.append(subport_obj)
             if removed_subports:
                 del trunk.sub_ports[:]
-                trunk.sub_ports.extend(current_subports.values())
+                trunk.sub_ports.extend(list(current_subports.values()))
                 payload = callbacks.TrunkPayload(
                     context, trunk_id,
                     current_trunk=trunk,

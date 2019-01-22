@@ -23,8 +23,10 @@
 # worked out.  The two codebases will merge in the future.
 
 # eventlet must be monkey patched early or we confuse urllib3.
+from __future__ import absolute_import
 import eventlet
 import ipaddress
+import six
 
 # We actually need to co-operate with a threaded callback in VPP, so
 # don't monkey patch the thread operations.
@@ -41,7 +43,7 @@ import os
 import re
 import sys
 import time
-import vpp
+from . import vpp
 
 from networking_vpp._i18n import _
 from networking_vpp import compat
@@ -1476,7 +1478,7 @@ class VPPForwarder(object):
                       "to acl mapping. Possible reason: vpp "
                       "may have been restarted on host.")
 
-        return self.secgroups.keys()
+        return list(self.secgroups.keys())
 
     def get_secgroup_acl_map(self):
         """Read VPP ACL tag data, construct and return an acl_map based on tag
@@ -1585,7 +1587,7 @@ class VPPForwarder(object):
 
         def _get_ip_version(ip):
             """Return the IP Version i.e. 4 or 6"""
-            return ip_network(unicode(ip)).version
+            return ip_network(six.text_type(ip)).version
 
         def _get_ip_prefix_length(ip):
             """Return the IP prefix length value
@@ -1597,7 +1599,7 @@ class VPPForwarder(object):
             i.e. 32 if IPv4 and 128 if IPv6
             if "ip" is an ip_network return its prefix_length
             """
-            return ip_network(unicode(ip)).prefixlen
+            return ip_network(six.text_type(ip)).prefixlen
 
         src_mac_mask = _pack_mac('FF:FF:FF:FF:FF:FF')
         mac_ip_rules = []
@@ -1713,7 +1715,7 @@ class VPPForwarder(object):
                  an IPv4 or IPv6 network with prefix_length e.g. 1.1.1.0/24
         """
         # Works for both addresses and the net address of masked networks
-        return ip_network(unicode(ip_addr)).network_address.packed
+        return ip_network(six.text_type(ip_addr)).network_address.packed
 
     def _get_snat_indexes(self, floatingip_dict):
         """Return the internal and external interface indices for SNAT.
@@ -1884,7 +1886,7 @@ class VPPForwarder(object):
                 self.add_local_gpe_mapping(seg_id, loopback_mac)
         # Set the gateway IP address on the BVI interface, if not already set
         addresses = self.vpp.get_interface_ip_addresses(loopback_idx)
-        gw_ip_obj = ipaddress.ip_address(unicode(gateway_ip))
+        gw_ip_obj = ipaddress.ip_address(six.text_type(gateway_ip))
         for address in addresses:
             if address[0] == gw_ip_obj:
                 break
@@ -1961,7 +1963,7 @@ class VPPForwarder(object):
 
     def _get_ip_network(self, gateway_ip, prefixlen):
         """Returns the IP network for the gateway in CIDR form."""
-        return str(ipaddress.ip_interface(unicode(gateway_ip + "/"
+        return str(ipaddress.ip_interface(six.text_type(gateway_ip + "/"
                                           + str(prefixlen))).network)
 
     def default_route_in_default_vrf(self, router_dict, is_add=True):
@@ -2417,7 +2419,7 @@ class VPPForwarder(object):
         lset_mapping = self.gpe_map[gpe_lset_name]
         if (mac, vni) not in self.gpe_map['remote_map'] and mac not in \
                 lset_mapping['local_map']:
-            is_ip4 = 1 if ip_network(unicode(remote_ip)).version == 4 else 0
+            is_ip4 = 1 if ip_network(six.text_type(remote_ip)).version == 4 else 0
             remote_locator = {"is_ip4": is_ip4,
                               "priority": 1,
                               "weight": 1,
@@ -2428,8 +2430,8 @@ class VPPForwarder(object):
             # Add a LISP ARP/NDP entry for the remote VM's IPv4/v6 address.
             # If an ARP or NDP entry exists in the BD, replace it.
             bridge_domain = self.bridge_idx_for_lisp_segment(vni)
-            if ip and ip_network(unicode(ip)).version == 4:
-                int_ip = int(ip_address(unicode(ip)))
+            if ip and ip_network(six.text_type(ip)).version == 4:
+                int_ip = int(ip_address(six.text_type(ip)))
                 if not self.vpp.exists_lisp_arp_entry(bridge_domain, int_ip):
                     self.vpp.add_lisp_arp_entry(mac,
                                                 bridge_domain,
@@ -2457,8 +2459,8 @@ class VPPForwarder(object):
             # Delete the LISP ARP entry for remote instance's IPv4 address
             # if it's present and the IP address is present
             bridge_domain = self.bridge_idx_for_lisp_segment(vni)
-            if ip and ip_network(unicode(ip)).version == 4:
-                int_ip = int(ip_address(unicode(ip)))
+            if ip and ip_network(six.text_type(ip)).version == 4:
+                int_ip = int(ip_address(six.text_type(ip)))
                 if self.vpp.exists_lisp_arp_entry(bridge_domain, int_ip):
                     self.vpp.del_lisp_arp_entry(mac,
                                                 bridge_domain,
@@ -2539,12 +2541,12 @@ class VPPForwarder(object):
          self.gpe_underlay_mask) = self.gpe_src_cidr.split('/')
         physnet_ip_addrs = self.vpp.get_interface_ip_addresses(if_physnet)
         LOG.debug('Exising IP addresses %s', str(physnet_ip_addrs))
-        cidr = (ip_address(unicode(self.gpe_underlay_addr)),
+        cidr = (ip_address(six.text_type(self.gpe_underlay_addr)),
                 int(self.gpe_underlay_mask))
         if cidr not in physnet_ip_addrs:
             self.vpp.set_interface_address(
                 sw_if_index=if_physnet,
-                is_ipv6=1 if ip_network(unicode(self.gpe_underlay_addr)
+                is_ipv6=1 if ip_network(six.text_type(self.gpe_underlay_addr)
                                         ).version == 6 else 0,
                 address_length=int(self.gpe_underlay_mask),
                 address=self._pack_address(self.gpe_underlay_addr)
@@ -2927,7 +2929,7 @@ class EtcdListener(object):
         def _secgroup_rule(r):
             # Create a rule for the remote_ip_prefix (CIDR) value
             if r['remote_ip_addr']:
-                remote_ip_prefixes = [(unicode(r['remote_ip_addr']),
+                remote_ip_prefixes = [(six.text_type(r['remote_ip_addr']),
                                        r['ip_prefix_len'])]
             # Create a rule for each ip address in the remote_group
             else:
@@ -2940,10 +2942,10 @@ class EtcdListener(object):
                 # remote-group etcd watch event
                 self.vppf.remote_group_secgroups[remote_group].add(secgroup)
                 remote_ip_prefixes = [
-                    (unicode(ip), prefix_length) for port in
+                    (six.text_type(ip), prefix_length) for port in
                     self.vppf.remote_group_ports[remote_group]
                     for ip in self.vppf.port_ips[port]
-                    if ip_network(unicode(ip)).version == ip_version]
+                    if ip_network(six.text_type(ip)).version == ip_version]
                 LOG.debug("remote_group: vppf.remote_group_ports:%s",
                           self.vppf.remote_group_ports
                           )
@@ -3362,7 +3364,7 @@ class EtcdListener(object):
 
         etcd_helper.clear_state(self.state_key_space)
 
-        physnets = self.physnets.keys()
+        physnets = list(self.physnets.keys())
         etcd_helper.clear_state(self.physnet_key_space)
         for f in physnets:
             etcd_client.write(self.physnet_key_space + '/' + f, 1)
@@ -3993,7 +3995,7 @@ def main():
 
     # Convert to the minutes unit that VPP uses:
     # (we round *up*)
-    mac_age_min = int((cfg.CONF.ml2_vpp.mac_age + 59) / 60)
+    mac_age_min = int((cfg.CONF.ml2_vpp.mac_age + 59) // 60)
     vppf = VPPForwarder(physnets,
                         mac_age=mac_age_min,
                         vpp_cmd_queue_len=cfg.CONF.ml2_vpp.vpp_cmd_queue_len,

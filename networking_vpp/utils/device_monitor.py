@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from __future__ import absolute_import
 import logging
 import os
 import socket
@@ -309,6 +310,8 @@ class DeviceMonitor(object):
                         if attr_type == IFLA.IFNAME:
                             # As returned, includes a C-style \0
                             link_name = attr_body[:-1]
+                            if type(link_name) == bytes:
+                                link_name = link_name.decode()
                             break
 
                     if link_name is None:
