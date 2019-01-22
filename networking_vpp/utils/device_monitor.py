@@ -13,8 +13,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from __future__ import absolute_import
 import logging
 import os
+import six
 import socket
 import struct
 
@@ -309,6 +311,12 @@ class DeviceMonitor(object):
                         if attr_type == IFLA.IFNAME:
                             # As returned, includes a C-style \0
                             link_name = attr_body[:-1]
+                            # py3 note:
+                            # link_name is a bytes object so explicitly convert
+                            # to string in case of py3 otherwise we get an
+                            # exception.
+                            if six.PY3:
+                                link_name = link_name.decode('ascii')
                             break
 
                     if link_name is None:
