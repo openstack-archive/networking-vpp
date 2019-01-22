@@ -14,6 +14,8 @@
 #    under the License.
 
 
+from __future__ import absolute_import
+from __future__ import print_function
 import collections
 import enum
 import fnmatch
@@ -21,6 +23,7 @@ import grp
 import ipaddress
 import os
 import pwd
+import six
 import sys
 from threading import Lock
 import vpp_papi
@@ -31,12 +34,53 @@ L2_VTR_DISABLED = 0
 NO_BVI_SET = 4294967295
 
 
+def binary_type(s):
+    """Wrapper around six.binary_type().
+
+    six.binary_type is str() in py2 and bytes() in py3. Now, in py3 bytes()
+    requires an additional encoding argument whereas str() does not. This
+    function handles this scenario.
+
+    TODO(onong): move to a common file in phase 2
+    """
+    if six.PY3:
+        return six.binary_type(s, 'utf-8')
+    else:
+        return six.binary_type(s)
+
+
 def mac_to_bytes(mac):
-    return str(''.join(chr(int(x, base=16)) for x in mac.split(':')))
+    # py3 note:
+    # TODO(onong): PAPI has introduced a new macaddress object which seemingly
+    # takes care of conversion to/from MAC addr to string.
+    # TODO(onong): move to common file in phase 2
+    if six.PY2:
+        return ''.join(chr(int(x, base=16)) for x in mac.split(':'))
+    else:
+        return bytes.fromhex(mac.replace(':', ''))
 
 
 def fix_string(s):
-    return s.rstrip("\0").decode(encoding='ascii')
+    # py3 note:
+    # This function chops off any trailing NUL chars/bytes from strings that
+    # we get from VPP. Now, in case of py2, str and bytes are the same but
+    # there's a strict distinction between the two in py3. The code ensures
+    # that within the ML2 agent we follow the dictum of always dealing with
+    # strings and this function acts as the boundary where the conversion to
+    # string happens.
+    #
+    # TODO(onong): watch out for the upcoming PAPI change which introduces a
+    # string type for printable strings, so no longer the need for the funny
+    # chopping off of 0's at the end. But this function will still act as the
+    # boundary at which input is converted to string type.
+    # TODO(onong): move to common file in phase 2
+    if six.PY2:
+        return s.rstrip("\0").decode(encoding='ascii')
+    else:
+        if type(s) == bytes:
+            return (s.rstrip(b"\x00")).decode('utf-8')
+        else:
+            return s.rstrip("\0")
 
 
 def bytes_to_mac(mbytes):
@@ -111,11 +155,12 @@ class VPPInterface(object):
         VPP papi does not allow to set interface tag
         on interface creation for subinterface or loopback).
         """
-        # TODO(ijw): this is a race condition.
+        # TODO(ijw): this is a race condition - we should create the
+        # interface with a tag.
         self.call_vpp('sw_interface_tag_add_del',
                       is_add=1,
                       sw_if_index=if_idx,
-                      tag=str(tag))
+                      tag=binary_type(tag))
 
     def get_version(self):
         t = self.call_vpp('show_version')
@@ -148,8 +193,6 @@ class VPPInterface(object):
     ########################################
 
     def create_tap(self, ifname, mac=None, tag=""):
-        # (we don't like unicode in VPP hence str(ifname))
-
         if mac is not None:
             mac_bytes = mac_to_bytes(mac)
             use_random_mac = False
@@ -161,7 +204,7 @@ class VPPInterface(object):
                           use_random_mac=use_random_mac,
                           mac_address=mac_bytes,
                           host_if_name_set=True,
-                          host_if_name=str(ifname),
+                          host_if_name=binary_type(ifname),
                           id=0xffffffff,  # choose ifidx automatically
                           host_ip4_addr_set=False,
                           host_ip6_addr_set=False,
@@ -170,7 +213,7 @@ class VPPInterface(object):
                           host_mac_addr_set=False,
                           tx_ring_sz=1024,
                           rx_ring_sz=1024,
-                          tag=tag)
+                          tag=binary_type(tag))
 
         return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
@@ -196,12 +239,12 @@ class VPPInterface(object):
                          qemu_user=None, qemu_group=None, is_server=False):
         t = self.call_vpp('create_vhost_user_if',
                           is_server=is_server,
-                          sock_filename=str(ifpath),
+                          sock_filename=binary_type(ifpath),
                           renumber=False,
                           custom_dev_instance=0,
                           use_custom_mac=True,
                           mac_address=mac_to_bytes(mac),
-                          tag=tag)
+                          tag=binary_type(tag))
 
         if is_server:
             # The permission that qemu runs as.
@@ -466,9 +509,10 @@ class VPPInterface(object):
                       sw_if_index=sw_if_index)
 
     def acl_add_replace(self, acl_index, tag, rules, count):
+        # py3 note: str and bytes are different in py3
         t = self.call_vpp('acl_add_replace',
                           acl_index=acl_index,
-                          tag=str(tag),
+                          tag=binary_type(tag),
                           r=rules,
                           count=count)
         return t.acl_index
@@ -702,10 +746,10 @@ class VPPInterface(object):
         if not self.route_in_vrf(vrf, ip_address, prefixlen,
                                  next_hop_address, next_hop_sw_if_index,
                                  is_ipv6):
-            ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
-                                                          is_ipv6)))
+            ip = ipaddress.ip_address(six.text_type(bytes_to_ip(ip_address,
+                                                    is_ipv6)))
             if next_hop_address is not None:
-                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                next_hop = ipaddress.ip_address(six.text_type(bytes_to_ip(
                     next_hop_address, is_ipv6)))
                 self.LOG.debug('Adding route %s/%s to %s in router vrf:%s',
                                ip, prefixlen, next_hop, vrf)
@@ -744,10 +788,10 @@ class VPPInterface(object):
         if self.route_in_vrf(vrf, ip_address, prefixlen,
                              next_hop_address, next_hop_sw_if_index,
                              is_ipv6):
-            ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
-                                                          is_ipv6)))
+            ip = ipaddress.ip_address(six.text_type(bytes_to_ip(ip_address,
+                                                    is_ipv6)))
             if next_hop_address is not None:
-                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                next_hop = ipaddress.ip_address(six.text_type(bytes_to_ip(
                     next_hop_address, is_ipv6)))
                 self.LOG.debug('Deleting route %s/%s to %s in router vrf:%s',
                                ip, prefixlen, next_hop, vrf)
@@ -788,10 +832,10 @@ class VPPInterface(object):
         # in the VRF table by checking the ip_address, prefixlen and
         # Convert the ip & next_hop addresses to an ipaddress format for
         # comparison
-        ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
-                                                      is_ipv6)))
+        ip = ipaddress.ip_address(six.text_type(bytes_to_ip(ip_address,
+                                                is_ipv6)))
         if next_hop_address is not None:
-            next_hop = ipaddress.ip_address(unicode(
+            next_hop = ipaddress.ip_address(six.text_type(
                 bytes_to_ip(next_hop_address, is_ipv6)))
         else:
             next_hop = next_hop_address
@@ -803,13 +847,13 @@ class VPPInterface(object):
                 route.address_length == prefixlen and
                 # check if route.address == ip
                 ipaddress.ip_address(
-                    unicode(bytes_to_ip(route.address,
-                                        is_ipv6))) == ip and
+                    six.text_type(bytes_to_ip(route.address,
+                                  is_ipv6))) == ip and
                 # check if the next_hop is present the list
                 # of next hops in the route's path
                 next_hop in [ipaddress.ip_address(
-                    unicode(bytes_to_ip(p.next_hop,
-                                        is_ipv6))) for p in route.path]):
+                    six.text_type(bytes_to_ip(p.next_hop,
+                                  is_ipv6))) for p in route.path]):
                 self.LOG.debug('Route: %s/%s to %s exists in VRF:%s',
                                ip, prefixlen, next_hop, vrf)
                 return True
@@ -817,8 +861,8 @@ class VPPInterface(object):
                   route.address_length == prefixlen and
                   # check if route.address == ip
                   ipaddress.ip_address(
-                      unicode(bytes_to_ip(route.address,
-                                          is_ipv6))) == ip and
+                      six.text_type(bytes_to_ip(route.address,
+                                    is_ipv6))) == ip and
                   # check if the next_hop matches
                   sw_if_index in [p.sw_if_index for p in route.path]):
 
