@@ -117,7 +117,6 @@ def journal_write(session, k, v):
     """
     entry = models.VppEtcdJournal(k=k, v=v)
     session.add(entry)
-    session.flush()
 
 
 def get_all_journal_rows(session):
@@ -168,4 +167,3 @@ def delete_router_vrf(session, router_id):
 
         if row:
             session.delete(row)
-            session.flush()
