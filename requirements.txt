@@ -18,3 +18,4 @@ PyJWT
 cryptography>=2.0,<3
 pyOpenSSL
 pyinotify
+six
