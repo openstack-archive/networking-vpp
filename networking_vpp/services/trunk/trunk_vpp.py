@@ -14,6 +14,7 @@
 #  under the License.
 #
 
+from __future__ import absolute_import
 import copy
 from networking_vpp.compat import events
 from networking_vpp.compat import n_provider as provider
