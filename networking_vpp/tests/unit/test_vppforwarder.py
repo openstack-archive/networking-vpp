@@ -327,7 +327,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'gateway_ip': '10.0.0.1', 'is_ipv6': False, 'prefixlen': 24,
                 'mtu': 1500, 'bridge_domain_id': 5, 'is_inside': False,
                 'external_gateway_ip': '10.1.1.200', 'uplink_idx': 5,
-                'bvi_if_idx': 5, 'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
+                'bvi_if_idx': 5, 'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'is_local': 0}
 
     def _get_mock_v6_router_interface(self):
         # Returns a mock IPv6 internal router interface.
@@ -347,7 +348,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                 'prefixlen': 64, 'mtu': 1500, 'bridge_domain_id': 5,
                 'is_inside': False, 'external_gateway_ip': '2001:db8:1234::f',
                 'uplink_idx': 5, 'bvi_if_idx': 5,
-                'loopback_mac': 'aa:bb:cc:dd:ee:ff'}
+                'loopback_mac': 'aa:bb:cc:dd:ee:ff',
+                'is_local': 0}
 
     def _get_mock_floatingip(self):
         return {'UUID': 'mock-uuid123',

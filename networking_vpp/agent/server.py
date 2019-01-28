@@ -38,6 +38,7 @@ import eventlet.semaphore
 import ipaddress
 import os
 import re
+import shlex
 import six
 import sys
 import time
@@ -1817,7 +1818,8 @@ class VPPForwarder(object):
         loopback interface to act as an L3 gateway for the network.
         For external networks, the BVI functions as an SNAT external
         interface. For updating an interface, the service plugin removes
-        the old interface and then adds the new router interface.
+        the old interface and then adds the new router interface. If an
+        external gateway exists, ensures a local route in VPP.
 
         When Layer3 HA is enabled, the router interfaces are only enabled on
         the active VPP router. The standby router keeps the interface in
@@ -1827,6 +1829,9 @@ class VPPForwarder(object):
         # interface on a subnet
         # Enable SNAT by default unless it is set to False
         enable_snat = True
+        # Multiple routers on a shared external subnet is supported
+        # by adding local routes in VPP.
+        is_local = 0  # True for local-only VPP routes.
         # Create an external interfce if the external_gateway_info key is
         # present, else create an internal interface
         if router_data.get('external_gateway_info', False):
@@ -1911,13 +1916,35 @@ class VPPForwarder(object):
         # Set the gateway IP address on the BVI interface, if not already set
         addresses = self.vpp.get_interface_ip_addresses(loopback_idx)
         gw_ip_obj = ipaddr(gateway_ip)
+        # Is there another gateway ip_addr set on this external loopback?
+        if not is_inside:
+            exists_gateway = any((addr for addr, _ in addresses
+                                  if addr != gw_ip_obj))
+            if exists_gateway:
+                LOG.debug('A router gateway exists on the external network.'
+                          'The current router gateway IP: %s will be added as '
+                          'a local VPP route', str(gw_ip_obj))
         for address in addresses:
             if address[0] == gw_ip_obj:
                 break
         else:
-            self.vpp.set_interface_ip(
-                loopback_idx, self._pack_address(gateway_ip), prefixlen,
-                is_ipv6)
+            # Add a local VRF route if another external gateway exists
+            if not is_inside and exists_gateway:
+                is_local = 1
+                ip_prefix_length = 32 if gw_ip_obj.version == 4 else 128
+                # Add a local IP route if it doesn't exist
+                self.vpp.add_ip_route(vrf=vrf,
+                                      ip_address=self._pack_address(
+                                          gateway_ip),
+                                      prefixlen=ip_prefix_length,
+                                      next_hop_address=None,
+                                      next_hop_sw_if_index=None,
+                                      is_ipv6=is_ipv6,
+                                      is_local=is_local)
+            else:
+                self.vpp.set_interface_ip(
+                    loopback_idx, self._pack_address(gateway_ip), prefixlen,
+                    is_ipv6)
 
         router_dict = {
             'segmentation_id': seg_id,
@@ -1932,7 +1959,8 @@ class VPPForwarder(object):
             'is_inside': is_inside,
             'external_gateway_ip': external_gateway_ip,
             'vrf_id': vrf,
-            'uplink_idx': net_data.get('if_uplink_idx')
+            'uplink_idx': net_data.get('if_uplink_idx'),
+            'is_local': is_local
             }
         if is_inside:
             LOG.debug("Router: Created inside router port: %s",
@@ -1951,11 +1979,12 @@ class VPPForwarder(object):
             # The current VPP NAT implementation supports only one outside
             # FIB table and by default it uses table 0, ie, the default vrf.
             # So, this is a temporary workaround to tide over the limitation.
-            self.default_route_in_default_vrf(router_dict)
+            if not is_local:
+                self.default_route_in_default_vrf(router_dict)
             # Ensure that the gateway network is exported into all tenant
             # VRFs, with the correct default routes
-            self.export_routes_from_tenant_vrfs(
-                ext_gw_ip=router_dict['external_gateway_ip'])
+                self.export_routes_from_tenant_vrfs(
+                    ext_gw_ip=router_dict['external_gateway_ip'])
         return loopback_idx
 
     def become_master_router(self):
@@ -2133,74 +2162,148 @@ class VPPForwarder(object):
         interface from the local bridge. Also, delete the default route and
         SNAT address for the external interface.
         """
+        is_external = 0
+
         if port_id in self.router_interfaces:
             router = self.router_interfaces[port_id]
         elif port_id in self.router_external_interfaces:
             router = self.router_external_interfaces[port_id]
+            is_external = 1
+            ext_intf_ip = six.u('{}/{}'.format(router['gateway_ip'],
+                                               router['prefixlen']))
+            # Get all local IP addresses in the external VRF belonging
+            # to the same external subnet as this router.
+            # Check if atleast one local_ip matches a neutron assigned
+            # external IP address of the router.
+            # If there's no match, there are no valid local IPs within VPP.
+            local_gw_ips = [r['gateway_ip'] for
+                            r in self.router_external_interfaces.values()
+                            if r['is_local']]
+            for local_ip in self.vpp.get_local_ip_address(ext_intf_ip,
+                                                          router['is_ipv6'],
+                                                          router['vrf_id']):
+                # Is the local_ip valid?
+                if local_ip in local_gw_ips:
+                    LOG.debug('Found a router external local_ip in VPP: %s',
+                              local_ip)
+                    local_ip = [local_ip]
+                    break
+            # For-else would mean no breaks i.e. no valid local_ips
+            else:
+                local_ip = []
         else:
             LOG.error("Router port:%s deletion error...port not found",
                       port_id)
             return False
-        # Get all SNAT interfaces
-        snat_interfaces = self.vpp.get_snat_interfaces()
-        # Get SNAT out interfaces whose IP addrs are overloaded
-        snat_out_interfaces = self.vpp.get_outside_snat_interface_indices()
-        # delete SNAT if set on this interface
-        if router['bvi_if_idx'] in snat_interfaces:
-            LOG.debug('Router: Deleting SNAT on interface '
-                      'index: %s', router['bvi_if_idx'])
-            self.vpp.set_snat_on_interface(router['bvi_if_idx'],
-                                           is_inside=router['is_inside'],
-                                           is_add=False)
-        # Delete the external 1:N SNAT and default routes in all VRFs
-        # for external router interface deletion
-        if not router['is_inside']:
-            LOG.debug('Router: Deleting external gateway port %s for '
-                      'router: %s', port_id, router)
-            # Delete external snat addresses for the router
-            if router['bvi_if_idx'] in snat_out_interfaces:
-                LOG.debug('Router: Removing 1:N SNAT on external interface '
-                          'index: %s', router['bvi_if_idx'])
-                self.vpp.snat_overload_on_interface_address(
-                    router['bvi_if_idx'],
-                    is_add=False)
-            # Delete all exported routes into tenant VRFs belonging to this
-            # external gateway
-            self.export_routes_from_tenant_vrfs(
-                ext_gw_ip=router['external_gateway_ip'], is_add=False)
-            # delete the default route in the default VRF
-            self.default_route_in_default_vrf(router, is_add=False)
-        else:
-            # Delete all exported routes from this VRF
-            self.export_routes_from_tenant_vrfs(source_vrf=router['vrf_id'],
-                                                is_add=False)
 
-        # Delete the gateway IP address and the BVI interface if this is the
-        # last IP address assigned on the BVI
         net_br_idx = router['bridge_domain_id']
         bvi_if_idx = self.vpp.get_bridge_bvi(net_br_idx)
-        # Get bvi interface from bridge details
-        if bvi_if_idx:
-            # Get all IP's assigned to the BVI interface
-            addresses = self.vpp.get_interface_ip_addresses(bvi_if_idx)
-            if len(addresses) > 1:
-                # Dont' delete the BVI, only remove one IP from it
-                self.vpp.del_interface_ip(
-                    bvi_if_idx, self._pack_address(router['gateway_ip']),
-                    router['prefixlen'], router['is_ipv6'])
+        # If an external local route, we can safetly delete it from VPP
+        # Don't delete any SNAT
+        if is_external and router['is_local']:
+            LOG.debug("delete_router_intf: Removing the local route: %s/32",
+                      router['gateway_ip'])
+            prefixlen = 128 if router['is_ipv6'] else 32
+            self.vpp.delete_ip_route(vrf=router['vrf_id'],
+                                     ip_address=self._pack_address(
+                                         router['gateway_ip']),
+                                     prefixlen=prefixlen,
+                                     next_hop_address=None,
+                                     next_hop_sw_if_index=None,
+                                     is_ipv6=router['is_ipv6'],
+                                     is_local=1)
+        # External router is a loopback BVI. If a local route exists,
+        # replace the BVI's IP address with its IP address.
+        # Don't delete the SNAT.
+        elif is_external and len(local_ip) > 0:
+            local_ip = local_ip[0]
+            LOG.debug('delete_router_intf: replacing router loopback BVI IP '
+                      'address %s with the local ip address %s',
+                      router['gateway_ip'], local_ip)
+            # Delete the IP address from the BVI.
+            self.vpp.del_interface_ip(
+                bvi_if_idx, self._pack_address(router['gateway_ip']),
+                router['prefixlen'], router['is_ipv6'])
+            # Delete the local route
+            prefixlen = 128 if router['is_ipv6'] else 32
+            self.vpp.delete_ip_route(vrf=router['vrf_id'],
+                                     ip_address=self._pack_address(local_ip),
+                                     prefixlen=prefixlen,
+                                     next_hop_address=None,
+                                     next_hop_sw_if_index=None,
+                                     is_ipv6=router['is_ipv6'],
+                                     is_local=1)
+            self.vpp.set_interface_ip(bvi_if_idx,
+                                      self._pack_address(local_ip),
+                                      router['prefixlen'],
+                                      router['is_ipv6'])
+            # Set the router external interface corresponding to the local
+            # route as non-local.
+            for router in self.router_external_interfaces.values():
+                if ipaddress.ip_address(unicode(router['gateway_ip'])) == \
+                    ipaddress.ip_address(unicode(local_ip)):
+                        router['is_local'] = 0
+                        LOG.debug('Router external %s is no longer a local '
+                                  'route but now assigned to the BVI', router)
+        else:
+            # At this point, we can safetly remove both the SNAT and BVI
+            # loopback interfaces as no local routes exist.
+            snat_interfaces = self.vpp.get_snat_interfaces()
+            # Get SNAT out interfaces whose IP addrs are overloaded
+            snat_out_interfaces = self.vpp.get_outside_snat_interface_indices()
+            # delete SNAT if set on this interface
+            if router['bvi_if_idx'] in snat_interfaces:
+                LOG.debug('Router: Deleting SNAT on interface '
+                          'index: %s', router['bvi_if_idx'])
+                self.vpp.set_snat_on_interface(router['bvi_if_idx'],
+                                               is_inside=router['is_inside'],
+                                               is_add=False)
+            # Delete the external 1:N SNAT and default routes in all VRFs
+            # for external router interface deletion
+            if not router['is_inside']:
+                LOG.debug('Router: Deleting external gateway port %s for '
+                          'router: %s', port_id, router)
+                # Delete external snat addresses for the router
+                if router['bvi_if_idx'] in snat_out_interfaces:
+                    LOG.debug('Router:Removing 1:N SNAT on external interface '
+                              'index: %s', router['bvi_if_idx'])
+                    self.vpp.snat_overload_on_interface_address(
+                        router['bvi_if_idx'],
+                        is_add=False)
+                # Delete all exported routes into tenant VRFs belonging to this
+                # external gateway
+                self.export_routes_from_tenant_vrfs(
+                    ext_gw_ip=router['external_gateway_ip'], is_add=False)
+                # delete the default route in the default VRF
+                self.default_route_in_default_vrf(router, is_add=False)
             else:
-                # Last subnet assigned, delete the interface
-                self.vpp.delete_loopback(bvi_if_idx)
-                if cfg.CONF.ml2_vpp.enable_l3_ha:
-                    self.router_interface_states.pop(bvi_if_idx, None)
+                # Delete all exported routes from this VRF
+                self.export_routes_from_tenant_vrfs(source_vrf=router[
+                    'vrf_id'], is_add=False)
+            # Delete the gateway IP address and the BVI interface if this is
+            # the last IP address assigned on the BVI
+            if bvi_if_idx:
+                # Get all IP's assigned to the BVI interface
+                addresses = self.vpp.get_interface_ip_addresses(bvi_if_idx)
+                if len(addresses) > 1:
+                    # Dont' delete the BVI, only remove one IP from it
+                    self.vpp.del_interface_ip(
+                        bvi_if_idx, self._pack_address(router['gateway_ip']),
+                        router['prefixlen'], router['is_ipv6'])
+                else:
+                    # Last subnet assigned, delete the interface
+                    self.vpp.delete_loopback(bvi_if_idx)
+                    if cfg.CONF.ml2_vpp.enable_l3_ha:
+                        self.router_interface_states.pop(bvi_if_idx, None)
+        # Remove any local GPE mappings
         if router['net_type'] == nvpp_const.TYPE_GPE:
             LOG.debug('Removing local GPE mappings for router '
                       'interface: %s', port_id)
             self.delete_local_gpe_mapping(router['segmentation_id'],
                                           router['mac_address'])
-        try:
+        if not is_external:
             self.router_interfaces.pop(port_id)
-        except Exception:
+        else:
             self.router_external_interfaces.pop(port_id)
 
     def maybe_associate_floating_ips(self):
