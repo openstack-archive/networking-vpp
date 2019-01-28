@@ -693,7 +693,7 @@ class VPPInterface(object):
         return None
 
     def add_ip_route(self, vrf, ip_address, prefixlen, next_hop_address,
-                     next_hop_sw_if_index, is_ipv6=False):
+                     next_hop_sw_if_index, is_ipv6=False, is_local=False):
         """Adds an IP route in the VRF or exports it from another VRF.
 
         Checks to see if a matching route is already present in the VRF.
@@ -702,15 +702,27 @@ class VPPInterface(object):
         representations of the IPv4 or IPv6 address. To export a
         route from another VRF, the next_hop_addesss is set to None and the
         next_hop_sw_if_index of the interface in the target VRF is provided.
+        If is_local is True, a local route is added in the specified VRF.
         """
         if not self.route_in_vrf(vrf, ip_address, prefixlen,
                                  next_hop_address, next_hop_sw_if_index,
-                                 is_ipv6):
+                                 is_ipv6, is_local):
             ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
                                                           is_ipv6)))
             if next_hop_address is not None:
                 next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
                     next_hop_address, is_ipv6)))
+
+            if is_local:
+                self.LOG.debug('Adding a local route %s/%s in router vrf:%s',
+                               ip, prefixlen, vrf)
+                self.call_vpp('ip_add_del_route', is_add=1, table_id=vrf,
+                              dst_address=ip_address,
+                              dst_address_length=prefixlen,
+                              is_local=is_local,
+                              is_ipv6=is_ipv6,
+                              next_hop_via_label=0xfffff + 1)
+            elif next_hop_address is not None:
                 self.LOG.debug('Adding route %s/%s to %s in router vrf:%s',
                                ip, prefixlen, next_hop, vrf)
                 self.call_vpp('ip_add_del_route', is_add=1, table_id=vrf,
@@ -737,7 +749,7 @@ class VPPInterface(object):
                               next_hop_via_label=0xfffff + 1)
 
     def delete_ip_route(self, vrf, ip_address, prefixlen, next_hop_address,
-                        next_hop_sw_if_index, is_ipv6=False):
+                        next_hop_sw_if_index, is_ipv6=False, is_local=False):
         """Deleted an IP route in the VRF.
 
         Checks to see if a matching route is present in the VRF.
@@ -747,10 +759,22 @@ class VPPInterface(object):
         """
         if self.route_in_vrf(vrf, ip_address, prefixlen,
                              next_hop_address, next_hop_sw_if_index,
-                             is_ipv6):
+                             is_ipv6, is_local):
             ip = ipaddress.ip_address(unicode(bytes_to_ip(ip_address,
                                                           is_ipv6)))
             if next_hop_address is not None:
+                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                    next_hop_address, is_ipv6)))
+
+            if is_local:
+                self.LOG.debug('Deleting a local route %s/%s in router vrf:%s',
+                               ip, prefixlen, vrf)
+                self.call_vpp('ip_add_del_route', is_add=0, table_id=vrf,
+                              dst_address=ip_address,
+                              dst_address_length=prefixlen,
+                              is_local=is_local,
+                              is_ipv6=is_ipv6)
+            elif next_hop_address is not None:
                 next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
                     next_hop_address, is_ipv6)))
                 self.LOG.debug('Deleting route %s/%s to %s in router vrf:%s',
@@ -774,7 +798,8 @@ class VPPInterface(object):
                               next_hop_via_label=0xfffff + 1)
 
     def route_in_vrf(self, vrf, ip_address, prefixlen,
-                     next_hop_address, sw_if_index, is_ipv6=False):
+                     next_hop_address, sw_if_index, is_ipv6=False,
+                     is_local=False):
         """Returns True, if the route if present in the VRF.
 
         Pulls the VPP FIB to see if the route is present in the VRF.
@@ -830,12 +855,41 @@ class VPPInterface(object):
                                'into VRF:%s', ip, prefixlen, sw_if_index,
                                vrf)
                 return True
+            elif (is_local and route.table_id == vrf and
+                  route.address_length == prefixlen and
+                  ipaddress.ip_address(
+                      unicode(bytes_to_ip(route.address,
+                                          is_ipv6))) == ip and
+                  any((p.is_local for p in route.path))):
+                self.LOG.debug('Local route: %s/%s exists in VRF:%s',
+                               ip, prefixlen, vrf)
+                return True
             # Note: The else clause in 'for' loop is executed when the
             # loop terminates without finding a matching route
         else:
             self.LOG.debug('Route: %s/%s to %s does not exist in VRF:%s',
                            ip, prefixlen, next_hop, vrf)
             return False
+
+    def get_local_ip_address(self, ext_intf_ip, is_ipv6=False, vrf=0):
+        """A generator of local IP addresses in VPP in a VRF.
+
+        This generates local IPv4 or IPv6 addresses on the same subnet as the
+        ext_intf_ip argument in the specified VRF.
+
+        :Param: ext_intf_ip: The external interface address specified in
+                             the CIDR (IP/Prefixlen) notation.
+        """
+        ext_intf_ip = ipaddress.ip_interface(unicode(ext_intf_ip))
+        if not is_ipv6:
+            routes = self.call_vpp('ip_fib_dump')
+        else:
+            routes = self.call_vpp('ip6_fib_dump')
+        for route in routes:
+            if (route.table_id == vrf and
+                    any((p.is_local for p in route.path))):
+                if ipaddress.ip_address(route.address) in ext_intf_ip.network:
+                    yield bytes_to_ip(route.address, is_ipv6)
 
     def get_interface_ip_addresses(self, sw_if_idx):
         """Returns a list of all IP addresses assigned to an interface.
