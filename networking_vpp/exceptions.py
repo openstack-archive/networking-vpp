@@ -54,3 +54,19 @@ class GpeVNIInUse(n_exc.NeutronException):
     """
     message = _("Invalid GPE VNI value %(vni_id)s for allocation "
                 "The VNI is already in use by another GPE network")
+
+
+class GpeVNIInvalid(n_exc.NeutronException):
+    """GPE network creation failed exception due to the VNI being invalid.
+
+    :param vni_id: The ID of the GPE VNI that's invalid.
+    """
+    message = _("Invalid GPE VNI value %(vni_id)s for allocation "
+                "or deallocation ")
+
+
+class GpeVNIUnavailable(n_exc.NeutronException):
+    """GPE network creation failed exception due to a VNI being unavailable.
+
+    """
+    message = _("A GPE VNI is unavailable for allocation")
