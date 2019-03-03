@@ -435,7 +435,7 @@ underlay network to transport Layer2 and Layer3 packets (a.k.a overlay) sent
 by tenant instances.
 
 At this point, we only support Layer2 overlays between bridge domains using
-the existing ML2 "vxlan" type driver.
+the included "gpe" type driver.
 
 Following are some key concepts that will help you set it up and get going.
 
@@ -571,23 +571,33 @@ we will be increasing the coverage of the unit tests, as well as
 enhancing the types of system/integration tests that we run, e.g.
 negative testing, compatibility testing, etc.
 
-What's new in the 18.10 release?
+What's new in the 19.03 release?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In the 18.10 release, we have made improvements to fully support the network
-trunk service plugin.Using this plugin, you can attach multiple networks to an
-instance by binding it to a single vhostuser trunk port. The APIs are the same
-as the OpenStack Neutron Trunk service APIs. When creating a subport, you must
-provide a segmentation-id. The segmentation-id defines the VLAN ID on which
-the subport network is presented to the instance. You will also be able to
-bind and unbind subports to a bound network trunk.
+In the 19.03 release, we made a few changes tto add functionality:
 
-Another feature we have improved in this release is the Tap-as-a-service(TaaS).
-The TaaS code has been updated to handle out of order etcd messages received
-during agent restarts. You can use this service to create remote port
-mirroring capability for tenant virtual networks. TaaS will be helpful when
-you debug your virtual networks by providing visibility into your VM's network
-traffic.
+- To complement the GPE overlay, there is now also a L3 solution for port
+  mirroring (OpenStack TaaS) connections.  When you're using GPE, the
+  overlay is L3 and you may have routers between your compute nodes, so
+  moving the TAP traffic around also requires an L3 overlay.  We use
+  VXLAN point to point connections to get that copy of traffic to the
+  VM destination, and these can be routed over L3.
 
-Besides the above, this release also has several bug fixes, VPP 18.10 API
-compatibility and stability related improvements.
+  We automatically use VXLAN connections when you're tapping ports on
+  GPE networks and VLAN connections for L2 networks so this should all
+  Just Work.
+
+- We've worked on out Python 3 compatibility in preparation for the
+  EOL of Pythnon 2.  Both the Neutron server's driver components and the
+  agent components that control VPP should now support Python 3, but this
+  work is ongoing and if you do find any issues please report them
+  on the Luanchpad page.
+
+- We've worked on our L3 Neutron routers support and added functionality
+  that allows you to use NAT from multiple routers simultaneously -
+  ideal if, for instance, you like to use one router per tenant and in
+  more unusual cases routers with different external networks.
+
+- We've been doing the usual round of bug fixes and updates - the code 
+  will work with both VPP 18.10 and 19.01 and has been updated to
+  keep up with Neutron Rocky and Stein.
