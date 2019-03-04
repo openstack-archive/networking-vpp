@@ -803,7 +803,7 @@ class VPPInterface(object):
                               is_local=is_local,
                               is_ipv6=is_ipv6)
             elif next_hop_address is not None:
-                next_hop = ipaddress.ip_address(unicode(bytes_to_ip(
+                next_hop = ipaddress.ip_address(six.text_type(bytes_to_ip(
                     next_hop_address, is_ipv6)))
                 self.LOG.debug('Deleting route %s/%s to %s in router vrf:%s',
                                ip, prefixlen, next_hop, vrf)
@@ -888,7 +888,7 @@ class VPPInterface(object):
             elif (is_local and route.table_id == vrf and
                   route.address_length == prefixlen and
                   ipaddress.ip_address(
-                      unicode(bytes_to_ip(route.address,
+                      six.text_type(bytes_to_ip(route.address,
                                           is_ipv6))) == ip and
                   any((p.is_local for p in route.path))):
                 self.LOG.debug('Local route: %s/%s exists in VRF:%s',
@@ -910,7 +910,7 @@ class VPPInterface(object):
         :Param: ext_intf_ip: The external interface address specified in
                              the CIDR (IP/Prefixlen) notation.
         """
-        ext_intf_ip = ipaddress.ip_interface(unicode(ext_intf_ip))
+        ext_intf_ip = ipaddress.ip_interface(six.text_type(ext_intf_ip))
         if not is_ipv6:
             routes = self.call_vpp('ip_fib_dump')
         else:
