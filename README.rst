@@ -574,7 +574,7 @@ negative testing, compatibility testing, etc.
 What's new in the 19.03 release?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In the 19.03 release, we made a few changes tto add functionality:
+In the 19.03 release, we made a few changes to add functionality:
 
 - To complement the GPE overlay, there is now also a L3 solution for port
   mirroring (OpenStack TaaS) connections.  When you're using GPE, the
@@ -588,16 +588,16 @@ In the 19.03 release, we made a few changes tto add functionality:
   Just Work.
 
 - We've worked on out Python 3 compatibility in preparation for the
-  EOL of Pythnon 2.  Both the Neutron server's driver components and the
-  agent components that control VPP should now support Python 3, but this
+  EOL of Python 2.7. Both the Neutron server's driver components and the
+  agent components that control VPP should now support Python 3.5, but this
   work is ongoing and if you do find any issues please report them
-  on the Luanchpad page.
+  on the Launchpad page.
 
 - We've worked on our L3 Neutron routers support and added functionality
   that allows you to use NAT from multiple routers simultaneously -
   ideal if, for instance, you like to use one router per tenant and in
   more unusual cases routers with different external networks.
 
-- We've been doing the usual round of bug fixes and updates - the code 
+- We've been doing the usual round of bug fixes and updates - the code
   will work with both VPP 18.10 and 19.01 and has been updated to
   keep up with Neutron Rocky and Stein.
