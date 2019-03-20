@@ -4,16 +4,20 @@
 
 function install_vpp {
   if is_fedora; then
+      repourl=${vpp_repourl:-https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.centos7/}
       sudo tee /etc/yum.repos.d/fdio.repo <<EOF
 [fdio-master]
 name=fd.io master branch latest merge
-baseurl=https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.centos7/
+baseurl=$repourl
 enabled=1
 gpgcheck=0
 EOF
   sudo yum --enablerepo=fdio-master clean metadata
   elif is_ubuntu; then
-      echo "deb [trusted=yes] https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.ubuntu.$os_CODENAME.main/ ./" | sudo tee  /etc/apt/sources.list.d/99fd.io.list
+      repourl=${vpp_repourl:-https://nexus.fd.io/content/repositories/fd.io.$VPP_BRANCH.ubuntu.$os_CODENAME.main}
+      sudo tee  /etc/apt/sources.list.d/99fd.io.list <<EOF
+deb [trusted=yes] $repourl ./
+EOF
       # installing to prevent failure with https hosts on fd.io source
       install_package apt-transport-https
   else
