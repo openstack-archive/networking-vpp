@@ -94,18 +94,6 @@ def singleton(cls):
 @singleton
 class VPPInterface(object):
 
-    def get_vhostusers(self):
-        t = self.call_vpp('sw_interface_vhost_user_dump')
-
-        for interface in t:
-            yield (fix_string(interface.interface_name), interface)
-
-    def is_vhostuser(self, iface_idx):
-        for vhost in self.get_vhostusers():
-            if vhost.sw_if_index == iface_idx:
-                return True
-        return False
-
     def get_interfaces(self):
         t = self.call_vpp('sw_interface_dump')
 
@@ -252,6 +240,18 @@ class VPPInterface(object):
         self.call_vpp('delete_vhost_user_if',
                       sw_if_index=idx)
 
+    def get_vhostusers(self):
+        t = self.call_vpp('sw_interface_vhost_user_dump')
+
+        for interface in t:
+            yield (fix_string(interface.interface_name), interface)
+
+    def is_vhostuser(self, iface_idx):
+        for vhost in self.get_vhostusers():
+            if vhost.sw_if_index == iface_idx:
+                return True
+        return False
+
     ########################################
 
     def __init__(self, log, vpp_cmd_queue_len=None, read_timeout=None):
@@ -329,6 +329,9 @@ class VPPInterface(object):
             sys.exit(1)
 
         return t
+
+    def disconnect(self):
+        self.call_vpp('disconnect')
 
     ########################################
 
@@ -414,9 +417,6 @@ class VPPInterface(object):
 
     ########################################
 
-    def disconnect(self):
-        self.call_vpp('disconnect')
-
     def create_bridge_domain(self, id, mac_age):
         self.call_vpp(
             'bridge_domain_add_del',
@@ -441,6 +441,42 @@ class VPPInterface(object):
             arp_term=False,  # enable ARP termination in the BD
             is_add=False  # is a delete
         )
+
+    def get_bridge_domains(self):
+        t = self.call_vpp('bridge_domain_dump', bd_id=0xffffffff)
+        return set([bd.bd_id for bd in t])
+
+    def bridge_set_flags(self, bridge_domain_id, flags):
+        """Reset and set flags for a bridge domain.
+
+        TODO(ijw): NOT ATOMIC
+        """
+        if self.ver_ge(18, 10):
+            self.call_vpp('bridge_flags',
+                          bd_id=bridge_domain_id,
+                          is_set=0,
+                          flags=(self.L2_LEARN | self.L2_FWD |
+                                 self.L2_FLOOD |
+                                 self.L2_UU_FLOOD | self.L2_ARP_TERM))
+            self.call_vpp('bridge_flags',
+                          bd_id=bridge_domain_id,
+                          is_set=1, flags=flags)
+        else:
+            self.call_vpp('bridge_flags',
+                          bd_id=bridge_domain_id,
+                          is_set=0,
+                          feature_bitmap=(self.L2_LEARN | self.L2_FWD |
+                                          self.L2_FLOOD |
+                                          self.L2_UU_FLOOD |
+                                          self.L2_ARP_TERM))
+            self.call_vpp('bridge_flags',
+                          bd_id=bridge_domain_id,
+                          is_set=1, feature_bitmap=flags)
+
+    def bridge_enable_flooding(self, bridge_domain_id):
+        self.LOG.debug("Enable flooding (disable mac learning) for bridge %d",
+                       bridge_domain_id)
+        self.bridge_set_flags(bridge_domain_id, self.L2_UU_FLOOD)
 
     def get_ifaces_in_bridge_domains(self):
         """Read current bridge configuration in VPP.
@@ -477,113 +513,14 @@ class VPPInterface(object):
     def get_ifaces_in_bridge_domain(self, bd_id):
         return self.get_ifaces_in_bridge_domains().get(bd_id, [])
 
-    def create_vlan_subif(self, if_id, vlan_tag):
-        t = self.call_vpp('create_vlan_subif',
-                          sw_if_index=if_id,
-                          vlan_id=vlan_tag)
-
-        # pop vlan tag from subinterface
-        self.set_vlan_remove(t.sw_if_index)
-
-        return t.sw_if_index
-
-    def get_vlan_subif(self, if_name, seg_id):
-        # We know how VPP makes names up so we can do this
-        return self.get_ifidx_by_name('%s.%s' % (if_name, seg_id))
-
-    def delete_vlan_subif(self, sw_if_index):
-        self.call_vpp('delete_subif',
-                      sw_if_index=sw_if_index)
-
-    def acl_add_replace(self, acl_index, tag, rules, count):
-        t = self.call_vpp('acl_add_replace',
-                          acl_index=acl_index,
-                          tag=binary_type(tag),
-                          r=rules,
-                          count=count)
-        return t.acl_index
-
-    def macip_acl_add(self, rules, count):
-        t = self.call_vpp('macip_acl_add',
-                          count=count,
-                          r=rules)
-        return t.acl_index
-
-    def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
-        self.call_vpp('acl_interface_set_acl_list',
-                      sw_if_index=sw_if_index,
-                      count=count,
-                      n_input=n_input,
-                      acls=acls)
-
-    def delete_acl_list_on_interface(self, sw_if_index):
-        self.call_vpp('acl_interface_set_acl_list',
-                      sw_if_index=sw_if_index,
-                      count=0,
-                      n_input=0,
-                      acls=[])
-
-    def get_interface_acls(self, sw_if_index):
-        t = self.call_vpp('acl_interface_list_dump',
-                          sw_if_index=sw_if_index)
-        # We're dumping one interface
-        t = t[0]
-        return t.acls[:t.n_input], t.acls[t.n_input:]
-
-    def set_macip_acl_on_interface(self, sw_if_index, acl_index):
-        self.call_vpp('macip_acl_interface_add_del',
-                      is_add=1,
-                      sw_if_index=sw_if_index,
-                      acl_index=acl_index)
-
-    def delete_macip_acl_on_interface(self, sw_if_index, acl_index):
-        self.call_vpp('macip_acl_interface_add_del',
-                      is_add=0,  # delete
-                      sw_if_index=sw_if_index,
-                      acl_index=acl_index)
-
-    def delete_macip_acl(self, acl_index):
-        self.call_vpp('macip_acl_del',
-                      acl_index=acl_index)
-
-    def acl_delete(self, acl_index):
-        self.call_vpp('acl_del',
-                      acl_index=acl_index)
-
-    def get_acl_tags(self):
-        t = self.call_vpp('acl_dump', acl_index=0xffffffff)
-        for acl in t:
-            if hasattr(acl, 'acl_index'):
-                yield (acl.acl_index, fix_string(acl.tag))
-
-    def get_macip_acl_dump(self):
-        t = self.call_vpp('macip_acl_interface_get')
-        return t
-
-    ########################################
-
-    def set_vlan_remove(self, if_id):
-        self.set_vlan_tag_rewrite(if_id, L2_VTR_POP_1, 0, 0, 0)
-
-    def disable_vlan_rewrite(self, if_id):
-        self.set_vlan_tag_rewrite(if_id, L2_VTR_DISABLED, 0, 0, 0)
-
-    def set_vlan_tag_rewrite(self, if_id, vtr_op, push_dot1q, tag1, tag2):
-        t = self.call_vpp('l2_interface_vlan_tag_rewrite',
-                          sw_if_index=if_id,
-                          vtr_op=vtr_op,
-                          push_dot1q=push_dot1q,
-                          tag1=tag1,
-                          tag2=tag2)
-        self.LOG.info("Set subinterface vlan tag pop response: %s",
-                      str(t))
-
     # These constants are based on those coded into VPP and need to
     # correspond to its values
     # Port not in bridge
     L2_API_PORT_TYPE_NORMAL = 0
     # Port in bridge
     L2_API_PORT_TYPE_BVI = 1
+
+    ########################################
 
     def add_to_bridge(self, bridx, *ifidxes):
         if self.ver_ge(18, 10):
@@ -623,38 +560,6 @@ class VPPInterface(object):
                     shg=0,              # shared horizon group
                     enable=False)       # disable bridge mode (sets l3 mode)
 
-    def ifup(self, *ifidxes):
-        """Bring a list of interfaces up
-
-        NB: NOT ATOMIC if multiple interfaces
-        """
-        for ifidx in ifidxes:
-            self.call_vpp('sw_interface_set_flags',
-                          sw_if_index=ifidx,
-                          admin_up_down=1)
-
-    def ifdown(self, *ifidxes):
-        """Bring a list of interfaces down
-
-        NB: NOT ATOMIC if multiple interfaces
-        """
-        for ifidx in ifidxes:
-            self.call_vpp('sw_interface_set_flags',
-                          sw_if_index=ifidx,
-                          admin_up_down=0)
-
-    def create_loopback(self, mac_address=None):
-        # Create a loopback interface to act as a BVI
-        if mac_address:
-            mac_address = mac_to_bytes(mac_address)
-            loop = self.call_vpp('create_loopback', mac_address=mac_address)
-        else:
-            # We'll let VPP decide the mac-address
-            loop = self.call_vpp('create_loopback')
-        self.ifdown(loop.sw_if_index)
-
-        return loop.sw_if_index
-
     def set_loopback_bridge_bvi(self, loopback, bridge_id):
         # Sets the specified loopback interface to act as  the BVI
         # for the bridge. This interface will act as a gateway and
@@ -675,6 +580,165 @@ class VPPInterface(object):
                 shg=0,
                 bvi=True,  # 18.07-
                 enable=True)
+
+    def get_bridge_bvi(self, bd_id):
+        # Returns a BVI interface index for the specified bridge id
+        br_details = self.call_vpp('bridge_domain_dump', bd_id=bd_id)
+        if (br_details[0].bvi_sw_if_index and
+                int(br_details[0].bvi_sw_if_index) != NO_BVI_SET):
+            return br_details[0].bvi_sw_if_index
+
+        return None
+
+    ########################################
+
+    def create_vlan_subif(self, if_id, vlan_tag):
+        t = self.call_vpp('create_vlan_subif',
+                          sw_if_index=if_id,
+                          vlan_id=vlan_tag)
+
+        # pop vlan tag from subinterface
+        self.set_vlan_remove(t.sw_if_index)
+
+        return t.sw_if_index
+
+    def get_vlan_subif(self, if_name, seg_id):
+        # We know how VPP makes names up so we can do this
+        return self.get_ifidx_by_name('%s.%s' % (if_name, seg_id))
+
+    def delete_vlan_subif(self, sw_if_index):
+        self.call_vpp('delete_subif',
+                      sw_if_index=sw_if_index)
+
+    ########################################
+
+    def acl_add_replace(self, acl_index, tag, rules, count):
+        t = self.call_vpp('acl_add_replace',
+                          acl_index=acl_index,
+                          tag=binary_type(tag),
+                          r=rules,
+                          count=count)
+        return t.acl_index
+
+    def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
+        self.call_vpp('acl_interface_set_acl_list',
+                      sw_if_index=sw_if_index,
+                      count=count,
+                      n_input=n_input,
+                      acls=acls)
+
+    def delete_acl_list_on_interface(self, sw_if_index):
+        self.call_vpp('acl_interface_set_acl_list',
+                      sw_if_index=sw_if_index,
+                      count=0,
+                      n_input=0,
+                      acls=[])
+
+    def get_interface_acls(self, sw_if_index):
+        t = self.call_vpp('acl_interface_list_dump',
+                          sw_if_index=sw_if_index)
+        # We're dumping one interface
+        t = t[0]
+        return t.acls[:t.n_input], t.acls[t.n_input:]
+
+    def acl_delete(self, acl_index):
+        self.call_vpp('acl_del',
+                      acl_index=acl_index)
+
+    def get_acl_tags(self):
+        t = self.call_vpp('acl_dump', acl_index=0xffffffff)
+        for acl in t:
+            if hasattr(acl, 'acl_index'):
+                yield (acl.acl_index, fix_string(acl.tag))
+
+    ########################################
+
+    def macip_acl_add(self, rules, count):
+        t = self.call_vpp('macip_acl_add',
+                          count=count,
+                          r=rules)
+        return t.acl_index
+
+    def set_macip_acl_on_interface(self, sw_if_index, acl_index):
+        self.call_vpp('macip_acl_interface_add_del',
+                      is_add=1,
+                      sw_if_index=sw_if_index,
+                      acl_index=acl_index)
+
+    def delete_macip_acl_on_interface(self, sw_if_index, acl_index):
+        self.call_vpp('macip_acl_interface_add_del',
+                      is_add=0,  # delete
+                      sw_if_index=sw_if_index,
+                      acl_index=acl_index)
+
+    def delete_macip_acl(self, acl_index):
+        self.call_vpp('macip_acl_del',
+                      acl_index=acl_index)
+
+    def get_macip_acl_dump(self):
+        t = self.call_vpp('macip_acl_interface_get')
+        return t
+
+    ########################################
+
+    def set_vlan_remove(self, if_id):
+        self.set_vlan_tag_rewrite(if_id, L2_VTR_POP_1, 0, 0, 0)
+
+    def disable_vlan_rewrite(self, if_id):
+        self.set_vlan_tag_rewrite(if_id, L2_VTR_DISABLED, 0, 0, 0)
+
+    def set_vlan_tag_rewrite(self, if_id, vtr_op, push_dot1q, tag1, tag2):
+        t = self.call_vpp('l2_interface_vlan_tag_rewrite',
+                          sw_if_index=if_id,
+                          vtr_op=vtr_op,
+                          push_dot1q=push_dot1q,
+                          tag1=tag1,
+                          tag2=tag2)
+        self.LOG.info("Set subinterface vlan tag pop response: %s",
+                      str(t))
+
+    ########################################
+
+    def ifup(self, *ifidxes):
+        """Bring a list of interfaces up
+
+        NB: NOT ATOMIC if multiple interfaces
+        """
+        for ifidx in ifidxes:
+            self.call_vpp('sw_interface_set_flags',
+                          sw_if_index=ifidx,
+                          admin_up_down=1)
+
+    def ifdown(self, *ifidxes):
+        """Bring a list of interfaces down
+
+        NB: NOT ATOMIC if multiple interfaces
+        """
+        for ifidx in ifidxes:
+            self.call_vpp('sw_interface_set_flags',
+                          sw_if_index=ifidx,
+                          admin_up_down=0)
+
+    ########################################
+
+    def create_loopback(self, mac_address=None):
+        # Create a loopback interface to act as a BVI
+        if mac_address:
+            mac_address = mac_to_bytes(mac_address)
+            loop = self.call_vpp('create_loopback', mac_address=mac_address)
+        else:
+            # We'll let VPP decide the mac-address
+            loop = self.call_vpp('create_loopback')
+        self.ifdown(loop.sw_if_index)
+
+        return loop.sw_if_index
+
+    def delete_loopback(self, loopback):
+        # Delete a loopback interface, this also removes it automatically
+        # from the bridge that it was set as the BVI for.
+        self.call_vpp('delete_loopback', sw_if_index=loopback)
+
+    ########################################
 
     def set_interface_vrf(self, if_idx, vrf_id, is_ipv6=False):
         # Set the interface's VRF to the routers's table id
@@ -704,19 +768,29 @@ class VPPInterface(object):
                       del_all=False, address_length=prefixlen,
                       address=ip)
 
-    def delete_loopback(self, loopback):
-        # Delete a loopback interface, this also removes it automatically
-        # from the bridge that it was set as the BVI for.
-        self.call_vpp('delete_loopback', sw_if_index=loopback)
+    def set_interface_address(self, sw_if_index, is_ipv6,
+                              address_length, address):
+        # TODO(ijw): duplicate; should be removed
+        """Configure an IPv4 or IPv6 address on a software interface."""
+        self.call_vpp('sw_interface_add_del_address',
+                      sw_if_index=sw_if_index,
+                      is_add=1,
+                      is_ipv6=is_ipv6,
+                      del_all=False,
+                      address_length=address_length,
+                      address=address)
 
-    def get_bridge_bvi(self, bd_id):
-        # Returns a BVI interface index for the specified bridge id
-        br_details = self.call_vpp('bridge_domain_dump', bd_id=bd_id)
-        if (br_details[0].bvi_sw_if_index and
-                int(br_details[0].bvi_sw_if_index) != NO_BVI_SET):
-            return br_details[0].bvi_sw_if_index
-
-        return None
+    def del_interface_address(self, sw_if_index, is_ipv6,
+                              address_length, address):
+        # TODO(ijw): duplicate; should be removed
+        """Remove an IPv4 or IPv6 address on a software interface."""
+        self.call_vpp('sw_interface_add_del_address',
+                      sw_if_index=sw_if_index,
+                      is_add=0,
+                      is_ipv6=is_ipv6,
+                      del_all=False,
+                      address_length=address_length,
+                      address=address)
 
     def add_ip_route(self, vrf, ip_address, prefixlen, next_hop_address,
                      next_hop_sw_if_index, is_ipv6=False, is_local=False):
@@ -947,6 +1021,8 @@ class VPPInterface(object):
                              v6_addr.prefix_length))
         return int_addrs
 
+    ########################################
+    
     def set_interface_mtu(self, sw_if_idx, mtu):
         # In VPP 18.07, the mtu field is an array which allows for setting
         # MTU for L3, IPv4, IPv6 and MPLS:
@@ -961,6 +1037,8 @@ class VPPInterface(object):
         self.call_vpp('sw_interface_set_mtu', sw_if_index=sw_if_idx,
                       mtu=[mtu, 0, 0, 0])
 
+    ########################################
+    
     # Enables or Disables the NAT feature on an interface
     def set_snat_on_interface(self, sw_if_index, is_inside=1, is_add=1):
         self.call_vpp('nat44_interface_add_del_feature',
@@ -1050,10 +1128,8 @@ class VPPInterface(object):
 
         return ret_addrs
 
-    def get_bridge_domains(self):
-        t = self.call_vpp('bridge_domain_dump', bd_id=0xffffffff)
-        return set([bd.bd_id for bd in t])
-
+    ########################################
+    
     def lisp_enable(self):
         self.call_vpp('lisp_enable_disable', is_en=1)
 
@@ -1081,28 +1157,6 @@ class VPPInterface(object):
                       vni=vni,
                       dp_table=bridge_domain,
                       is_l2=1)
-
-    def set_interface_address(self, sw_if_index, is_ipv6,
-                              address_length, address):
-        """Configure an IPv4 or IPv6 address on a software interface."""
-        self.call_vpp('sw_interface_add_del_address',
-                      sw_if_index=sw_if_index,
-                      is_add=1,
-                      is_ipv6=is_ipv6,
-                      del_all=False,
-                      address_length=address_length,
-                      address=address)
-
-    def del_interface_address(self, sw_if_index, is_ipv6,
-                              address_length, address):
-        """Remove an IPv4 or IPv6 address on a software interface."""
-        self.call_vpp('sw_interface_add_del_address',
-                      sw_if_index=sw_if_index,
-                      is_add=0,
-                      is_ipv6=is_ipv6,
-                      del_all=False,
-                      address_length=address_length,
-                      address=address)
 
     def add_lisp_local_mac(self, mac, vni, locator_set_name):
         """Add a local mac address to VNI association in LISP"""
@@ -1368,6 +1422,8 @@ class VPPInterface(object):
                  }
                 for val in t]
 
+    ########################################
+    
     def cross_connect(self, source_idx, dest_idx):
         self.LOG.debug("Enable cross connected between %d-->%d",
                        source_idx, dest_idx)
@@ -1376,6 +1432,8 @@ class VPPInterface(object):
                       tx_sw_if_index=dest_idx,
                       is_add=1)
 
+    ########################################
+    
     #  direction : 1 = rx, 2 = tx, 3 tx & rx
     def enable_port_mirroring(self, src_idx, dst_idx, direction=3, is_l2=1):
         self.LOG.debug("Enable span from %d to %d",
@@ -1405,38 +1463,8 @@ class VPPInterface(object):
     L2_UU_FLOOD = (1 << 3)
     L2_ARP_TERM = (1 << 4)
 
-    def bridge_set_flags(self, bridge_domain_id, flags):
-        """Reset and set flags for a bridge domain.
-
-        TODO(ijw): NOT ATOMIC
-        """
-        if self.ver_ge(18, 10):
-            self.call_vpp('bridge_flags',
-                          bd_id=bridge_domain_id,
-                          is_set=0,
-                          flags=(self.L2_LEARN | self.L2_FWD |
-                                 self.L2_FLOOD |
-                                 self.L2_UU_FLOOD | self.L2_ARP_TERM))
-            self.call_vpp('bridge_flags',
-                          bd_id=bridge_domain_id,
-                          is_set=1, flags=flags)
-        else:
-            self.call_vpp('bridge_flags',
-                          bd_id=bridge_domain_id,
-                          is_set=0,
-                          feature_bitmap=(self.L2_LEARN | self.L2_FWD |
-                                          self.L2_FLOOD |
-                                          self.L2_UU_FLOOD |
-                                          self.L2_ARP_TERM))
-            self.call_vpp('bridge_flags',
-                          bd_id=bridge_domain_id,
-                          is_set=1, feature_bitmap=flags)
-
-    def bridge_enable_flooding(self, bridge_domain_id):
-        self.LOG.debug("Enable flooding (disable mac learning) for bridge %d",
-                       bridge_domain_id)
-        self.bridge_set_flags(bridge_domain_id, self.L2_UU_FLOOD)
-
+    ########################################
+    
     def create_vxlan_tunnel(self, src_addr, dst_addr, is_ipv6, vni):
         self.LOG.debug("Create vxlan tunnel VNI: %d", vni)
         # Device instance (ifidx) is selected for us (~0)
