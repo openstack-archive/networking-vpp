@@ -22,3 +22,7 @@ Q_ML2_PLUGIN_TYPE_DRIVERS=${Q_ML2_PLUGIN_TYPE_DRIVERS:-"vlan,flat"}
 PHYSICAL_NETWORK=${PHYSICAL_NETWORK:-"physnet"}
 PUBLIC_PHYSICAL_NETWORK=${PUBLIC_PHYSICAL_NETWORK:-"physnet"}
 ML2_VLAN_RANGES=${ML2_VLAN_RANGES:-"physnet:1:1000"}
+
+# If this is set, it should point to an OS-specific package
+# repo containing VPP packages
+#vpp_repourl=
