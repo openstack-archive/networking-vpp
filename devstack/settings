@@ -5,7 +5,7 @@ MECH_VPP_DIR="$DEST/networking-vpp"
 MECH_VPP_BIN_DIR=$(get_python_exec_prefix)
 VPP_CP_BINARY="$MECH_VPP_BIN_DIR/vpp-agent"
 
-VPP_BRANCH=${VPP_BRANCH:-stable.1810}
+VPP_BRANCH=${VPP_BRANCH:-stable.1901}
 
 #VPP interface pci device. Only used if VPP is being installed when devstack is run.
 VPP_INT_PCI_DEV=${VPP_INT_PCI_DEV:-''}
