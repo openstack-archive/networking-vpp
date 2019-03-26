@@ -1372,13 +1372,11 @@ class VPPForwarder(object):
         in_acl_idx = self.vpp.acl_add_replace(acl_index=in_acl_idx,
                                               tag=secgroup_tag(secgroup.id,
                                                                VPP_TO_VM),
-                                              rules=in_acl_rules,
-                                              count=len(in_acl_rules))
+                                              rules=in_acl_rules)
         out_acl_idx = self.vpp.acl_add_replace(acl_index=out_acl_idx,
                                                tag=secgroup_tag(secgroup.id,
                                                                 VM_TO_VPP),
-                                               rules=out_acl_rules,
-                                               count=len(out_acl_rules))
+                                               rules=out_acl_rules)
         self.secgroups[secgroup.id] = VppAcl(in_acl_idx, out_acl_idx)
 
         # If this is on the pending delete list it shouldn't be now
@@ -1587,10 +1585,8 @@ class VPPForwarder(object):
         acls = input_acls + output_acls
         # (najoy) At this point we just keep a mapping of acl vectors
         # associated with a port and do not check for any repeat application.
-        self.vpp.set_acl_list_on_interface(sw_if_index=sw_if_index,
-                                           count=len(acls),
-                                           n_input=len(input_acls),
-                                           acls=acls)
+        self.vpp.set_acl_list_on_interface(sw_if_index,
+                                           input_acls, output_acls)
         self.port_vpp_acls[sw_if_index]['l34'] = acls
 
     def set_mac_ip_acl_on_vpp_port(self, mac_ips, sw_if_index):
@@ -1707,16 +1703,13 @@ class VPPForwarder(object):
         in_acl_idx = self.vpp.acl_add_replace(
             acl_index=in_acl_idx,
             tag=common_spoof_tag(VPP_TO_VM),
-            rules=spoof_filter_rules['ingress'],
-            count=len(spoof_filter_rules['ingress'])
-            )
+            rules=spoof_filter_rules['ingress'])
 
         out_acl_idx = self.vpp.acl_add_replace(
             acl_index=out_acl_idx,
             tag=common_spoof_tag(VM_TO_VPP),
-            rules=spoof_filter_rules['egress'],
-            count=len(spoof_filter_rules['egress'])
-            )
+            rules=spoof_filter_rules['egress'])
+
         # Add the new spoof ACL to secgroups mapping if it is valid
         if (in_acl_idx != 0xFFFFFFFF
                 and out_acl_idx != 0xFFFFFFFF and not spoof_acl):
