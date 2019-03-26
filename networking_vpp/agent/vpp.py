@@ -495,12 +495,12 @@ class VPPInterface(object):
         self.call_vpp('delete_subif',
                       sw_if_index=sw_if_index)
 
-    def acl_add_replace(self, acl_index, tag, rules, count):
+    def acl_add_replace(self, acl_index, tag, rules):
         t = self.call_vpp('acl_add_replace',
                           acl_index=acl_index,
                           tag=binary_type(tag),
                           r=rules,
-                          count=count)
+                          count=len(rules))
         return t.acl_index
 
     def macip_acl_add(self, rules, count):
@@ -509,12 +509,12 @@ class VPPInterface(object):
                           r=rules)
         return t.acl_index
 
-    def set_acl_list_on_interface(self, sw_if_index, count, n_input, acls):
+    def set_acl_list_on_interface(self, sw_if_index, input_acls, output_acls):
         self.call_vpp('acl_interface_set_acl_list',
                       sw_if_index=sw_if_index,
-                      count=count,
-                      n_input=n_input,
-                      acls=acls)
+                      count=len(input_acls) + len(output_acls),
+                      n_input=len(input_acls),
+                      acls=input_acls + output_acls)
 
     def delete_acl_list_on_interface(self, sw_if_index):
         self.call_vpp('acl_interface_set_acl_list',
