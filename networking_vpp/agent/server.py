@@ -214,7 +214,7 @@ def decode_uplink_tag(tag):
     """
     if tag is None:
         return None  # not tagged
-    m = re.match('^' + TAG_UPLINK_PREFIX + '([^.]+)\.([^.]+)\.([^.]+)$', tag)
+    m = re.match('^' + TAG_UPLINK_PREFIX + r'([^.]+)\.([^.]+)\.([^.]+)$', tag)
     return None if m is None else (m.group(1), m.group(2), m.group(3))
 
 
@@ -294,7 +294,7 @@ def secgroup_tag(secgroup_id, is_vm_ingress):
 
 def decode_secgroup_tag(tag):
     # Matches the formats constructed earlier
-    m = re.match('^' + SECGROUP_TAG + '(' + n_const.UUID_PATTERN + ')\.(.*)$',
+    m = re.match('^' + SECGROUP_TAG + '(' + n_const.UUID_PATTERN + r')\.(.*)$',
                  tag)
     if m:
         secgroup_id = m.group(1)
@@ -834,7 +834,7 @@ class VPPForwarder(object):
                 match = re.search(r"Stderr\: device (vpp|tap)[0-9a-f]{8}-"
                                   "[0-9a-f]{2} is already a member of a "
                                   "bridge; can't enslave it to bridge br-"
-                                  "[0-9a-f]{8}-[0-9a-f]{2}\.", ex.message)
+                                  r'[0-9a-f]{8}-[0-9a-f]{2}\.', ex.message)
                 if not match:
                     LOG.exception("Can't add interface %s to bridge %s: %s" %
                                   (tap_name, bridge_name, ex.message))
