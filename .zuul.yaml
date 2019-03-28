@@ -4,6 +4,10 @@
         jobs:
             - networking-vpp-tempest:
                 voting: false
+            - openstack-tox-mypy2:
+                voting: false
+            - openstack-tox-mypy3:
+                voting: false
             - openstack-tox-py35:
                 voting: false
 
@@ -46,3 +50,23 @@
             q-agt: False
         devstack_plugins:
             networking-vpp: https://git.openstack.org/openstack/networking-vpp
+
+- job:
+    name: opentstack-tox-mypy2
+    parent: openstack-tox
+    description: |
+        Runs mypy as if for Python v2 code.
+    required-projects:
+        - name: openstack/networking-vpp
+    vars:
+        tox_envlist: mypy2
+
+- job:
+    name: openstack-tox-mypy3
+    parent: openstack-tox
+    description: |
+        Runs mypy as if for Python v3 code.
+    required-projects:
+        - name: openstack/networking-vpp
+    vars:
+        tox_envlist: mypy
