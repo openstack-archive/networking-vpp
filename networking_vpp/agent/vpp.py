@@ -21,12 +21,16 @@ import enum
 import fnmatch
 import grp
 import ipaddress
+# logging is included purely for typechecks and pep8 objects to its inclusion
+import logging  # noqa
 import os
 import pwd
 import six
 import sys
 from threading import Lock
-import vpp_papi
+# typing is included purely for typechecks and pep8 objects to its inclusion
+from typing import List, Dict, Optional, Set, Tuple, Iterator  # noqa
+import vpp_papi  # type: ignore
 
 
 L2_VTR_POP_1 = 3
@@ -35,6 +39,7 @@ NO_BVI_SET = 4294967295
 
 
 def binary_type(s):
+    # type: (str) -> bytes
     """Wrapper function to convert input string to bytes
 
     TODO(onong): move to a common file in phase 2
@@ -43,6 +48,7 @@ def binary_type(s):
 
 
 def mac_to_bytes(mac):
+    # type: (str) -> six.binary_type
     # py3 note:
     # TODO(onong): PAPI has introduced a new macaddress object which seemingly
     # takes care of conversion to/from MAC addr to string.
@@ -54,6 +60,7 @@ def mac_to_bytes(mac):
 
 
 def fix_string(s):
+    # type: (bytes) -> str
     # py3 note:
     # This function chops off any trailing NUL chars/bytes from strings that
     # we get from VPP. Now, in case of py2, str and bytes are the same but
@@ -67,14 +74,18 @@ def fix_string(s):
     # chopping off of 0's at the end. But this function will still act as the
     # boundary at which input is converted to string type.
     # TODO(onong): move to common file in phase 2
-    return s.decode('ascii').rstrip('\0')
+    # This consistently returns a string in py2 and 3, and since we know
+    # the input is binary ASCII we can safely make the cast in py2.
+    return str(s.decode('ascii').rstrip('\0'))
 
 
 def bytes_to_mac(mbytes):
+    # type: (str) -> str
     return ':'.join(['%02x' % ord(x) for x in mbytes[:6]])
 
 
 def bytes_to_ip(ip_bytes, is_ipv6):
+    # type: (bytes, bool) -> str
     if is_ipv6:
         return str(ipaddress.ip_address(ip_bytes))
     else:
@@ -95,6 +106,7 @@ def singleton(cls):
 class VPPInterface(object):
 
     def get_interfaces(self):
+        # type: () -> Iterator[dict]
         t = self.call_vpp('sw_interface_dump')
 
         for iface in t:
@@ -107,24 +119,29 @@ class VPPInterface(object):
                    }
 
     def get_ifidx_by_name(self, name):
+        # type: (str) -> Optional[int]
         for iface in self.get_interfaces():
             if iface['name'] == name:
                 return iface['sw_if_idx']
         return None
 
     def get_ifidx_mac_address(self, ifidx):
+        # type: (int) -> Optional[bytes]
+
         for iface in self.get_interfaces():
             if iface['sw_if_idx'] == ifidx:
                 return iface['mac']
         return None
 
     def get_ifidx_by_tag(self, tag):
+        # type: (str) -> Optional[int]
         for iface in self.get_interfaces():
             if iface['tag'] == tag:
                 return iface['sw_if_idx']
         return None
 
     def set_interface_tag(self, if_idx, tag):
+        # type: (int, str) -> None
         """Define interface tag field.
 
         VPP papi does not allow to set interface tag
@@ -138,11 +155,13 @@ class VPPInterface(object):
                       tag=binary_type(tag))
 
     def get_version(self):
+        # type: () -> str
         t = self.call_vpp('show_version')
 
         return t.version
 
     def semver(self):
+        # type: () -> Tuple[int, int, bool]
         """Return the 'semantic' version components of a VPP version"""
 
         # version string is in the form yy.mm{cruft}*
@@ -157,6 +176,7 @@ class VPPInterface(object):
         return (yy, mm, plus)
 
     def ver_ge(self, tyy, tmm):
+        # type: (int, int) -> bool
         (yy, mm, plus) = self.semver()
         if tyy < yy:
             return True
@@ -168,6 +188,7 @@ class VPPInterface(object):
     ########################################
 
     def create_tap(self, ifname, mac=None, tag=""):
+        # type: (str, str, str) -> int
         if mac is not None:
             mac_bytes = mac_to_bytes(mac)
             use_random_mac = False
@@ -193,16 +214,19 @@ class VPPInterface(object):
         return t.sw_if_index  # will be -1 on failure (e.g. 'already exists')
 
     def delete_tap(self, idx):
+        # type: (int) -> None
         self.call_vpp('tap_delete_v2',
                       sw_if_index=idx)
 
     def get_taps(self):
+        # type: () -> Iterator[dict]
         t = self.call_vpp('sw_interface_tap_dump')
         for iface in t:
             yield {'dev_name': fix_string(iface.dev_name),
                    'sw_if_idx': iface.sw_if_index}
 
     def is_tap(self, iface_idx):
+        # type: (int) -> bool
         for tap in self.get_taps():
             if tap['sw_if_index'] == iface_idx:
                 return True
@@ -212,6 +236,7 @@ class VPPInterface(object):
 
     def create_vhostuser(self, ifpath, mac, tag,
                          qemu_user=None, qemu_group=None, is_server=False):
+        # type: (str, str, str, Optional[str], Optional[str], bool) -> int
         t = self.call_vpp('create_vhost_user_if',
                           is_server=is_server,
                           sock_filename=binary_type(ifpath),
@@ -221,7 +246,7 @@ class VPPInterface(object):
                           mac_address=mac_to_bytes(mac),
                           tag=binary_type(tag))
 
-        if is_server:
+        if is_server and qemu_user is not None and qemu_group is not None:
             # The permission that qemu runs as.
             uid = pwd.getpwnam(qemu_user).pw_uid
             gid = grp.getgrnam(qemu_group).gr_gid
@@ -237,24 +262,28 @@ class VPPInterface(object):
         return t.sw_if_index
 
     def delete_vhostuser(self, idx):
+        # type: (int) -> None
         self.call_vpp('delete_vhost_user_if',
                       sw_if_index=idx)
 
     def get_vhostusers(self):
+        # type: () -> Iterator[Tuple[str, int]]
         t = self.call_vpp('sw_interface_vhost_user_dump')
 
         for interface in t:
             yield (fix_string(interface.interface_name), interface)
 
-    def is_vhostuser(self, iface_idx):
-        for vhost in self.get_vhostusers():
-            if vhost.sw_if_index == iface_idx:
-                return True
-        return False
+    # def is_vhostuser(self, iface_idx):
+    #     # type: (int) -> bool
+    #     for vhost in self.get_vhostusers():
+    #         if vhost.sw_if_index == iface_idx:
+    #             return True
+    #     return False
 
     ########################################
 
     def __init__(self, log, vpp_cmd_queue_len=None, read_timeout=None):
+        # type: (logging.Logger, Optional[int], Optional[int]) -> None
         self.LOG = log
         jsonfiles = []
         for root, dirnames, filenames in os.walk('/usr/share/vpp/api/'):
@@ -267,13 +296,14 @@ class VPPInterface(object):
         # because vpp_papi will traceback otherwise
         self._vpp.register_event_callback(self._queue_cb)
 
-        self.registered_callbacks = {}
+        # TODO(ijw) needs better type
+        self.registered_callbacks = {}  # type: dict
         for event in self.CallbackEvents:
             self.registered_callbacks[event] = []
 
         # NB: a real threading lock
-        self.event_q_lock = Lock()
-        self.event_q = []
+        self.event_q_lock = Lock()  # type: Lock
+        self.event_q = []  # type: List[dict]
 
         args = {}
 
@@ -331,6 +361,7 @@ class VPPInterface(object):
         return t
 
     def disconnect(self):
+        # type: () -> None
         self.call_vpp('disconnect')
 
     ########################################
@@ -418,6 +449,7 @@ class VPPInterface(object):
     ########################################
 
     def create_bridge_domain(self, id, mac_age):
+        # type: (int, int) -> None
         self.call_vpp(
             'bridge_domain_add_del',
             bd_id=id,  # the numeric ID of this domain
@@ -431,6 +463,7 @@ class VPPInterface(object):
         )
 
     def delete_bridge_domain(self, id):
+        # type: (int) -> None
         self.call_vpp(
             'bridge_domain_add_del',
             bd_id=id,  # the numeric ID of this domain
@@ -443,10 +476,12 @@ class VPPInterface(object):
         )
 
     def get_bridge_domains(self):
+        # type: () -> Set[int]
         t = self.call_vpp('bridge_domain_dump', bd_id=0xffffffff)
         return set([bd.bd_id for bd in t])
 
     def bridge_set_flags(self, bridge_domain_id, flags):
+        # type: (int, int) -> None
         """Reset and set flags for a bridge domain.
 
         TODO(ijw): NOT ATOMIC
@@ -474,11 +509,13 @@ class VPPInterface(object):
                           is_set=1, feature_bitmap=flags)
 
     def bridge_enable_flooding(self, bridge_domain_id):
+        # type: (int) -> None
         self.LOG.debug("Enable flooding (disable mac learning) for bridge %d",
                        bridge_domain_id)
         self.bridge_set_flags(bridge_domain_id, self.L2_UU_FLOOD)
 
     def get_ifaces_in_bridge_domains(self):
+        # type: () -> Dict[int, List[int]]
         """Read current bridge configuration in VPP.
 
         - returns a dict
@@ -496,7 +533,7 @@ class VPPInterface(object):
         # bridge_domain_details, but that
         # object now has an array of details on it.
 
-        bridges = collections.defaultdict(list)
+        bridges = collections.defaultdict(list)  # type: Dict[int, List[int]]
         for bd_info in t:
             if bd_info.__class__.__name__.endswith('sw_if_details'):
                 # with the old semantics, add found indexes.
@@ -511,6 +548,7 @@ class VPPInterface(object):
         return bridges
 
     def get_ifaces_in_bridge_domain(self, bd_id):
+        # type: (int) -> List[int]
         return self.get_ifaces_in_bridge_domains().get(bd_id, [])
 
     # These constants are based on those coded into VPP and need to
@@ -523,6 +561,7 @@ class VPPInterface(object):
     ########################################
 
     def add_to_bridge(self, bridx, *ifidxes):
+        # type: (int, *int) -> None
         if self.ver_ge(18, 10):
             for ifidx in ifidxes:
                 self.call_vpp(
@@ -541,6 +580,7 @@ class VPPInterface(object):
                     enable=True)        # enable bridge mode
 
     def delete_from_bridge(self, *ifidxes):
+        # type: (*int) -> None
         if self.ver_ge(18, 10):
             for ifidx in ifidxes:
                 self.call_vpp(
@@ -561,6 +601,7 @@ class VPPInterface(object):
                     enable=False)       # disable bridge mode (sets l3 mode)
 
     def set_loopback_bridge_bvi(self, loopback, bridge_id):
+        # type: (int, int) -> None
         # Sets the specified loopback interface to act as  the BVI
         # for the bridge. This interface will act as a gateway and
         # terminate the VLAN.
@@ -582,6 +623,7 @@ class VPPInterface(object):
                 enable=True)
 
     def get_bridge_bvi(self, bd_id):
+        # type: (int) -> Optional[int]
         # Returns a BVI interface index for the specified bridge id
         br_details = self.call_vpp('bridge_domain_dump', bd_id=bd_id)
         if (br_details[0].bvi_sw_if_index and
@@ -593,6 +635,7 @@ class VPPInterface(object):
     ########################################
 
     def create_vlan_subif(self, if_id, vlan_tag):
+        # type: (int, int) -> int
         t = self.call_vpp('create_vlan_subif',
                           sw_if_index=if_id,
                           vlan_id=vlan_tag)
@@ -603,16 +646,19 @@ class VPPInterface(object):
         return t.sw_if_index
 
     def get_vlan_subif(self, if_name, seg_id):
+        # type: (str, int) -> Optional[int]
         # We know how VPP makes names up so we can do this
         return self.get_ifidx_by_name('%s.%s' % (if_name, seg_id))
 
     def delete_vlan_subif(self, sw_if_index):
+        # type: (int) -> None
         self.call_vpp('delete_subif',
                       sw_if_index=sw_if_index)
 
     ########################################
 
     def acl_add_replace(self, acl_index, tag, rules):
+        # type: (int, str, List[dict]) -> int
         t = self.call_vpp('acl_add_replace',
                           acl_index=acl_index,
                           tag=binary_type(tag),
@@ -621,6 +667,7 @@ class VPPInterface(object):
         return t.acl_index
 
     def set_acl_list_on_interface(self, sw_if_index, input_acls, output_acls):
+        # type: (int, List[int], List[int]) -> None
         self.call_vpp('acl_interface_set_acl_list',
                       sw_if_index=sw_if_index,
                       count=len(input_acls) + len(output_acls),
