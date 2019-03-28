@@ -1,9 +1,9 @@
 - project:
     name: openstack/networking-vpp
     check:
-        jobs:
-            - networking-vpp-tempest:
-                voting: false
+        jobs: []
+#            - networking-vpp-tempest:
+#                voting: false
 
 - job:
     name: networking-vpp-tempest
