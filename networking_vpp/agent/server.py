@@ -76,6 +76,7 @@ from oslo_privsep import priv_context
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
 from oslo_serialization import jsonutils
+from typing import cast, Callable, Dict, TypeVar, Union  # noqa
 
 
 TYPE_GPE = nvpp_const.TYPE_GPE
@@ -99,7 +100,8 @@ compat.monkey_patch()
 # threading.Semaphore.
 #
 # Our own, strictly eventlet, locking:
-_semaphores = defaultdict(eventlet.semaphore.Semaphore)
+_semaphores = defaultdict(eventlet.semaphore.Semaphore) \
+    # type: Dict[str, eventlet.semaphore.Semaphore]
 
 
 def get_root_helper(conf):
@@ -108,14 +110,20 @@ def get_root_helper(conf):
 
 
 def setup_privsep():
+    # type: () -> None
     """Use root helper (if present) to execute privileged commands"""
     priv_context.init(root_helper=shlex.split(get_root_helper(cfg.CONF)))
 
 
+CV = TypeVar('CV', bound=Callable)
+
+
 def eventlet_lock(name):
+    # type: (str) -> Callable[[CV], CV]
     sema = _semaphores[name]
 
     def eventlet_lock_decorator(func):
+        # type: (CV) -> CV
         def func_wrap(*args, **kwargs):
             LOG.debug("Acquiring lock '%s' before executing %s" %
                       (name, func.__name__))
@@ -123,20 +131,23 @@ def eventlet_lock(name):
                 LOG.debug("Acquired lock '%s' before executing %s" %
                           (name, func.__name__))
                 return func(*args, **kwargs)
-        return func_wrap
+        return cast(CV, func_wrap)
     return eventlet_lock_decorator
 
 
 # TODO(onong): move to common file in phase 2
 def ipnet(ip):
+    # type: (str) -> Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
     return ipaddress.ip_network(six.text_type(ip))
 
 
 def ipaddr(ip):
+    # type: (str) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
     return ipaddress.ip_address(six.text_type(ip))
 
 
 def ipint(ip):
+    # type: (str) -> Union[ipaddress.IPv4Interface, ipaddress.IPv6Interface]
     return ipaddress.ip_interface(six.text_type(ip))
 
 ######################################################################
@@ -154,16 +165,19 @@ TAP_UUID_LEN = 11
 
 
 def get_tap_name(uuid):
+    # type: (str) -> str
     return n_const.TAP_DEVICE_PREFIX + uuid[0:TAP_UUID_LEN]
 
 
 def get_bridge_name(uuid):
+    # type: (str) -> str
     return 'br-' + uuid[0:TAP_UUID_LEN]
 
 
 # This is our internal name and the other end neither knows or cares about
 # it, only the bridge we put it in
 def get_vpptap_name(uuid):
+    # type: (str) -> str
     return 'vpp' + uuid[0:TAP_UUID_LEN]
 
 

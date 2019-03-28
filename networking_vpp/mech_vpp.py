@@ -84,8 +84,6 @@ class VPPMechanismDriver(api.MechanismDriver):
                              nvpp_const.TYPE_GPE]
     MECH_NAME = 'vpp'
 
-    vif_details = {}
-
     def initialize(self):
         config_opts.register_vpp_opts(cfg.CONF)
         compat.register_securitygroups_opts(cfg.CONF)
@@ -172,7 +170,7 @@ class VPPMechanismDriver(api.MechanismDriver):
 
         for segment in port_context.segments_to_bind:
             if self.check_segment(segment, port_context.host):
-                vif_details = dict(self.vif_details)
+                vif_details = {}
                 # TODO(ijw) should be in a library that the agent uses
                 vif_type = self.get_vif_type(port_context)
                 if vif_type == 'vhostuser':

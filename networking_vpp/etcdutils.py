@@ -24,6 +24,7 @@ from oslo_log import log as logging
 import re
 import six
 import time
+import typing  # noqa
 from urllib3.exceptions import TimeoutError as UrllibTimeoutError
 import uuid
 
@@ -240,7 +241,7 @@ class SignedEtcdJSONWriter(EtcdJSONWriter):
         return jsonutils.dumps(value)
 
 
-elector_cleanup = []
+elector_cleanup = []  # type: typing.List[EtcdElection]
 
 
 @atexit.register
