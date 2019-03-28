@@ -1,9 +1,11 @@
 - project:
     name: openstack/networking-vpp
     check:
-        jobs: []
+        jobs:
 #            - networking-vpp-tempest:
 #                voting: false
+            - openstack-tox-py35:
+                voting: false
 
 - job:
     name: networking-vpp-tempest
