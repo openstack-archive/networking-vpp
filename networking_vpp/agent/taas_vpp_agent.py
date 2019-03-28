@@ -20,6 +20,7 @@ from networking_vpp import etcdutils
 from networking_vpp.extension import VPPAgentExtensionBase
 import neutron.agent.linux.ip_lib as ip_lib
 from oslo_serialization import jsonutils
+import six
 
 
 class TaasServiceAgentWatcher(etcdutils.EtcdChangeWatcher):
@@ -209,7 +210,7 @@ class TaasFlowAgentWatcher(etcdutils.EtcdChangeWatcher):
 
         self.vppf.ensure_gpe_link()
         src_adr = self.vppf.gpe_underlay_addr
-        if ip_network(unicode(src_adr)).version == 6:
+        if ip_network(six.text_type(src_adr)).version == 6:
             is_ipv6 = 1
         else:
             is_ipv6 = 0
@@ -224,7 +225,7 @@ class TaasFlowAgentWatcher(etcdutils.EtcdChangeWatcher):
         """Remove a VXLAN tunnel from VPP."""
         self.vppf.ensure_gpe_link()
         src_adr = self.vppf.gpe_underlay_addr
-        if ip_network(unicode(src_adr)).version == 6:
+        if ip_network(six.text_type(src_adr)).version == 6:
             is_ipv6 = 1
         else:
             is_ipv6 = 0

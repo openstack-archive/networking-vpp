@@ -15,6 +15,7 @@
 
 import mock
 from mock import patch
+import six
 import sys
 import uuid as uuidgen
 sys.modules['vpp_papi'] = mock.MagicMock()
@@ -399,7 +400,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                return_value=5):
             with mock.patch.object(
                 self.vpp.vpp, 'get_interface_ip_addresses',
-                return_value=[(ip_address(unicode(router['gateway_ip'])),
+                return_value=[(ip_address(six.text_type(router['gateway_ip'])),
                                router['prefixlen'])]):
                 with mock.patch.object(self.vpp.vpp, 'get_interface_vrf',
                                        return_value=[]):
@@ -451,7 +452,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.get_snat_interfaces.return_value = [5]
         self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_interface_ip_addresses.return_value = [
-            (ip_address(unicode(gateway_ip)), prefixlen)]
+            (ip_address(six.text_type(gateway_ip)), prefixlen)]
         self.vpp.delete_router_interface_on_host(port)
         self.vpp.vpp.set_snat_on_interface.assert_called_once_with(
             5, is_add=False, is_inside=True)
@@ -479,8 +480,9 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.get_snat_interfaces.return_value = [5]
         self.vpp.vpp.get_bridge_bvi.return_value = 5
         self.vpp.vpp.get_interface_ip_addresses.return_value = [
-            (ip_address(unicode(gateway_ip)), prefixlen),
-            (ip_address(unicode(second_gateway_ip)), second_gateway_prefixlen)]
+            (ip_address(six.text_type(gateway_ip)), prefixlen),
+            (ip_address(six.text_type(second_gateway_ip)),
+             second_gateway_prefixlen)]
 
         self.vpp.delete_router_interface_on_host(port)
         self.vpp.vpp.delete_loopback.assert_not_called()
@@ -561,7 +563,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                    return_value=[5]):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
-                        return_value=[(ip_address(unicode(interface_ip)),
+                        return_value=[(ip_address(six.text_type(interface_ip)),
                                        prefixlen)]):
                         self.vpp.ensure_router_interface_on_host(
                             uuidgen.uuid1(), router)
@@ -581,7 +583,8 @@ class VPPForwarderTestCase(base.BaseTestCase):
                         self.vpp.vpp,
                         'get_interface_ip_addresses',
                         return_value=[
-                            (ip_address(unicode(router_port['gateway_ip'])),
+                            (ip_address(
+                                six.text_type(router_port['gateway_ip'])),
                              router_port['prefixlen'])]):
                     with mock.patch.object(self.vpp.vpp,
                                            'get_bridge_bvi',
@@ -608,12 +611,13 @@ class VPPForwarderTestCase(base.BaseTestCase):
                                    'get_outside_snat_interface_indices',
                                    return_value=[]):
                 with mock.patch.object(
-                    self.vpp.vpp, 'get_bridge_bvi',
-                    return_value=router_port['bvi_if_idx']):
+                        self.vpp.vpp, 'get_bridge_bvi',
+                        return_value=router_port['bvi_if_idx']):
                     with mock.patch.object(
                         self.vpp.vpp, 'get_interface_ip_addresses',
                         return_value=[(
-                            ip_address(unicode(router_port['gateway_ip'])),
+                            ip_address(
+                                six.text_type(router_port['gateway_ip'])),
                             router_port['prefixlen'])]):
                         self.vpp.delete_router_interface_on_host(port_id)
                         self.vpp.vpp.set_snat_on_interface.\
@@ -1002,7 +1006,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             self.vpp.vpp.\
                 add_lisp_arp_entry.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', mock_bridge_domain,
-                    int(ip_address(unicode('10.1.1.2'))))
+                    int(ip_address(six.text_type('10.1.1.2'))))
 
     @mock.patch('networking_vpp.agent.gpe.GpeListener')
     @mock.patch('networking_vpp.agent.server.EtcdListener')
@@ -1046,7 +1050,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
             self.vpp.vpp.\
                 del_lisp_arp_entry.assert_called_once_with(
                     'fa:16:3e:47:2e:3c', mock_bridge_domain,
-                    int(ip_address(unicode('10.1.1.2'))))
+                    int(ip_address(six.text_type('10.1.1.2'))))
 
     def test_replace_remote_gpe_arp_entry(self):
         """Test replacing a GPE ARP Entry.
@@ -1084,7 +1088,7 @@ class VPPForwarderTestCase(base.BaseTestCase):
         self.vpp.vpp.\
             replace_lisp_arp_entry.assert_called_once_with(
                 'fa:16:3e:47:2e:3c', mock_bridge_domain,
-                int(ip_address(unicode('10.1.1.2'))))
+                int(ip_address(six.text_type('10.1.1.2'))))
 
     @mock.patch(
         'networking_vpp.agent.server.VPPForwarder.acl_add_replace_on_host')
