@@ -28,7 +28,7 @@ LOG = logging.Logger('test-vpp-content')
 LOG.setLevel(logging.ERROR)
 
 VPP_CMD_QUEUE_LEN = 32
-vpp = vpp.VPPInterface(LOG, None)
+vppconn = vpp.VPPInterface(LOG, None)
 
 etcd_client = etcd.Client(port=2379)
 
@@ -67,7 +67,7 @@ def decode_uplink_tag(tag):
     """
     if tag is None:
         return None  # not tagged
-    m = re.match('^' + TAG_UPLINK_PREFIX + '([^.]+)\.([^.]+)\.([^.]+)$', tag)
+    m = re.match('^' + TAG_UPLINK_PREFIX + r'([^.]+)\.([^.]+)\.([^.]+)$', tag)
     return None if m is None else (m.group(1), m.group(2), m.group(3))
 
 
@@ -91,7 +91,7 @@ def main():
     uplink_ports = {}
     physnet_ports = {}
     unknown_ports = []
-    for f in vpp.get_interfaces():
+    for f in vppconn.get_interfaces():
         # Find downlink ports
         port_id = decode_port_tag(f['tag'])
         if port_id is not None:
