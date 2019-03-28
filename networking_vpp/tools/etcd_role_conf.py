@@ -155,7 +155,7 @@ def enable_authentication():
 
 
 @etcdctl.command(help="automated configuration of etcd")
-@click.argument('conf', click.Path(exists=True))
+@click.argument('conf', type=click.Path(exists=True))
 def smart_config(conf):
     # list existing compute nodes
     json_conf = jsonutils.load(open(conf))
