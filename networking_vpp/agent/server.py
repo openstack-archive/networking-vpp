@@ -3177,6 +3177,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
         # Removing key == desire to unbind
 
         try:
+            is_gpe = False
             port_data = self.data.vppf.interfaces[port]
             port_net = port_data['net_data']
             is_gpe = port_net['network_type'] == TYPE_GPE \
