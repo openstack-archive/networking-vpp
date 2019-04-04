@@ -59,6 +59,7 @@ function configure_networking_vpp {
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp gpe_src_cidr $GPE_SRC_CIDR
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp gpe_locators $GPE_LOCATORS
     iniset /$Q_PLUGIN_CONF_FILE ml2_vpp l3_hosts $L3_HOSTS
+    iniset /$Q_PLUGIN_CONF_FILE ml2_vpp gpe_vni_ranges $GPE_VNI_RANGES
 
     if [ ! -z "$ETCD_CA_CERT" ] ; then
        iniset /$Q_PLUGIN_CONF_FILE ml2_vpp etcd_ca_cert $ETCD_CA_CERT

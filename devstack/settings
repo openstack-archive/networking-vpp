@@ -45,6 +45,9 @@ GPE_SRC_CIDR=${GPE_SRC_CIDR:-}
 #The name(s) of the physnet interface used by GPE for uplink
 #In the current version, only one physnet name is supported
 GPE_LOCATORS=${GPE_LOCATORS:-}
+# A comma-separated list of <vni_min>:<vni_max> tuples enumerating ranges of
+# GPE VNI IDs that are available for tenant network allocation
+GPE_VNI_RANGES=${GPE_VNI_RANGES:-}
 
 #VXLAN_SRC_ADDR=${VXLAN_SRC_ADDR:-}
 #VXLAN_BCAST_ADDR=${VXLAN_BCAST_ADDR:-}
@@ -66,4 +69,3 @@ JWT_MAX_DURATION=${JWT_MAX_DURATION:-0}
 # Layer3 Router/HA Settings
 # Provide a hostname or a comma separated list of L3 hostnames
 L3_HOSTS=${L3_HOSTS:-localhost}
-
