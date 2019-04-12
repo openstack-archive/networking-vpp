@@ -76,6 +76,7 @@ from oslo_privsep import priv_context
 from oslo_reports import guru_meditation_report as gmr
 from oslo_reports import opts as gmr_opts
 from oslo_serialization import jsonutils
+from oslo_utils import netutils
 
 
 TYPE_GPE = nvpp_const.TYPE_GPE
@@ -2879,7 +2880,12 @@ class EtcdListener(object):
         sw_if_index - VPP vhostuser  if_idx
         """
         # Allowed mac_ip list to permit for DHCP request from 0.0.0.0
-        allowed_mac_ips = [(mac_address, u'0.0.0.0')]
+        # Allow Ipv6 link local address for neighbor discovery
+        # mac-ip-acls are egress only ACLs from an instance
+        lla_address = str(netutils.get_ipv6_addr_by_EUI64(
+            n_const.IPv6_LLA_PREFIX, mac_address))
+        allowed_mac_ips = [(mac_address, u'0.0.0.0'),
+                           (mac_address, lla_address)]
         # A list of tuples of MAC Addrs. and their corresponding IP Addrs.
         fixed_ip_addrs = [ip['ip_address'] for ip in fixed_ips]
         mac_ips = [(mac_address, ip_address) for ip_address
