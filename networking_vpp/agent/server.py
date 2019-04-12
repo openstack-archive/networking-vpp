@@ -2879,7 +2879,9 @@ class EtcdListener(object):
         sw_if_index - VPP vhostuser  if_idx
         """
         # Allowed mac_ip list to permit for DHCP request from 0.0.0.0
-        allowed_mac_ips = [(mac_address, u'0.0.0.0')]
+        # Allow Ipv6 link local prefix
+        allowed_mac_ips = [(mac_address, u'0.0.0.0'),
+                           (mac_address, n_const.IPv6_LLA_PREFIX)]
         # A list of tuples of MAC Addrs. and their corresponding IP Addrs.
         fixed_ip_addrs = [ip['ip_address'] for ip in fixed_ips]
         mac_ips = [(mac_address, ip_address) for ip_address
