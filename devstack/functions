@@ -74,11 +74,17 @@ api-segment:
 
 EOF
 ) >/tmp/addons
+      addl_startup=/tmp/addons
+
+      if [ "$VPP_BRANCH" -le 1901 ] ; then
+          addl_startup="$addl_startup "$thisdir"/1901pre.yaml
+      fi
+
       thisdir="$DEST/networking-vpp/devstack/"
       if [ -z "$VPP_STARTUP_OVERRIDE_CONFIG" ] ; then
-          python "$thisdir"/make-config.py "$thisdir"/startup.yaml /tmp/addons
+          python "$thisdir"/make-config.py "$thisdir"/startup.yaml /tmp/addons $addl_startup
       else
-          python "$thisdir"/make-config.py "$thisdir"/startup.yaml /tmp/addons "$VPP_STARTUP_OVERRIDE_CONFIG"
+          python "$thisdir"/make-config.py "$thisdir"/startup.yaml /tmp/addons" $addl_startup "$VPP_STARTUP_OVERRIDE_CONFIG"
       fi | sudo tee /etc/vpp/startup.conf >/dev/null
 
   fi
