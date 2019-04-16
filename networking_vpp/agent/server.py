@@ -762,7 +762,7 @@ class VPPForwarder(object):
         try:
             # If the device doesn't exist this will throw a RuntimeError
             br.link.set_up()
-        except RuntimeError:
+        except (RuntimeError, ip_lib.NetworkInterfaceNotFound):
             return False
         return True
 
@@ -858,6 +858,7 @@ class VPPForwarder(object):
         # created by Nova or an agent, say the DHCP agent,
         # later in time.
         self.ensure_tap_in_bridge(tap_name, bridge_name)
+
 
     # This is called by the (eventlet) inotify functions and the (eventlet)
     # etcd functionality, and thus needs an eventlet-based lock. We've found
