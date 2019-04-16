@@ -762,7 +762,7 @@ class VPPForwarder(object):
         try:
             # If the device doesn't exist this will throw a RuntimeError
             br.link.set_up()
-        except RuntimeError:
+        except (RuntimeError, ip_lib.NetworkInterfaceNotFound):
             return False
         return True
 
