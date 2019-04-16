@@ -32,6 +32,7 @@ eventlet.monkey_patch(thread=False)
 
 import binascii
 from collections import defaultdict
+from collections import deque
 from collections import namedtuple
 import etcd
 import eventlet.semaphore
@@ -374,6 +375,8 @@ class VPPForwarder(object):
         self.vhost_ready_callback = None
         eventlet.spawn_n(self.vhost_notify_thread)
 
+        # External devices detected by the device monitor
+        self.external_devices = deque()
         # Device monitor to ensure the tap interfaces are plugged into the
         # right Linux brdige
         self.device_monitor = device_monitor.DeviceMonitor()
@@ -803,10 +806,25 @@ class VPPForwarder(object):
             return
 
         # TODO(ijw) will act upon other mechanism drivers' taps
+        # Add the detected external device to be handled by the port-watcher
+        if dev_name not in self.external_devices:
+            self.external_devices.append(dev_name)
 
-        port_id = dev_name[3:]
-        bridge_name = "br-%s" % port_id
-        self.ensure_tap_in_bridge(dev_name, bridge_name)
+    def maybe_ensure_external_devices(self):
+        """Ensure detected external tap devices are added to the bridge.
+
+        All detected external devices are queued in the external_devices
+        data set. So handle it in this method to ensure that these are added
+        to the bridge.
+        """
+        try:
+            for dev_name in self.external_devices.popleft():
+                port_id = dev_name[3:]
+                bridge_name = "br-%s" % port_id
+                self.ensure_tap_in_bridge(dev_name, bridge_name)
+        except IndexError:
+            # The device queue may be empty
+            pass
 
     def ensure_tap_in_bridge(self, tap_name, bridge_name):
         """Add a TAP device to a bridge
@@ -3237,6 +3255,7 @@ class PortWatcher(etcdutils.EtcdChangeWatcher):
             data['segmentation_id'],
             data  # TODO(ijw) convert incoming to security fmt
             )
+        self.data.vppf.maybe_ensure_external_devices()
         # While the bind might fail for one reason or another,
         # we have nothing we can do at this point.  We simply
         # decline to notify Nova the port is ready.
