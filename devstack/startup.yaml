@@ -5,6 +5,3 @@ unix:
 
 api-trace:
   'on': null
-
-dpdk:
-    socket-mem: 256
