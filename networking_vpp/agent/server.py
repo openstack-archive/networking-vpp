@@ -2930,11 +2930,15 @@ class EtcdListener(object):
             # TODO(najoy):Update to the new per thread etcd-client model
 
             # TODO(ijw): all keys really present?
-            data = etcd_writer.read(secgroup_key).value
-
-            LOG.debug("Updating remote_group rules %s for secgroup %s",
-                      data, secgroup)
-            self.acl_add_replace(secgroup, data)
+            # If the security group is deleted before the agent gets to it,
+            # handle the exception.
+            try:
+                data = etcd_writer.read(secgroup_key).value
+                LOG.debug("Updating remote_group rules %s for secgroup %s",
+                          data, secgroup)
+                self.acl_add_replace(secgroup, data)
+            except etcd.EtcdKeyNotFound:
+                pass
 
     # EtcdListener Trunking section
     def reconsider_trunk_subports(self):
